@@ -36,18 +36,30 @@ Malaysian motorcycle parts and accessories retailer.
 
 ## Key customisations
 
-- GSAP enqueued in the child theme for animations
-- Per-page body IDs
-- Custom cart shortcodes and AJAX cart fragments
-- Brand and category shortcodes
-- "added to cart" toast
-- Child theme created to move all customisations out of the parent —
-  parent is pristine MotorMania v1.1.9 from ThemeForest and must stay
-  that way so it can be updated
-- Header currency switcher widget
-- Custom front-end JS
-- Read motormania-child/functions.php and any included files, and list
-every customisation you find — one line each, what it does. Just report.
+All in motormania-child/functions.php (self-contained — no includes):
+
+- Enqueues parent style.css with a bootstrap dependency
+- GSAP 3.12.5 + ScrollTrigger + SplitText loaded from jsDelivr CDN
+  (footer) — powers scroll/text animations
+- body_class filter injecting per-page body IDs for 4 landing pages
+  (helmet-brands, all-category, accessories-brands, home-metting) so
+  Elementor/CSS can target them. Echoes raw HTML mid-filter — fragile.
+- cart_info shortcode — cart icon with item count and subtotal
+- Two AJAX cart fragments: motormania_cart_fragment_refresh (shortcode)
+  and durianbikers_cart_icon_fragment (header icon)
+- durianbikers_force_cart_fragments — re-enqueues wc-cart-fragments at
+  priority 99 because the theme/Elementor fails to load it
+- durianbikers_cart_toast_markup — "added to cart" toast, inline CSS+jQuery
+- Header currency switcher widget area (WPML currency switcher)
+- Brand/category shortcodes: selected_brands, all_category,
+  helmet_brands, custom_shop_by_brands / shop_by_brands
+- custom_shop_by_brands (old version) commented out — dead code, harmless
+- Enqueues assets/js/custom.js
+
+## Known issues (do not fix during go-live)
+
+- GSAP loads from remote CDN — should be self-hosted post-launch
+- body_class filter echoes raw HTML and only covers 4 pages
 
 ## Do not touch
 
