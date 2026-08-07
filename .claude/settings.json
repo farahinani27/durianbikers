@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Write",
+      "Grep",
+      "Glob",
+      "Bash(npm run *)",
+      "Bash(npx *)",
+      "Bash(composer *)",
+      "Bash(wp *)",
+      "Bash(git status)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(rm -rf *)",
+      "Bash(mysql *)",
+      "Bash(mysqldump *)",
+      "Bash(wp db drop *)",
+      "Bash(wp db reset *)",
+      "Bash(wp db import *)",
+      "Bash(wp site empty *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(rsync *)",
+      "Bash(curl * --data *)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./wp-config.php)",
+      "Edit(./wp-config.php)"
+    ]
+  }
+}

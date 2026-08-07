@@ -1,0 +1,13 @@
+
+.DS_Store
+
+node_modules/
+
+*.log
+
+.env
+
+.env.*
+
+wp-config.php
+

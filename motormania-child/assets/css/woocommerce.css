@@ -1,0 +1,11 @@
+/*
+Theme Name: Motormania Child
+Description:	 MotorMania Child is a child theme of MotorMania, created by themebing.com
+
+WooCommerce styles override
+*/
+
+.woocommerce .cart-collaterals .cart_totals, 
+.woocommerce-page .cart-collaterals .cart_totals {
+    width: 100% !important;
+}
