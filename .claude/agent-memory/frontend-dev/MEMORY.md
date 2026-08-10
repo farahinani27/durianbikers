@@ -1,0 +1,1 @@
+- [Repo layout](project_repo-layout.md) — repo root holds the child theme under motormania-child/, not a full WP install

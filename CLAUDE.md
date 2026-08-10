@@ -21,6 +21,23 @@ Malaysian motorcycle parts and accessories retailer.
   httpdocs/wp-content/themes/motormania-child/
 - No build step. CSS and JS are edited directly, not compiled.
 
+## Website updates via REST API
+
+- Content/store changes (products, pages, media, etc.) go through the
+  WordPress/WooCommerce REST API, NOT the theme files.
+- Credentials live in the gitignored `.env` at the repo root:
+  `WP_BASE_URL`, `WP_API_USER`, `WP_APP_PASSWORD` (a WordPress
+  Application Password — an API token, not the login password).
+- Source it, then call the API. Example (zsh/bash):
+  `set -a; . ./.env; set +a` then
+  `curl -u "$WP_API_USER:$WP_APP_PASSWORD" "$WP_BASE_URL/wp-json/wc/v3/products"`.
+  PowerShell equivalent: load the vars from `.env`, then use
+  `Invoke-RestMethod` with a Basic auth header.
+- `.env` currently points at **staging**. Confirm the host before any
+  write; never assume it is live. Never print or commit the password.
+- When I ask to "update the website", use these creds automatically —
+  no need to ask me where they are.
+
 ## Conventions
 
 - SKU format: No fixed convention yet. Do not generate, change, or
