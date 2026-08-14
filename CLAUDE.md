@@ -33,8 +33,12 @@ Malaysian motorcycle parts and accessories retailer.
   `curl -u "$WP_API_USER:$WP_APP_PASSWORD" "$WP_BASE_URL/wp-json/wc/v3/products"`.
   PowerShell equivalent: load the vars from `.env`, then use
   `Invoke-RestMethod` with a Basic auth header.
-- `.env` currently points at **staging**. Confirm the host before any
-  write; never assume it is live. Never print or commit the password.
+- `.env` currently points at **live** (`WP_BASE_URL=https://durianbikers.com`).
+  Since the Aug 2026 go-live, staging.durianbikers.com 301-redirects to the
+  live domain, so there is no separate staging write sandbox anymore. Every
+  REST API write with these creds hits **production** immediately — confirm
+  the host and the exact change before any write. Never print or commit the
+  password.
 - When I ask to "update the website", use these creds automatically —
   no need to ask me where they are.
 
@@ -90,13 +94,20 @@ All in motormania-child/functions.php (self-contained — no includes):
 
 ## Current focus (Aug 2026)
 
-1. Going live: replacing the durianbikers.com WordPress install with
-   the staging site. Plesk currently holds two installs — durianbikers.com
-   ("Bloggers Unite", no SSL yet) and staging.durianbikers.com as a
-   subdomain under it.
-2. Switching the payment gateway from test mode to live mode.
+1. ✅ Live: durianbikers.com now serves the WooCommerce store over HTTPS
+   (cut over from Shopify on 2026-08-14; SSL issued via Let's Encrypt in
+   Plesk). staging.durianbikers.com 301-redirects to the live domain — it
+   is the same install, not a separate sandbox. The old "Bloggers Unite"
+   WP install in `httpdocs` is untouched/unused (rollback docroot).
+   ⚠️ Domain is still registered with Shopify — transfer it out before
+   cancelling the Shopify subscription or the domain can be lost.
+2. ✅ Payment gateway switched from test mode to live mode (2026-08-14).
+   Checkout now takes real payments — treat anything touching checkout or
+   the gateway as high-risk.
 3. Checking stock sync against the Qbee stock masterlist spreadsheet.
 
-Because a go-live is in progress, be conservative. Do not make changes
-that are not directly requested. Flag anything that could affect
-checkout or payments before touching it.
+Go-live is done and payments are live; only stock sync is still being
+finalised. Stay conservative: writes now hit production and checkout
+takes real money. Do not make changes that are not directly requested,
+and flag anything that could affect checkout or payments before touching
+it.
