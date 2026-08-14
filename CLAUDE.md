@@ -42,6 +42,25 @@ Malaysian motorcycle parts and accessories retailer.
 - When I ask to "update the website", use these creds automatically —
   no need to ask me where they are.
 
+## Stock masterlist (Google Sheet)
+
+- Title: [ALERT] QBEEmotor - STOCKS MASTERLIST
+- Owner: admindurianbikers@gmail.com
+- File ID: `1e0N3f-G_qlFPkafSoDOf-iT01nz5Ir09un1lzROG7xE`
+- URL: https://docs.google.com/spreadsheets/d/1e0N3f-G_qlFPkafSoDOf-iT01nz5Ir09un1lzROG7xE/edit
+- Source of truth for stock sync. One tab per brand (SHINKO, HELMETS, R&G,
+  BARKBUSTERS, DP BRAKES, …); most brand tabs list PART NO. / STOCK LEVEL /
+  RRP and key to the WooCommerce SKU. Exception: the HELMETS tab has no SKU
+  column (BRAND / SERIES / MODEL-COLOUR / PRICE / per-size stock), so it
+  can't be auto-matched by SKU.
+- Reading it requires the Google Drive connector connected AND view
+  permission on the sheet (share from the owner account). The link alone is
+  only a pointer, not access — without both, opening it returns a
+  permission error.
+- The sheet is large; a full export can exceed tool limits. Export to xlsx
+  and read the target tab (e.g. with openpyxl) rather than dumping the whole
+  file.
+
 ## Conventions
 
 - SKU format: No fixed convention yet. Do not generate, change, or
