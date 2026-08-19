@@ -212,6 +212,20 @@
 		gap: 16px;
 	}
 
+	.elementor-55540 .elementor-button:focus, 
+	.elementor-55540 .elementor-button:hover, 
+	.elementor-55540 .elementor-button:visited {
+		color: #fff;
+		background: #5f9d40;
+		width: 1px;
+	}
+
+    #button-home,
+	#shop-now {
+		padding-left: 40px;
+		padding-right: 40px;
+	}
+
 	@media screen and (max-width: 768px) {
 		.header-inner {
 			position: relative;
