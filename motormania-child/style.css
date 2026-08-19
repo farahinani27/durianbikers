@@ -217,13 +217,12 @@
 	.elementor-55540 .elementor-button:visited {
 		color: #fff;
 		background: #5f9d40;
-		width: 1px;
 	}
 
     #button-home,
 	#shop-now {
-		padding-left: 40px;
-		padding-right: 40px;
+		padding-left: 40px !important;
+		padding-right: 40px !important;
 	}
 
 	@media screen and (max-width: 768px) {
@@ -3871,6 +3870,70 @@
 	/*--------------------------------------------------------------
 	## mc4wp
 	--------------------------------------------------------------*/
+
+	.mc4wp-form .mc4wp-form-fields p {
+	  position: relative;
+	  display: flex;
+	  align-items: stretch;
+	  width: 100%;
+	  max-width: 340px;
+	  margin: 0 0 16px;
+	  background: #fff;
+	  border-radius: 90px;
+	  overflow: hidden;
+	}
+
+	.mc4wp-form .mc4wp-form-fields p label {
+	  flex: 1 1 auto;
+	  display: block;
+	  margin: 0;
+	  min-width: 0;
+	}
+
+	.mc4wp-form input[type="email"] {
+	  width: 100%;
+	  height: 52px;
+	  padding: 0 22px;
+	  border: 0;
+	  border-radius: 0;
+	  background: transparent;
+	  box-shadow: none;
+	  font-size: 15px;
+	  color: #333;
+	}
+
+	.mc4wp-form input[type="email"]:focus {
+	  outline: 0;
+	  box-shadow: none;
+	}
+
+	.mc4wp-form input[type="email"]::placeholder {
+	  color: #8a8a8a;
+	}
+
+	.mc4wp-form .mc4wp-form-fields p button[type="submit"] {
+	  position: static;         
+	  flex: 0 0 auto;
+	  width: 74px;
+	  height: 52px;
+	  padding: 0;
+	  border: 0;
+	  border-radius: 90px;
+	  background: #5f9d40;
+	  background-image: none;   
+	  color: #fff;
+	  font-size: 18px;
+	  line-height: 1;
+	  display: flex;
+	  align-items: center;
+	  justify-content: center;
+	  cursor: pointer;
+	}
+
+	.mc4wp-form .mc4wp-form-fields p button[type="submit"]:hover {
+	  background: #4e8434;
+	}
+	
 	.mc4wp-form-fields {
 		position: relative;
 	}
