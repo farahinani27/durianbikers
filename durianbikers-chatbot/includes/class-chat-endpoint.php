@@ -1,0 +1,1157 @@
+<?php
+/**
+ * REST endpoint for the chatbot.
+ *
+ * POST /wp-json/durianbikers/v1/chat
+ *
+ * Public route (guests must be able to chat) but nonce-gated and rate limited.
+ * It touches exactly five things: the product retrieval service, the allowlisted
+ * help page retrieval service, the order lookup service, the Anthropic client,
+ * and the free keyword lookup engine.
+ *
+ * TWO BRAINS, ONE CONTRACT. Which one answers is decided by
+ * DB_Chat_Plugin::get_engine() (option db_chat_mode: auto / lookup / ai) and by
+ * nothing else, so the enqueue gate and this handler can never disagree. Both
+ * produce the SAME response shape — { reply, products[], pages[] } — so nonce
+ * handling, rate limiting, the session route, the WhatsApp handoff and the
+ * widget itself are identical either way. Lookup mode needs no API key and
+ * makes no network call; it is NOT a model and does not understand language.
+ *
+ * PERSONAL DATA BOUNDARY. The order lookup is the only path from here to
+ * personal data, and it is narrow by construction:
+ *
+ *   - An anonymous visitor reaches nothing. Identity comes from
+ *     get_current_user_id() inside DB_Chat_Order_Lookup, and 0 means "not
+ *     signed in" full stop — the route never passes an identifier of any kind
+ *     into the lookup, because the tool has no identifier parameter to pass.
+ *   - A signed-in customer reaches only their own orders, re-checked per order.
+ *   - Nothing about an order is cached or logged. When the order tool ran, this
+ *     request's response is sent no-store and the conversation log withholds the
+ *     exchange entirely, even with db_chat_logging on.
+ *
+
+ * @package DurianBikers_Chatbot
+ */
+
+defined( 'ABSPATH' ) || exit;
+
+/**
+ * Registers and handles the chat route.
+ */
+class DB_Chat_Chat_Endpoint {
+
+	/** Maximum characters in a single customer message. */
+	const MAX_MESSAGE_LENGTH = 1000;
+
+	/**
+	 * Maximum guided-finder chips forwarded to the widget.
+	 *
+	 * The contract the finder and the frontend agreed. Re-asserted here so the
+	 * endpoint cannot be the thing that breaks it.
+	 */
+	const MAX_CHIPS = 6;
+
+	/** Maximum history entries accepted from the client. */
+	const MAX_HISTORY = 10;
+
+	/**
+	 * Tight limit: requests per window per (IP + client token).
+	 *
+	 * The client token makes accidental collisions between real customers
+	 * impossible when they share an upstream address.
+	 */
+	const RATE_LIMIT = 20;
+
+	/** Tight rate limit window in seconds. */
+	const RATE_WINDOW = 600;
+
+	/**
+	 * Loose circuit breaker: requests per window per IP alone.
+	 *
+	 * High enough that a shared proxy address never trips it in normal
+	 * traffic, low enough to stop actual flooding. This exists because the
+	 * site sits behind LiteSpeed on Plesk and REMOTE_ADDR may be a shared
+	 * upstream address rather than the visitor.
+	 */
+	const RATE_LIMIT_IP = 300;
+
+	/** Loose rate limit window in seconds. */
+	const RATE_WINDOW_IP = 600;
+
+	/** Rate limit transient prefix. */
+	const RATE_PREFIX = 'db_chat_rl_';
+
+	/** Header carrying the widget's per-session client token. */
+	const CLIENT_TOKEN_HEADER = 'X-DB-Chat-Session';
+
+	/**
+	 * Product retrieval service.
+	 *
+	 * @var DB_Chat_Product_Index
+	 */
+	private $product_index;
+
+	/**
+	 * Anthropic client.
+	 *
+	 * @var DB_Chat_Claude_Client
+	 */
+	private $client;
+
+	/**
+	 * Help page retrieval service, or null when it is unavailable.
+	 *
+	 * Optional on purpose: if the class is missing the chatbot keeps answering
+	 * product questions instead of fataling, exactly as it did before pages
+	 * existed.
+	 *
+	 * @var DB_Chat_Content_Index|null
+	 */
+	private $content_index;
+
+	/**
+	 * Order lookup service, or null when it is unavailable.
+	 *
+	 * Optional in exactly the same way the page index is: a missing file must
+	 * degrade the chatbot to products and policies, never fatal a live store.
+	 *
+	 * @var DB_Chat_Order_Lookup|null
+	 */
+	private $order_lookup;
+
+	/**
+	 * Free keyword lookup engine, or null when it is unavailable.
+	 *
+	 * Optional in the same way the page index and the order lookup are: a
+	 * missing file must degrade, never fatal. DB_Chat_Plugin::get_engine() only
+	 * reports 'lookup' when this object exists, so a missing engine switches
+	 * the chatbot off rather than producing a broken widget.
+	 *
+	 * @var DB_Chat_Lookup_Engine|null
+	 */
+	private $lookup_engine;
+
+	/**
+	 * Did the order tool run during THIS request?
+	 *
+	 * Request-scoped, reset at the top of every handle_request(). Drives two
+	 * things: no-store response headers, and complete suppression of the
+	 * conversation log for this exchange.
+	 *
+	 * @var bool
+	 */
+	private $order_tool_used = false;
+
+	/**
+	 * Constructor.
+	 *
+	 * @param DB_Chat_Product_Index      $product_index Product retrieval service.
+	 * @param DB_Chat_Claude_Client      $client        Anthropic client.
+	 * @param DB_Chat_Content_Index|null $content_index Help page retrieval service.
+	 * @param DB_Chat_Order_Lookup|null  $order_lookup  Own-order lookup service.
+	 * @param DB_Chat_Lookup_Engine|null $lookup_engine Free keyword lookup engine.
+	 */
+	public function __construct( DB_Chat_Product_Index $product_index, DB_Chat_Claude_Client $client, $content_index = null, $order_lookup = null, $lookup_engine = null ) {
+		$this->product_index = $product_index;
+		$this->client        = $client;
+		$this->content_index = $content_index instanceof DB_Chat_Content_Index ? $content_index : null;
+		$this->order_lookup  = $order_lookup instanceof DB_Chat_Order_Lookup ? $order_lookup : null;
+		$this->lookup_engine = $lookup_engine instanceof DB_Chat_Lookup_Engine ? $lookup_engine : null;
+
+		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
+	}
+
+	/**
+	 * Register the route.
+	 *
+	 * @return void
+	 */
+	public function register_routes() {
+		register_rest_route(
+			DB_CHAT_REST_NAMESPACE,
+			DB_CHAT_REST_ROUTE,
+			array(
+				'methods'             => WP_REST_Server::CREATABLE,
+				'callback'            => array( $this, 'handle_request' ),
+				'permission_callback' => array( $this, 'check_permission' ),
+				'args'                => array(
+					'message' => array(
+						'required'          => true,
+						'type'              => 'string',
+						'sanitize_callback' => array( $this, 'sanitize_message' ),
+						'validate_callback' => array( $this, 'validate_message' ),
+					),
+					'history' => array(
+						'required' => false,
+						'type'     => 'array',
+						'default'  => array(),
+					),
+				),
+			)
+		);
+
+		/*
+		 * Session route: hands the widget a live wp_rest nonce.
+		 *
+		 * Public by necessity — it is what guests use to obtain a nonce for
+		 * the public chat route. It is cheap (no API cost, no DB writes) and
+		 * deliberately not rate limited, so a shared upstream address can
+		 * never lock customers out of obtaining a nonce.
+		 */
+		register_rest_route(
+			DB_CHAT_REST_NAMESPACE,
+			DB_CHAT_REST_ROUTE_SESSION,
+			array(
+				'methods'             => WP_REST_Server::READABLE,
+				'callback'            => array( $this, 'handle_session' ),
+				'permission_callback' => '__return_true',
+			)
+		);
+	}
+
+	/**
+	 * Issue a fresh nonce, plus anything else that must not be cached.
+	 *
+	 * MUST never be cached. The response carries explicit no-store headers plus
+	 * a LiteSpeed-specific directive, because LiteSpeed 7.x can be configured
+	 * to cache REST responses and the whole point of this route is freshness.
+	 *
+	 * Shape:
+	 *
+	 *     { "nonce": "...", "handoff": { "isOpen": true } }
+	 *
+	 * `nonce` stays exactly where it is — the widget depends on it at the top
+	 * level, including on the 409 stale-nonce retry path. Sibling keys are safe
+	 * to add; moving or renaming that one is not.
+	 *
+	 * `handoff` carries ONLY the volatile open/closed state. The url, label,
+	 * hours summary and notes are static configuration and ride along in the
+	 * localized dbChat object, where caching them costs nothing. isOpen cannot
+	 * go there: page HTML lives in the LiteSpeed cache for up to 7 days and the
+	 * answer changes twice a day. The key is omitted entirely when no handoff
+	 * number is configured, matching the localized data, so the widget has one
+	 * rule: no handoff anywhere, render nothing.
+	 *
+	 * NOT a cross-user token leak, and must not be "hardened" as if it were: for
+	 * logged-out visitors WordPress derives the wp_rest nonce from user ID 0 and
+	 * an empty session token, so every anonymous visitor legitimately receives
+	 * the SAME value within a given tick. Sharing it is by design and carries no
+	 * identity. The bug this route exists to fix is purely STALENESS — a cached
+	 * nonce outlives its ~12-24h validity and can never refresh itself, which
+	 * kills chat for every logged-out customer while staying invisible to
+	 * logged-in admins who bypass the cache.
+	 *
+	 * (Logged-in users are a different case: their nonce is tied to their user
+	 * ID and session token, which is a further reason this response must never
+	 * be stored by a shared cache.)
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function handle_session() {
+		// First thing, before any output and before the response is built.
+		$this->prevent_caching( 'durianbikers chatbot: per-visitor nonce, must never be cached' );
+
+		$payload = array( 'nonce' => wp_create_nonce( 'wp_rest' ) );
+
+		/*
+		 * This route is what every customer calls before they can chat at all,
+		 * so nothing optional here may be allowed to break it. A missing or
+		 * broken handoff module costs the WhatsApp button, never the nonce.
+		 */
+		try {
+			if ( class_exists( 'DB_Chat_Handoff' ) ) {
+				$handoff = DB_Chat_Handoff::get_session_data();
+
+				if ( ! empty( $handoff ) ) {
+					$payload['handoff'] = $handoff;
+				}
+			}
+		} catch ( Throwable $e ) {
+			DB_Chat_Plugin::log_error( 'Handoff state could not be computed: ' . $e->getMessage() );
+		}
+
+		$response = new WP_REST_Response( $payload );
+
+		$response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0' );
+		$response->header( 'Pragma', 'no-cache' );
+		$response->header( 'Expires', '0' );
+		$response->header( 'X-LiteSpeed-Cache-Control', 'no-cache' );
+
+		return $response;
+	}
+
+	/**
+	 * Tell every caching layer not to store this response.
+	 *
+	 * MUST be called at the very top of a handler, before any output and before
+	 * the response object is built.
+	 *
+	 * Why the action and not just headers: LSCWP has REST API caching enabled on
+	 * this site (responses carry a `308_REST` cache tag) and applies its own
+	 * `public,max-age=604800` policy. It does NOT honour `Cache-Control`,
+	 * `Pragma` or `Expires` on REST responses, and it consumes an
+	 * `X-LiteSpeed-Cache-Control: no-cache` RESPONSE header rather than treating
+	 * it as authoritative — that header does not even survive to the client.
+	 * `litespeed_control_set_nocache` is LSCWP's documented control API and is
+	 * the only thing that actually works here.
+	 *
+	 * Verified against live on 2026-08-17: without this, /session returned
+	 * `x-litespeed-cache: hit` despite every no-store header being present and
+	 * correct.
+	 *
+	 * The headers are still sent — they are correct, and they matter for any
+	 * other proxy or CDN in front of the site. This is defence in depth, not a
+	 * replacement.
+	 *
+	 * No-op when LiteSpeed is absent, since nothing is listening to the action.
+	 *
+	 * @param string $reason Human-readable reason, surfaced in LSCWP debug logs.
+	 * @return void
+	 */
+	private function prevent_caching( $reason ) {
+		do_action( 'litespeed_control_set_nocache', (string) $reason );
+
+		// Standard no-cache header set, for every layer that is not LiteSpeed.
+		nocache_headers();
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Permission and validation
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * Verify the wp_rest nonce.
+	 *
+	 * The route is open to guests, but the nonce blocks casual cross-origin
+	 * abuse of the API budget.
+	 *
+	 * Two distinct failures, deliberately:
+	 *  - No nonce at all  -> 403. A genuine rejection; nothing legitimate calls
+	 *    this route without one.
+	 *  - Nonce present but not valid -> 409 db_chat_stale_nonce. Almost always
+	 *    an expired nonce rather than an attack, so the widget re-fetches from
+	 *    the session route and retries once instead of showing an error.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return true|WP_Error
+	 */
+	public function check_permission( $request ) {
+		$nonce = $request->get_header( 'X-WP-Nonce' );
+
+		if ( empty( $nonce ) ) {
+			$nonce = $request->get_param( '_wpnonce' );
+		}
+
+		if ( ! is_string( $nonce ) || '' === trim( $nonce ) ) {
+			return new WP_Error(
+				'db_chat_missing_nonce',
+				__( 'This request could not be verified.', 'durianbikers-chatbot' ),
+				array( 'status' => 403 )
+			);
+		}
+
+		if ( wp_verify_nonce( trim( $nonce ), 'wp_rest' ) ) {
+			return true;
+		}
+
+		return new WP_Error(
+			'db_chat_stale_nonce',
+			__( 'Your chat session expired. Reconnecting…', 'durianbikers-chatbot' ),
+			array( 'status' => 409 )
+		);
+	}
+
+	/**
+	 * Sanitize the customer message.
+	 *
+	 * @param mixed $value Raw value.
+	 * @return string
+	 */
+	public function sanitize_message( $value ) {
+		if ( ! is_scalar( $value ) ) {
+			return '';
+		}
+
+		// Strip tags and control characters, keep normal punctuation.
+		$value   = wp_strip_all_tags( (string) $value, true );
+		$stripped = preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $value );
+
+		// preg_replace returns null on malformed UTF-8; keep the tag-stripped
+		// value rather than silently blanking the customer's message.
+		if ( is_string( $stripped ) ) {
+			$value = $stripped;
+		}
+
+		return trim( $value );
+	}
+
+	/**
+	 * Validate the customer message.
+	 *
+	 * @param mixed $value Raw value.
+	 * @return true|WP_Error
+	 */
+	public function validate_message( $value ) {
+		$value = $this->sanitize_message( $value );
+
+		if ( '' === $value ) {
+			return new WP_Error(
+				'db_chat_empty_message',
+				__( 'Please type a message first.', 'durianbikers-chatbot' ),
+				array( 'status' => 400 )
+			);
+		}
+
+		if ( mb_strlen( $value ) > self::MAX_MESSAGE_LENGTH ) {
+			return new WP_Error(
+				'db_chat_message_too_long',
+				sprintf(
+					/* translators: %d: maximum number of characters. */
+					__( 'That message is too long. Please keep it under %d characters.', 'durianbikers-chatbot' ),
+					self::MAX_MESSAGE_LENGTH
+				),
+				array( 'status' => 400 )
+			);
+		}
+
+		return true;
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Handler
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * Handle a chat request.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	public function handle_request( $request ) {
+		/*
+		 * POST is not normally cached, but this reply is per-visitor and can
+		 * contain their own order data, so do not rely on that. Belt and braces,
+		 * fired before anything else runs.
+		 */
+		$this->prevent_caching( 'durianbikers chatbot: per-visitor reply, must never be cached' );
+
+		// Request-scoped flag; never carry a previous request's state.
+		$this->order_tool_used = false;
+
+		if ( ! db_chat()->is_enabled() ) {
+			return new WP_Error(
+				'db_chat_offline',
+				$this->offline_message(),
+				array( 'status' => 503 )
+			);
+		}
+
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			DB_Chat_Plugin::log_error( 'WooCommerce is not active; chat cannot answer product questions.' );
+
+			return new WP_Error(
+				'db_chat_offline',
+				$this->offline_message(),
+				array( 'status' => 503 )
+			);
+		}
+
+		$rate_limited = $this->check_rate_limit( $request );
+
+		if ( is_wp_error( $rate_limited ) ) {
+			return $rate_limited;
+		}
+
+		$message = $this->sanitize_message( $request->get_param( 'message' ) );
+		$history = $this->sanitize_history( $request->get_param( 'history' ) );
+
+		/*
+		 * THE BRANCH. Everything above this line — nonce, rate limit, caching
+		 * headers, sanitisation — is shared, and everything below the branch
+		 * returns the same JSON shape. Nothing else in the plugin needs to know
+		 * which brain answered.
+		 */
+		if ( DB_Chat_Plugin::ENGINE_LOOKUP === db_chat()->get_engine() ) {
+			return $this->handle_with_lookup( $message, $history );
+		}
+
+		$messages = $this->build_messages( $history, $message );
+		$context  = $this->product_index->get_context();
+		$pages    = null !== $this->content_index ? $this->content_index->get_context() : '';
+
+		$reply = $this->client->chat(
+			$messages,
+			$context,
+			$this->get_tool_executor(),
+			$pages
+		);
+
+		if ( is_wp_error( $reply ) ) {
+			// Already customer-safe: the client never puts upstream detail in
+			// a WP_Error message.
+			return $reply;
+		}
+
+		$products = $this->product_index->match_in_text( $reply );
+
+		/*
+		 * Page links are resolved from the real WP_Post, never from the reply
+		 * text: the model is never shown a URL, so it cannot emit one. The
+		 * widget renders replies with textContent, so a URL typed into the
+		 * prose would be dead text anyway — this array is what makes it a
+		 * tappable link.
+		 */
+		$pages = null !== $this->content_index ? $this->content_index->match_in_text( $reply ) : array();
+
+		$this->maybe_log( $message, $reply );
+
+		$response = rest_ensure_response(
+			array(
+				'reply'    => (string) $reply,
+				'products' => array_values( $products ),
+				'pages'    => array_values( $pages ),
+			)
+		);
+
+		return $this->apply_no_store( $response );
+	}
+
+	/**
+	 * Answer from the FREE keyword lookup engine.
+	 *
+	 * No API key, no outbound HTTP, no cost. Returns exactly the same
+	 * { reply, products[], pages[] } payload the Claude path returns, because
+	 * the widget must not be able to tell the difference in shape — only in
+	 * how good the answer is.
+	 *
+	 * ORDER QUESTIONS — CHANGED Aug 2026. Lookup mode used to decline these
+	 * outright, so $order_tool_used could never be true on this path. It no
+	 * longer declines: the engine delegates to the SAME DB_Chat_Order_Lookup
+	 * the Claude path uses (identity from the session, guests told to sign in,
+	 * same field allowlist). That means this path can now produce order data,
+	 * and the suppression below is not optional — without it a lookup-mode
+	 * order reply would be written verbatim to the log whenever
+	 * db_chat_logging is on. See the flag handling after the answer() call.
+	 *
+	 * History IS used now, as a subject slot only, re-parsed server-side inside
+	 * the engine. It is still untrusted input and is still sanitized here first.
+	 *
+	 * @param string $message Sanitized customer message.
+	 * @param array  $history Sanitized history. Used by the engine as a subject
+	 *                        slot; never trusted as a subject in itself.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	private function handle_with_lookup( $message, array $history ) {
+		if ( null === $this->lookup_engine ) {
+			/*
+			 * Unreachable in practice: get_engine() only returns 'lookup' when
+			 * the engine object exists. Kept because "unreachable" and "cannot
+			 * happen" are different things on a store deployed by file upload.
+			 */
+			return new WP_Error(
+				'db_chat_offline',
+				$this->offline_message(),
+				array( 'status' => 503 )
+			);
+		}
+
+		/*
+		 * THE GUIDED FINDER GETS FIRST REFUSAL.
+		 *
+		 * It must run BEFORE the keyword engine, not after: a chip tap is a
+		 * bare noun ("Helmets", "Shinko", "Any"), and the engine would happily
+		 * answer that as a plain product search, so the guided flow could never
+		 * advance past its first question.
+		 *
+		 * null is the common case and means "not mine" — the engine then runs
+		 * exactly as before. The finder only claims a turn that is a trigger,
+		 * or a legal answer to a question it asked earlier in this same
+		 * history. Anything else, including a half-finished flow the customer
+		 * abandoned, falls through here untouched.
+		 *
+		 * A finder turn is never written to the unmatched-question log, and
+		 * needs no special case to achieve that: the engine's answer() is what
+		 * logs, and on this path it is never called.
+		 */
+		if ( class_exists( 'DB_Chat_Product_Finder' ) ) {
+			$guided = null;
+
+			try {
+				// Passing our own index keeps it to one product object per
+				// request rather than the finder building a second one.
+				$guided = DB_Chat_Product_Finder::instance( $this->product_index )->maybe_handle( $message, $history );
+			} catch ( Throwable $e ) {
+				// A broken finder degrades to the normal engine. It must never
+				// be the reason a customer gets a 500.
+				DB_Chat_Plugin::log_error( 'Product finder dispatch failed: ' . $e->getMessage() );
+
+				$guided = null;
+			}
+
+			if ( is_array( $guided ) && isset( $guided['reply'] ) && is_scalar( $guided['reply'] ) && '' !== trim( (string) $guided['reply'] ) ) {
+				return $this->finder_response( $message, $guided );
+			}
+		}
+
+		try {
+			$result = $this->lookup_engine->answer( $message, $history );
+		} catch ( Throwable $e ) {
+			DB_Chat_Plugin::log_error( 'Lookup mode failed: ' . $e->getMessage() );
+
+			return new WP_Error(
+				'db_chat_error',
+				__( 'Sorry, I could not put an answer together just now. Please try rephrasing, or contact us and a human will help.', 'durianbikers-chatbot' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		/*
+		 * Reuse the EXISTING order-data suppression rather than inventing a
+		 * second one: this marks the response no-store and makes maybe_log()
+		 * withhold BOTH sides of the exchange. Both sides, because the question
+		 * routinely carries an order number even when the answer carries
+		 * nothing — so the flag is set for guests and empty results too.
+		 */
+		if ( is_callable( array( $this->lookup_engine, 'used_order_lookup' ) ) && $this->lookup_engine->used_order_lookup() ) {
+			$this->order_tool_used = true;
+		}
+
+		$reply    = isset( $result['reply'] ) && is_scalar( $result['reply'] ) ? (string) $result['reply'] : '';
+		$products = isset( $result['products'] ) && is_array( $result['products'] ) ? $result['products'] : array();
+		$pages    = isset( $result['pages'] ) && is_array( $result['pages'] ) ? $result['pages'] : array();
+
+		if ( '' === trim( $reply ) ) {
+			// The engine guarantees a non-empty reply; if that guarantee ever
+			// breaks, an empty bubble must not reach a customer.
+			DB_Chat_Plugin::log_error( 'Lookup mode returned an empty reply.' );
+
+			return new WP_Error(
+				'db_chat_error',
+				__( 'Sorry, I could not put an answer together just now. Please try rephrasing, or contact us and a human will help.', 'durianbikers-chatbot' ),
+				array( 'status' => 500 )
+			);
+		}
+
+		$this->maybe_log( $message, $reply );
+
+		$response = rest_ensure_response(
+			array(
+				'reply'    => $reply,
+				'products' => array_values( $products ),
+				'pages'    => array_values( $pages ),
+			)
+		);
+
+		return $this->apply_no_store( $response );
+	}
+
+	/**
+	 * Build the response for a turn the guided finder answered.
+	 *
+	 * THE `chips` KEY IS THE WHOLE POINT OF THIS METHOD. The other lookup
+	 * responses hardcode their keys, so a finder payload passed through them
+	 * would lose its chips silently — the finder would look built, every test
+	 * would pass, and the widget would render a flow with no options to tap.
+	 * Chips are emitted ONLY on a finder turn; a plain lookup answer keeps the
+	 * original { reply, products, pages } shape exactly.
+	 *
+	 * Re-validated here rather than trusted: flat strings, capped, and the
+	 * contract's own maximum of six.
+	 *
+	 * The finder touches no order and no customer, so this exchange logs
+	 * normally when the owner has logging on.
+	 *
+	 * @param string $message Sanitized customer message.
+	 * @param array  $guided  Finder payload.
+	 * @return WP_REST_Response|WP_Error
+	 */
+	private function finder_response( $message, array $guided ) {
+		$reply    = (string) $guided['reply'];
+		$products = isset( $guided['products'] ) && is_array( $guided['products'] ) ? array_values( $guided['products'] ) : array();
+		$pages    = isset( $guided['pages'] ) && is_array( $guided['pages'] ) ? array_values( $guided['pages'] ) : array();
+		$chips    = array();
+
+		if ( isset( $guided['chips'] ) && is_array( $guided['chips'] ) ) {
+			foreach ( $guided['chips'] as $chip ) {
+				if ( count( $chips ) >= self::MAX_CHIPS ) {
+					break;
+				}
+
+				if ( ! is_scalar( $chip ) ) {
+					continue;
+				}
+
+				$chip = $this->sanitize_message( $chip );
+
+				if ( '' !== $chip && ! in_array( $chip, $chips, true ) ) {
+					$chips[] = $chip;
+				}
+			}
+		}
+
+		$this->maybe_log( $message, $reply );
+
+		return $this->apply_no_store(
+			rest_ensure_response(
+				array(
+					'reply'    => $reply,
+					'products' => $products,
+					'pages'    => $pages,
+					'chips'    => $chips,
+				)
+			)
+		);
+	}
+
+	/**
+	 * Forbid caching of a reply that may contain the customer's order data.
+	 *
+	 * The site runs LiteSpeed on Plesk with REST API caching ON. A cached order
+	 * reply served to the next visitor would be exactly the leak this whole
+	 * feature is built to avoid.
+	 *
+	 * IMPORTANT — corrected 2026-08-17 after testing against live: these
+	 * response headers do NOT stop LiteSpeed. LSCWP ignores Cache-Control /
+	 * Pragma / Expires on REST responses and strips
+	 * `X-LiteSpeed-Cache-Control` rather than obeying it. The thing that
+	 * actually prevents LiteSpeed caching is the
+	 * `litespeed_control_set_nocache` action fired by prevent_caching(), which
+	 * handle_request() now calls unconditionally at the top for EVERY chat
+	 * reply, order tool or not.
+	 *
+	 * So this method is no longer the load-bearing protection — it is defence in
+	 * depth for other proxies and CDNs, which do honour these headers. Do not
+	 * remove it, but do not rely on it alone either: if the unconditional
+	 * prevent_caching() call in handle_request() is ever removed, this will NOT
+	 * cover for it.
+	 *
+	 * Nothing about an order is stored anywhere else either: no transient, no
+	 * object cache, no log.
+	 *
+	 * @param WP_REST_Response|mixed $response Response.
+	 * @return WP_REST_Response|mixed
+	 */
+	private function apply_no_store( $response ) {
+		if ( ! $this->order_tool_used || ! $response instanceof WP_REST_Response ) {
+			return $response;
+		}
+
+		nocache_headers();
+
+		$response->header( 'Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0' );
+		$response->header( 'Pragma', 'no-cache' );
+		$response->header( 'Expires', '0' );
+		$response->header( 'X-LiteSpeed-Cache-Control', 'no-cache' );
+
+		return $response;
+	}
+
+	/**
+	 * The callable the Anthropic client uses to run a tool.
+	 *
+	 * Dispatch is an explicit allowlist of exactly three tool names. Anything
+	 * else returns an empty result rather than reaching any store data — the
+	 * client already rejects unknown names, this is the second lock.
+	 *
+	 * NOTE ON IDENTITY: nothing about the customer is captured into this
+	 * closure and nothing identifying is passed through $input. The order
+	 * lookup resolves the user itself, from the session, at call time. That is
+	 * the whole point — there is no identity value here for anything to tamper
+	 * with. Do not add one.
+	 *
+	 * @return callable fn( string $name, array $input ): array
+	 */
+	private function get_tool_executor() {
+		$products = $this->product_index;
+		$pages    = $this->content_index;
+		$orders   = $this->order_lookup;
+
+		// Deliberately NOT static: it flags order tool use on $this so the
+		// response can be marked no-store and the log suppressed.
+		return function ( $name, $input ) use ( $products, $pages, $orders ) {
+			$input = is_array( $input ) ? $input : array();
+
+			if ( DB_Chat_Claude_Client::TOOL_ORDERS === $name ) {
+				$this->order_tool_used = true;
+
+				if ( null === $orders ) {
+					return array(
+						'signed_in' => false,
+						'results'   => array(),
+						'count'     => 0,
+						'truncated' => false,
+						'notice'    => 'Order lookup is unavailable. Tell the customer you cannot check orders right now and offer to pass it to a human. Do not ask them for personal details.',
+					);
+				}
+
+				/*
+				 * Only the tool input is forwarded, and the lookup reads exactly
+				 * one key from it (order_number). The customer identity is NOT
+				 * passed in — it is read from the session inside the lookup.
+				 */
+				return $orders->get_my_orders( $input );
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_PAGES === $name ) {
+				if ( null === $pages ) {
+					return array(
+						'results'   => array(),
+						'count'     => 0,
+						'truncated' => false,
+						'notice'    => 'Help page lookup is unavailable. Do not answer the policy question from memory; offer to pass it to a human.',
+					);
+				}
+
+				return $pages->search_pages( $input );
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_PRODUCTS === $name ) {
+				return $products->search_products( $input );
+			}
+
+			return array(
+				'results'   => array(),
+				'count'     => 0,
+				'truncated' => false,
+				'notice'    => 'Unknown tool.',
+			);
+		};
+	}
+
+	/**
+	 * Owner-configurable offline copy, with a safe default.
+	 *
+	 * @return string
+	 */
+	private function offline_message() {
+		$custom = DB_Chat_Plugin::setting( 'db_chat_offline_text', '' );
+
+		if ( '' !== trim( $custom ) ) {
+			return wp_strip_all_tags( $custom );
+		}
+
+		return __( 'Chat is offline right now. Please try again later or contact us directly.', 'durianbikers-chatbot' );
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Input shaping
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * Sanitize the conversation history sent by the browser.
+	 *
+	 * History is client-supplied and therefore untrusted: it is capped, typed,
+	 * length-limited and stripped before it goes anywhere near the model.
+	 *
+	 * @param mixed $history Raw history.
+	 * @return array<int,array{role:string,content:string}>
+	 */
+	private function sanitize_history( $history ) {
+		if ( ! is_array( $history ) ) {
+			return array();
+		}
+
+		// Keep the most recent turns if the client sent too many.
+		if ( count( $history ) > self::MAX_HISTORY ) {
+			$history = array_slice( $history, -self::MAX_HISTORY );
+		}
+
+		$clean = array();
+
+		foreach ( $history as $entry ) {
+			if ( ! is_array( $entry ) || ! isset( $entry['role'], $entry['content'] ) ) {
+				continue;
+			}
+
+			$role = is_scalar( $entry['role'] ) ? strtolower( trim( (string) $entry['role'] ) ) : '';
+
+			if ( ! in_array( $role, array( 'user', 'assistant' ), true ) ) {
+				continue;
+			}
+
+			$content = $this->sanitize_message( $entry['content'] );
+
+			if ( '' === $content ) {
+				continue;
+			}
+
+			if ( mb_strlen( $content ) > self::MAX_MESSAGE_LENGTH ) {
+				$content = mb_substr( $content, 0, self::MAX_MESSAGE_LENGTH );
+			}
+
+			$clean[] = array(
+				'role'    => $role,
+				'content' => $content,
+			);
+		}
+
+		return $clean;
+	}
+
+	/**
+	 * Build the Messages API message array.
+	 *
+	 * The API requires the first message to be from the user and roles to
+	 * alternate, so leading assistant turns are dropped and consecutive
+	 * same-role turns are merged.
+	 *
+	 * @param array  $history Sanitized history.
+	 * @param string $message Current customer message.
+	 * @return array<int,array{role:string,content:string}>
+	 */
+	private function build_messages( array $history, $message ) {
+		$messages = array();
+
+		foreach ( $history as $entry ) {
+			// Drop any assistant turns before the first user turn.
+			if ( empty( $messages ) && 'assistant' === $entry['role'] ) {
+				continue;
+			}
+
+			$last = count( $messages ) - 1;
+
+			if ( $last >= 0 && $messages[ $last ]['role'] === $entry['role'] ) {
+				$messages[ $last ]['content'] .= "\n\n" . $entry['content'];
+				continue;
+			}
+
+			$messages[] = $entry;
+		}
+
+		$last = count( $messages ) - 1;
+
+		if ( $last >= 0 && 'user' === $messages[ $last ]['role'] ) {
+			$messages[ $last ]['content'] .= "\n\n" . $message;
+		} else {
+			$messages[] = array(
+				'role'    => 'user',
+				'content' => (string) $message,
+			);
+		}
+
+		return $messages;
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Rate limiting
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * Enforce the two-tier rate limit.
+	 *
+	 * The site is behind LiteSpeed on Plesk, so REMOTE_ADDR may be a shared
+	 * upstream address rather than the visitor. Gating solely on it would mean
+	 * one visitor's burst locks out every customer on the site. So:
+	 *
+	 *  - Tight bucket, keyed on IP + the widget's per-session client token.
+	 *    Spoofable by a determined attacker, but it makes accidental
+	 *    collisions between real customers impossible.
+	 *  - Loose circuit breaker, keyed on IP alone, set high enough that a
+	 *    shared address never trips it in normal traffic.
+	 *
+	 * The failure mode of a misdiagnosed proxy is therefore "slightly weaker
+	 * abuse protection", not "chatbot dead for everyone".
+	 *
+	 * Only salted hashes are stored; raw IPs are never persisted.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return true|WP_Error
+	 */
+	private function check_rate_limit( $request ) {
+		$ip    = $this->get_client_ip();
+		$token = $this->get_client_token( $request );
+
+		/**
+		 * Filter the loose per-IP circuit breaker.
+		 *
+		 * @param int $limit Requests allowed per window.
+		 */
+		$ip_limit = (int) apply_filters( 'db_chat_rate_limit_ip', self::RATE_LIMIT_IP );
+
+		/**
+		 * Filter the loose per-IP window, in seconds.
+		 *
+		 * @param int $window Window length.
+		 */
+		$ip_window = (int) apply_filters( 'db_chat_rate_window_ip', self::RATE_WINDOW_IP );
+
+		if ( $ip_limit > 0 && ! $this->consume( 'ip|' . $ip, $ip_limit, $ip_window ) ) {
+			return $this->rate_limited_error();
+		}
+
+		/**
+		 * Filter the tight per-visitor limit.
+		 *
+		 * @param int $limit Requests allowed per window.
+		 */
+		$limit = (int) apply_filters( 'db_chat_rate_limit', self::RATE_LIMIT );
+
+		/**
+		 * Filter the tight per-visitor window, in seconds.
+		 *
+		 * @param int $window Window length.
+		 */
+		$window = (int) apply_filters( 'db_chat_rate_window', self::RATE_WINDOW );
+
+		if ( $limit > 0 && ! $this->consume( 'v|' . $ip . '|' . $token, $limit, $window ) ) {
+			return $this->rate_limited_error();
+		}
+
+		return true;
+	}
+
+	/**
+	 * Increment a rate limit bucket.
+	 *
+	 * @param string $identity Unhashed bucket identity.
+	 * @param int    $limit    Requests allowed per window.
+	 * @param int    $window   Window length in seconds.
+	 * @return bool True when the request is allowed.
+	 */
+	private function consume( $identity, $limit, $window ) {
+		$window = max( 1, (int) $window );
+		$key    = self::RATE_PREFIX . substr( wp_hash( 'db_chat_rl|' . $identity ), 0, 32 );
+		$now    = time();
+
+		$bucket = get_transient( $key );
+
+		if ( ! is_array( $bucket ) || ! isset( $bucket['count'], $bucket['expires'] ) || $bucket['expires'] <= $now ) {
+			$bucket = array(
+				'count'   => 0,
+				'expires' => $now + $window,
+			);
+		}
+
+		$bucket['count'] = (int) $bucket['count'] + 1;
+
+		set_transient( $key, $bucket, max( 1, (int) $bucket['expires'] - $now ) );
+
+		return $bucket['count'] <= (int) $limit;
+	}
+
+	/**
+	 * Customer-safe rate limit response.
+	 *
+	 * @return WP_Error
+	 */
+	private function rate_limited_error() {
+		$custom = DB_Chat_Plugin::setting( 'db_chat_rate_limit_text', '' );
+
+		$notice = '' !== trim( $custom )
+			? wp_strip_all_tags( $custom )
+			: __( 'You have sent a lot of messages in a short time. Please wait a few minutes and try again.', 'durianbikers-chatbot' );
+
+		return new WP_Error( 'db_chat_rate_limited', $notice, array( 'status' => 429 ) );
+	}
+
+	/**
+	 * The widget's per-session client token.
+	 *
+	 * Generated by the browser and held in sessionStorage. It is an abuse
+	 * control input only — never an identity, never persisted, never logged.
+	 * Requests without one share a single bucket per IP.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return string
+	 */
+	private function get_client_token( $request ) {
+		$token = $request->get_header( self::CLIENT_TOKEN_HEADER );
+
+		if ( ! is_string( $token ) ) {
+			return 'none';
+		}
+
+		$token = trim( $token );
+
+		// Conservative charset, bounded length; anything else is discarded.
+		if ( '' === $token || ! preg_match( '/^[A-Za-z0-9_\-]{8,64}$/', $token ) ) {
+			return 'none';
+		}
+
+		return $token;
+	}
+
+	/**
+	 * Client IP address.
+	 *
+	 * REMOTE_ADDR only by default — forwarded headers are trivially spoofable,
+	 * so honouring them is opt-in for sites behind a proxy they control.
+	 *
+	 * @return string
+	 */
+	private function get_client_ip() {
+		$ip = '';
+
+		/**
+		 * Filter whether to trust a forwarded-for header for rate limiting.
+		 *
+		 * Only enable this behind a proxy you control.
+		 *
+		 * @param bool $trust Whether to trust the header.
+		 */
+		if ( apply_filters( 'db_chat_trust_proxy_header', false ) && ! empty( $_SERVER['HTTP_X_FORWARDED_FOR'] ) ) {
+			$forwarded = sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_FORWARDED_FOR'] ) );
+			$parts     = explode( ',', $forwarded );
+			$ip        = trim( $parts[0] );
+		}
+
+		if ( '' === $ip && ! empty( $_SERVER['REMOTE_ADDR'] ) ) {
+			$ip = sanitize_text_field( wp_unslash( $_SERVER['REMOTE_ADDR'] ) );
+		}
+
+		if ( ! filter_var( $ip, FILTER_VALIDATE_IP ) ) {
+			$ip = 'unknown';
+		}
+
+		return $ip;
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Logging
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * Log the exchange, but only when the owner explicitly enabled logging.
+	 *
+	 * Off by default. No IP, no user, no identifiers — message text only.
+	 *
+	 * ORDER DATA IS NEVER LOGGED, even with db_chat_logging on. When the order
+	 * tool ran, BOTH sides are withheld: the reply obviously carries order
+	 * detail, and the question routinely carries an order number. A one-line
+	 * marker is still written so the owner can see the feature was exercised —
+	 * that is the audit trail, and it contains nothing personal.
+	 *
+	 * @param string $message Customer message.
+	 * @param string $reply   Assistant reply.
+	 * @return void
+	 */
+	private function maybe_log( $message, $reply ) {
+		if ( ! DB_Chat_Plugin::is_logging_enabled() ) {
+			return;
+		}
+
+		if ( $this->order_tool_used ) {
+			DB_Chat_Plugin::log_error( 'chat [order lookup used — question and reply withheld from the log]' );
+
+			return;
+		}
+
+		DB_Chat_Plugin::log_error(
+			sprintf(
+				'chat q=%s | a=%s',
+				mb_substr( (string) $message, 0, 300 ),
+				mb_substr( (string) $reply, 0, 300 )
+			)
+		);
+	}
+}

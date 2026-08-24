@@ -1,0 +1,42 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "chatbot-preview",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "durianbikers-chatbot/assets"
+      ],
+      "port": 8765,
+      "autoPort": false
+    },
+    {
+      "name": "hero-mock",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8766",
+        "--directory",
+        "motormania-child/assets/mock"
+      ],
+      "port": 8766
+    },
+    {
+      "name": "helmet-3d",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8767",
+        "--directory",
+        "motormania-child/assets/mock/helmet-3d"
+      ],
+      "port": 8767
+    }
+  ]
+}

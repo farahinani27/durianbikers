@@ -1,1 +1,7 @@
 - [Repo layout](project_repo-layout.md) — repo root holds the child theme under motormania-child/, not a full WP install
+- [Watching videos](feedback_watching-videos.md) — no ffmpeg on the Mac; extract frames with Swift/AVFoundation, and say there's no audio
+- [Previewing UI locally](project_previewing-ui-locally.md) — no local WP, so ship a stubbed static mock; headless Chrome traps that fake bugs
+- [Preview mocks must self-label](feedback_preview-mocks-must-self-label.md) — owner read canned replies as a broken bot; tag every fake output inline
+- [Product photo constraints](project_product-photo-constraints.md) — 800px white-bg WebP, no alpha; dark hero designs need commissioned cut-outs
+- [Verify SKU strings](feedback_verify-sku-strings.md) — a slash-separated string is usually one compound SKU; look it up before scoping
+- [Cross-agent contracts](feedback_cross-agent-contracts.md) — pin shared invariants in code at both sites; verify the peer's symbol exists before citing it

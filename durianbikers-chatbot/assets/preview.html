@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Durian Bikers chatbot — local preview (not deployed)</title>
+
+<!--
+	LOCAL PREVIEW ONLY — DO NOT UPLOAD THIS FILE TO THE SERVER.
+
+	This is a static mock of a Durian Bikers product page with the real
+	chatbot.css and chatbot.js loaded exactly as WordPress would enqueue
+	them. window.fetch is stubbed, so nothing leaves your machine and the
+	live site is never touched. Open it by double-clicking the file.
+
+	NO AI IS CONNECTED. Every reply is canned text written into the
+	SCENARIOS object at the bottom of this file, and the reply you get is
+	the one selected in the "Canned reply to send next" dropdown — what
+	the visitor types is logged to the console and then ignored. The page
+	says this in three places on purpose: the banner at the top, the line
+	under the dropdown, and a tag stamped onto every reply inside the
+	widget. Those tags are preview scaffolding injected from this file,
+	not part of the widget's real design.
+
+	What it lets you check without deploying:
+	  - launcher position vs. the sticky header cart and the back-to-top button
+	  - panel open/close animation, focus ring, Esc, tab trap
+	  - product cards (real catalogue data, captured 2026-08-17)
+	  - the 429 / 503 / 500 / network-failure messages
+	  - silent recovery from an expired nonce (the "409" scenario) — the
+	    customer should see nothing at all go wrong
+	  - that model output is rendered as plain text, never as HTML
+	  - the guided product finder's follow-up chips: how a step looks, that
+	    only 6 of a longer list render, that tapping one sends it and clears
+	    the row, that TYPING the same word does the same thing, that a
+	    response with no `chips` key renders nothing, and that a chip label
+	    containing HTML shows up as literal text
+	  - that hostile theme CSS cannot reach into the widget (shadow root)
+	  - the WhatsApp handoff row: open, closed, unknown and not-configured,
+	    and what the wa.me link actually contains at any moment
+
+	THE WHATSAPP LINK IS THE ONE REAL THING ON THIS PAGE. Everything else is
+	stubbed, but that anchor is a genuine wa.me URL and clicking it really
+	will try to open WhatsApp to the number in the handoff config below.
+	The control panel shows the exact link, live, so the prefill can be
+	checked without clicking it.
+
+	Resize the browser to 375px, 768px and 1440px to check all three layouts.
+-->
+
+<link rel="stylesheet" href="chatbot.css">
+
+<style>
+	/* ---- Mock store page. Prefixed `preview-` so nothing here can be
+	   confused with the widget's own styles. ---- */
+	:root { color-scheme: light; }
+
+	body {
+		margin: 0;
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+		color: #1d1d1d;
+		background: #fff;
+	}
+
+	/* ---- Top-of-page "this is a mock" banner. Deliberately loud and
+	   deliberately unlike the store or the widget, so it reads as
+	   scaffolding rather than as page content. ---- */
+	.preview-alert {
+		padding: 18px 24px;
+		border-bottom: 4px solid #b8860b;
+		background: #fff3cd;
+		color: #3d2c00;
+	}
+	.preview-alert-tag {
+		display: inline-block;
+		margin-bottom: 8px;
+		padding: 3px 8px;
+		border-radius: 4px;
+		background: #b8860b;
+		color: #fff;
+		font: 700 11px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+		text-transform: uppercase;
+		letter-spacing: .08em;
+	}
+	.preview-alert h2 {
+		margin: 0 0 6px;
+		font-size: clamp(18px, 3vw, 24px);
+		line-height: 1.25;
+	}
+	.preview-alert p {
+		margin: 0;
+		max-width: 78ch;
+		font-size: clamp(14px, 1.6vw, 16px);
+		line-height: 1.55;
+	}
+	.preview-alert p + p { margin-top: 6px; }
+
+	.preview-header {
+		position: sticky;
+		top: 0;
+		z-index: 999;
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 16px;
+		padding: 14px 24px;
+		background: #101211;
+		color: #fff;
+	}
+
+	.preview-logo { font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+
+	.preview-header-tools { display: flex; align-items: center; gap: 18px; font-size: 14px; }
+
+	/* Stand-in for the theme's sticky cart icon + fragment count. */
+	.preview-cart { position: relative; }
+	.preview-cart-count {
+		position: absolute;
+		top: -8px;
+		right: -12px;
+		min-width: 18px;
+		height: 18px;
+		padding: 0 5px;
+		border-radius: 999px;
+		background: #5f9d40;
+		color: #fff;
+		font-size: 11px;
+		font-weight: 700;
+		line-height: 18px;
+		text-align: center;
+	}
+
+	.preview-hero {
+		padding: 72px 24px;
+		background: #1d1d1d;
+		color: #fff;
+	}
+	.preview-hero h1 { margin: 0 0 12px; font-size: clamp(28px, 5vw, 46px); }
+	.preview-hero p { margin: 0; color: rgba(255,255,255,.7); max-width: 52ch; }
+
+	.preview-body { padding: 40px 24px 160px; max-width: 900px; }
+	.preview-body h2 { margin-top: 40px; }
+	.preview-body p { line-height: 1.7; color: #444; max-width: 68ch; }
+
+	/* Stand-in for MotorMania's #backtotop, at its real coordinates, so the
+	   launcher offset can be eyeballed. */
+	#backtotop {
+		position: fixed;
+		bottom: 80px;
+		right: 30px;
+		z-index: 9999;
+	}
+	#backtotop span {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 50px;
+		height: 50px;
+		border-radius: 50%;
+		background: #5f9d40;
+		color: #fff;
+		font-size: 20px;
+	}
+
+	/* ---- Preview control panel ----
+	   `--preview-panel-top` is measured in JS from the notice banner + header
+	   so the panel never covers the "this is a mock" banner at any width. */
+	.preview-panel {
+		position: fixed;
+		top: var(--preview-panel-top, 78px);
+		left: 16px;
+		z-index: 99999;
+		width: 268px;
+		padding: 14px;
+		border-radius: 12px;
+		background: rgba(255,255,255,.97);
+		box-shadow: 0 8px 28px rgba(0,0,0,.18);
+		font-size: 12px;
+		line-height: 1.45;
+	}
+	.preview-panel h3 { margin: 0 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+	.preview-panel .preview-hint { margin: 0 0 10px; color: #717171; }
+	.preview-panel .preview-hint-strong { margin: 0 0 6px; color: #7a5a00; font-weight: 700; }
+	.preview-panel label { display: block; font-weight: 700; margin-bottom: 4px; }
+	.preview-panel select { width: 100%; padding: 6px; margin-bottom: 10px; font: inherit; }
+	.preview-panel .preview-check { display: flex; gap: 8px; align-items: flex-start; font-weight: 400; }
+	.preview-panel code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+	.preview-toggle {
+		position: fixed;
+		top: var(--preview-panel-top, 78px);
+		left: 16px;
+		z-index: 99999;
+		padding: 6px 10px;
+		border: 0;
+		border-radius: 8px;
+		background: #1d1d1d;
+		color: #fff;
+		font-size: 12px;
+		cursor: pointer;
+	}
+	@media (max-width: 700px) {
+		.preview-panel { width: calc(100vw - 32px); }
+	}
+</style>
+
+<!-- Deliberately hostile global CSS, of the kind Elementor / Essential Addons /
+     ShopEngine can introduce. Disabled until the checkbox is ticked. If the
+     shadow root is doing its job, none of this reaches the widget. -->
+<style id="preview-hostile" media="not all">
+	div, ul, li, p { border-radius: 0 !important; font-family: "Comic Sans MS", cursive !important; }
+	button, a { background: hotpink !important; color: #000 !important; text-transform: uppercase !important; letter-spacing: .2em !important; }
+	img { filter: invert(1) !important; }
+	* { box-shadow: none !important; }
+</style>
+</head>
+<body>
+
+<div class="preview-alert" role="note" aria-label="Preview notice">
+	<span class="preview-alert-tag">Preview mock — not the real chatbot</span>
+	<h2>This is a UI mock. No AI is connected, and the replies are canned.</h2>
+	<p>Every answer you see comes from a fixed list in this file, and the one you get is whichever
+	is selected in the <strong>&ldquo;Canned reply to send next&rdquo;</strong> dropdown on the left
+	&mdash; not from your question. <strong>Typing a different question will not change the
+	answer.</strong> This page is only for judging how the chat window looks and behaves.</p>
+</div>
+
+<header class="preview-header">
+	<span class="preview-logo">Durian Bikers</span>
+	<nav class="preview-header-tools">
+		<span>Shop</span>
+		<span>Helmets</span>
+		<span>Search</span>
+		<span class="preview-cart">Cart<span class="preview-cart-count">3</span></span>
+	</nav>
+</header>
+
+<section class="preview-hero">
+	<h1>Mock storefront</h1>
+	<p>This page is a stand-in for a live Durian Bikers page. Only the chat widget in the
+	bottom-right corner is real code — everything else is scaffolding so the widget can be
+	judged in context.</p>
+</section>
+
+<main class="preview-body">
+	<h2>Why this page exists</h2>
+	<p>There is no local WordPress install and no staging sandbox, so this file is the safe way
+	to review the chat widget. The network layer is stubbed: every request the widget makes is
+	answered locally by the script at the bottom of this file. Nothing is sent anywhere.</p>
+
+	<h2>How to use it</h2>
+	<p>Pick an answer from the <strong>&ldquo;Canned reply to send next&rdquo;</strong> dropdown on
+	the left, then send any message at all in the chat window — the reply you picked is what comes
+	back. Your wording is ignored, so this page cannot tell you whether the assistant would
+	<em>understand</em> a question; it only shows you how an answer looks and behaves. Every reply
+	inside the window carries a dashed amber tag saying so. Those tags exist only in this preview
+	and will not appear on the live site.</p>
+
+	<h2>What to look at first</h2>
+	<p><strong>The "fitment question, declined" scenario.</strong> The catalogue has no structured
+	bike-model data, so the assistant cannot confirm what fits what. That reply is the one worth
+	reading closely before this goes live — a confident wrong answer on a brake or safety part is
+	the expensive failure, not an unhelpful one. The "listed but unavailable to order" scenario is
+	the second one to check: it covers the zero-variation imports, which are a large slice of the
+	catalogue.</p>
+	<p><strong>The shipping scenario.</strong> &ldquo;Do you ship to Sabah / to Singapore?&rdquo; is
+	a question customers really ask. The assistant now answers it from the store's own Delivery
+	Information page and shows a tappable link to that page underneath the reply, so the customer
+	can read the policy in full. Judge the wording. The page links are the one thing on this mock
+	that really will open the live site if you click them.</p>
+
+	<h2>The WhatsApp handoff</h2>
+	<p>At the bottom of the chat window, under the message box, there is a quiet row with a WhatsApp
+	button, your opening hours and a line saying whether you are open. It is meant to be an escape
+	hatch, not an advert &mdash; it should be easy to find when someone wants it and easy to ignore
+	when they do not. Use the <strong>&ldquo;WhatsApp handoff config&rdquo;</strong> dropdown on the
+	left to see all four states: open, closed, unknown, and not configured. In the last one the whole
+	row disappears &mdash; no button, no line, no leftover gap.</p>
+	<p>Pick the <strong>&ldquo;declined, hands over to WhatsApp&rdquo;</strong> reply to see what
+	happens when the assistant gives up and points at the button: the row lights up green for about
+	six seconds, then goes quiet again.</p>
+	<p><strong>What the message says when it opens.</strong> The link carries your customer's own
+	last message so they do not have to type it twice &mdash; nothing else. Not the assistant's
+	replies, not the products it showed. And if orders came up at all in the conversation, it carries
+	nothing but a plain &ldquo;Hi, I have a question from your website&rdquo;: a WhatsApp link is
+	saved in the browser's history and visible to the phone, and order numbers do not belong there.
+	The control panel on the left shows the exact link at all times, so you can read it yourself
+	&mdash; try the <strong>&ldquo;order status&rdquo;</strong> reply and watch the link fall back
+	to the plain opener.</p>
+
+	<h2>What else to look at</h2>
+	<p>Open the launcher. Check that it clears the back-to-top button and the sticky header cart.
+	Press Tab repeatedly with the panel open — focus should stay inside the panel. Press Esc —
+	the panel should close and focus should return to the launcher. Then work through the
+	scenarios in the control panel on the left, especially the error states and the XSS probe.</p>
+
+	<h2>Responsive</h2>
+	<p>At 375px the panel becomes a full-screen sheet over a dimmed overlay, and tapping the
+	overlay closes it. At 768px and 1440px it is a floating panel anchored bottom-right.</p>
+
+	<h2>Filler</h2>
+	<p>Scroll content so the sticky header, the back-to-top button and the mobile scroll lock can
+	all be observed. When the panel is open on a narrow viewport, the page behind must not scroll,
+	and closing must return you to the same scroll position.</p>
+	<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit. Suspendisse potenti. Vestibulum
+	ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia curae.</p>
+	<p>Curabitur sit amet magna quam. Praesent in libero vel turpis pellentesque egestas sit amet
+	vel nunc. Nunc lobortis dui neque quis accumsan.</p>
+	<p>Etiam vel neque nec dui dignissim bibendum. Vivamus at augue eget arcu dictum varius duis
+	at consectetur lorem. Sed euismod nisi porta lorem mollis aliquam.</p>
+	<p>Aliquam id diam maecenas ultricies mi eget mauris. Pharetra magna ac placerat vestibulum
+	lectus mauris ultrices eros in cursus.</p>
+	<p>Nibh tellus molestie nunc non blandit massa enim nec. Sagittis id consectetur purus ut
+	faucibus pulvinar elementum integer enim neque.</p>
+</main>
+
+<div id="backtotop"><span>&uarr;</span></div>
+
+<button class="preview-toggle" id="preview-toggle" hidden>Preview controls</button>
+
+<div class="preview-panel" id="preview-controls">
+	<h3>Preview controls</h3>
+	<p class="preview-hint">Static mock. No AI, no network: <code>fetch</code> is stubbed and every
+	reply is canned text from this file.</p>
+
+	<label for="preview-scenario">Canned reply to send next</label>
+	<p class="preview-hint preview-hint-strong">Whatever you type, this is the reply you get.</p>
+	<select id="preview-scenario">
+		<option value="products">200 — reply + 4 product cards</option>
+		<option value="text">200 — plain reply, no products</option>
+		<option value="shipping">200 — shipping question, answered from the Delivery Information page</option>
+		<option value="mixed">200 — reply + product cards + page links</option>
+		<option value="finder">200 — guided finder, step 1 (chips)</option>
+		<option value="finderbrands">200 — guided finder, brand step (9 sent, only 6 render)</option>
+		<option value="findermalay">200 — guided finder in Malay (Malay prose, catalogue labels in English)</option>
+		<option value="findermalaybrands">200 — Malay brand step (5 real + escape option, nothing truncated)</option>
+		<option value="chipstruncated">200 — labels cut at the backend's 32-char cap (ALL-CAPS one wraps; see comment)</option>
+		<option value="chipsempty">200 — results turn: chips sent as [] (must clear, render nothing)</option>
+		<option value="finderresults">200 — finder results: cards + page link + chips</option>
+		<option value="chipsabsent">200 — no "chips" key at all (nothing must render)</option>
+		<option value="chipsbad">200 — malformed "chips" (nothing must render)</option>
+		<option value="chipsxss">200 — chip labels containing HTML (must render as text)</option>
+		<option value="slow">200 — slow (8s, shows "searching")</option>
+		<option value="compare">200 — compare two products (facts only, never ranks)</option>
+		<option value="compareonly">200 — compare, one side not found</option>
+		<option value="comparejudge">200 — "which is better?" → facts + refuses to judge</option>
+		<option value="comparemalay">200 — compare, asked in Malay</option>
+		<option value="fitment">200 — fitment question, declined (important)</option>
+		<option value="handoff">200 — declined, hands over to WhatsApp (highlights the row)</option>
+		<option value="orderstatus">200 — order status (prefill must be skipped)</option>
+		<option value="unavailable">200 — listed but unavailable to order</option>
+		<option value="long">200 — long reply (wrapping)</option>
+		<option value="xss">200 — XSS probe (must render as text)</option>
+		<option value="429">429 — rate limited</option>
+		<option value="503">503 — chat offline</option>
+		<option value="500">500 — server error (offers retry)</option>
+		<option value="409">409 — stale nonce (must recover silently)</option>
+		<option value="409hard">409 twice — retry also fails</option>
+		<option value="nosession">session route down (offers retry)</option>
+		<option value="network">network failure (offers retry)</option>
+	</select>
+
+	<label for="preview-handoff">WhatsApp handoff config</label>
+	<p class="preview-hint">Changing this reloads the page — <code>dbChat</code> is read once at startup, exactly as on the real site.</p>
+	<select id="preview-handoff">
+		<option value="open">Configured, open now</option>
+		<option value="closed">Configured, closed now</option>
+		<option value="unknown">Configured, but open/closed unknown (session has no flag)</option>
+		<option value="absent">Not configured — the whole row must vanish</option>
+	</select>
+
+	<p class="preview-hint preview-hint-strong">Live wa.me link (this one is real):</p>
+	<p class="preview-hint"><code id="preview-handoff-href" style="word-break:break-all">row not rendered</code></p>
+
+	<label class="preview-check">
+		<input type="checkbox" id="preview-hostile-toggle">
+		<span>Simulate hostile theme CSS (Comic Sans, hot pink buttons, inverted images). The widget must be unaffected.</span>
+	</label>
+
+	<p class="preview-hint" style="margin-top:10px">Product data is real, captured from the store on 2026-08-17. Prices are the strings WooCommerce actually returns.</p>
+	<button type="button" id="preview-hide" style="margin-top:6px">Hide this panel</button>
+</div>
+
+<script>
+/*
+	Stub backend. Mirrors the REST contract in SPEC.md exactly:
+	  200 -> {
+	           reply: string,
+	           products: [ {name, url, price, image, in_stock} ],
+	           pages:    [ {title, url} ],  // always present, 0–2 entries
+	           chips:    [ "string", ... ] // OPTIONAL, 0–6 rendered
+	         }
+
+	`chips` is the guided product finder's follow-up options: a flat array of
+	plain strings, never {label, value} objects, because tapping a chip sends
+	its label as the customer's message.
+
+	The finder itself ALWAYS sends the key — question turns carry chips, the
+	results turn carries []. But the key stays OPTIONAL in the widget, because
+	every other reply on the live site omits it entirely and must keep working
+	untouched. `chipsempty` and `chipsabsent` cover those two cases separately
+	on purpose: both render nothing, for different reasons.
+	  4xx/5xx -> { message: string }
+
+	GET /session -> { nonce: string, handoff?: { isOpen: boolean } }
+	  Only the volatile open/closed flag travels on the session route, because
+	  it is the one route LiteSpeed does not cache. Everything static about the
+	  handoff (url, label, hours, notes) is localized into dbChat below. When no
+	  number is configured the `handoff` key is absent from BOTH.
+
+	Nothing here ships to production.
+*/
+(function () {
+	'use strict';
+
+	// Real catalogue rows. `price` is the plain-text form of WooCommerce's
+	// price_html for this store ("RM839.00" — no space), which is what the
+	// backend is expected to send. The widget never formats currency itself.
+	var PRODUCTS = [
+		{
+			name: 'Shinko Tires SR777 Series (130/70B18WW) Heavy Duty Tire',
+			url: 'https://durianbikers.com/product/shinko-tires-sr777-series-130-70b-18ww/',
+			price: 'RM839.00',
+			image: 'https://durianbikers.com/wp-content/uploads/2026/05/Untitled_13_2e3386fa-efdb-4a85-baa1-0ac822de9075.jpg',
+			in_stock: true
+		},
+		{
+			name: 'Shinko Tires SR777 Series (130/60B19) Heavy Duty Tire',
+			url: 'https://durianbikers.com/product/shinko-tires-sr777-series-130-60b-19/',
+			price: '',
+			image: 'https://durianbikers.com/wp-content/uploads/2026/05/Untitled_4.jpg',
+			in_stock: false
+		},
+		{
+			name: 'Barkbusters Handguard Kit - No Plastics - Honda X-ADV (2021-) (BHG-143-00-NP)',
+			url: 'https://durianbikers.com/product/barkbusters-handguard-kit-no-plastics-honda-x-adv-2021-bhg-143-00-np/',
+			price: 'RM818.00',
+			image: 'https://durianbikers.com/wp-content/uploads/2026/08/BHG-143-00-NP.jpg',
+			in_stock: true
+		},
+		{
+			name: 'Axxis Gecko Visor Sparepart (Dark) (V-24 MAX)',
+			url: 'https://durianbikers.com/product/axxis-gecko-visor-sparepart-dark-v-24-max/',
+			price: 'RM150.00',
+			image: 'https://durianbikers.com/wp-content/uploads/2026/08/Axxis-Gecko-Visor-Sparepart-Dark-V-24-MAX-1.webp',
+			in_stock: false
+		}
+	];
+
+	var SCENARIOS = {
+		products: {
+			status: 200,
+			delay: 1200,
+			body: {
+				reply: 'Yes — we stock the Shinko SR777 in a few sizes. The 130/70B18 is in stock now; the 130/60B19 is currently out. Tell me your model and year and I will narrow it down.',
+				products: PRODUCTS
+			}
+		},
+		text: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'Boleh! Kami ada banyak pilihan sarung tangan dan helmet. Awak cari untuk riding harian atau touring?',
+				products: []
+			}
+		},
+		/*
+			The question the store owner actually asked the mock ("do you
+			ship to Sabah? / to Singapore?"). The backend answers this with
+			the `search_pages` tool: it reads the store's own policy pages
+			and returns them in a `pages` array alongside the reply.
+
+			`pages` is always present, always an array, 0–2 entries, each
+			with exactly `title` and `url`. Title and URL are resolved
+			server-side from the real WP_Post (publish status and allowlist
+			re-checked at response time), so the model never sees a URL and
+			cannot invent one — and it is instructed to keep URLs out of the
+			prose, which is why the reply below has none.
+
+			Reply wording is paraphrased from the live Delivery Information
+			page: worldwide via DHL Express, MY/SG buyers pointed at the
+			official Lazada/Shopee stores, no Israel, PO boxes or APO/FPO/DPO.
+		*/
+		shipping: {
+			status: 200,
+			delay: 1300,
+			body: {
+				reply: 'Yes — we ship worldwide via DHL Express, straight to your door. For customers in Malaysia (Sabah and Sarawak included) and Singapore, we ask you to order through our official Lazada or Shopee stores instead. We cannot ship to Israel, PO boxes, or military addresses (APO/FPO/DPO). Delivery estimates run from the dispatch date, and customs clearance in the destination country can add time. Full details are on our delivery page.',
+				products: [],
+				pages: [
+					{ title: 'Delivery Information', url: 'https://durianbikers.com/delivery-information/' }
+				]
+			}
+		},
+		/*
+			A reply can carry products AND pages at once ("do you have this
+			tyre, and can you post it to Sabah?"). Check the order reads
+			right: reply, then the cards, then the page links.
+		*/
+		mixed: {
+			status: 200,
+			delay: 1400,
+			body: {
+				reply: 'We have the Shinko SR777 in that size, and yes — we ship it out via DHL Express. Malaysian and Singaporean customers order through our official Lazada or Shopee stores, so use whichever you prefer.',
+				products: PRODUCTS.slice(0, 2),
+				pages: [
+					{ title: 'Delivery Information', url: 'https://durianbikers.com/delivery-information/' },
+					{ title: 'Return & Refunds Policy', url: 'https://durianbikers.com/return-refunds-policy/' }
+				]
+			}
+		},
+		slow: {
+			status: 200,
+			delay: 8000,
+			body: {
+				reply: 'Sorry that took a moment — I checked the whole catalogue. Here is what fits your description.',
+				products: PRODUCTS.slice(0, 2)
+			}
+		},
+		/*
+			THE ONE TO LOOK AT. The catalogue has no structured bike-model
+			attribute, so the bot cannot confirm fitment and must say so
+			instead of guessing. On brake and safety parts a confident wrong
+			answer is the expensive failure — check that this reads as a
+			clear "I can't confirm, here is a human" and that NO product
+			cards are attached to it.
+		*/
+		/*
+			COMPARISON. Reply text below is VERBATIM engine output, dumped from
+			class-lookup-engine.php via the test harness — not written by hand.
+			It compares and never ranks: no ordering implies a recommendation,
+			and an explicit 'which is better' gets the facts plus a refusal to
+			judge. Field lines are <=36 chars so they hold one line at 375px.
+		*/
+		compare: {
+			status: 200,
+			delay: 500,
+			body: {
+				reply: "Side by side, from what our catalogue lists:\n\nShinko 705 Trail Master 120/70-17\nPrice: RM 320.00\nStock: in stock\nBrand: Shinko\nCategory: Tyres\n\nShoei NXR2 Helmet\nPrice: RM 2,450.00\nStock: out of stock\nBrand: Shoei\nCategory: Helmets\n\nThose are the facts our listings carry. I cannot judge which one suits you \u2014 I match words, I have no fitment data for your bike, and the wrong part is a safety problem. I have no specifications, weights or dimensions to compare \u2014 our listings do not record them.",
+				products: [{"name": "Shinko 705 Trail Master 120/70-17", "url": "https://durianbikers.com/product/shinko-705/", "price": "RM 320.00", "image": "", "in_stock": true}, {"name": "Shoei NXR2 Helmet", "url": "https://durianbikers.com/product/shoei-nxr2/", "price": "RM 2,450.00", "image": "", "in_stock": false}]
+			}
+		},
+		compareonly: {
+			status: 200,
+			delay: 500,
+			body: {
+				reply: "Side by side, from what our catalogue lists:\n\nShinko 705 Trail Master 120/70-17\nPrice: RM 320.00\nStock: in stock\nBrand: Shinko\nCategory: Tyres\n\nI could not find anything for \"pirelli diablo\".\n\nThose are the facts our listings carry. I cannot judge which one suits you \u2014 I match words, I have no fitment data for your bike, and the wrong part is a safety problem. For anything I cannot answer, use the WhatsApp button below and a person will reply.",
+				products: [{"name": "Shinko 705 Trail Master 120/70-17", "url": "https://durianbikers.com/product/shinko-705/", "price": "RM 320.00", "image": "", "in_stock": true}]
+			}
+		},
+		comparejudge: {
+			status: 200,
+			delay: 500,
+			body: {
+				reply: "Side by side, from what our catalogue lists:\n\nShinko 705 Trail Master 120/70-17\nPrice: RM 320.00\nStock: in stock\nBrand: Shinko\nCategory: Tyres\n\nShoei NXR2 Helmet\nPrice: RM 2,450.00\nStock: out of stock\nBrand: Shoei\nCategory: Helmets\n\nThose are the facts our listings carry. I cannot judge which one suits you \u2014 I match words, I have no fitment data for your bike, and the wrong part is a safety problem. I have no specifications, weights or dimensions to compare \u2014 our listings do not record them. For anything I cannot answer, use the WhatsApp button below and a person will reply.",
+				products: [{"name": "Shinko 705 Trail Master 120/70-17", "url": "https://durianbikers.com/product/shinko-705/", "price": "RM 320.00", "image": "", "in_stock": true}, {"name": "Shoei NXR2 Helmet", "url": "https://durianbikers.com/product/shoei-nxr2/", "price": "RM 2,450.00", "image": "", "in_stock": false}]
+			}
+		},
+		comparemalay: {
+			status: 200,
+			delay: 500,
+			body: {
+				reply: "Perbandingan sebelah-menyebelah, ikut apa yang tersenarai dalam katalog kami:\n\nShinko 705 Trail Master 120/70-17\nHarga: RM 320.00\nStok: ada stok\nJenama: Shinko\nKategori: Tyres\n\nShoei NXR2 Helmet\nHarga: RM 2,450.00\nStok: stok habis\nJenama: Shoei\nKategori: Helmets\n\nItu maklumat yang ada pada senarai kami. Saya tidak boleh menilai yang mana sesuai untuk anda \u2014 saya cuma padankan perkataan, saya tiada data kesesuaian untuk motosikal anda, dan bahagian yang salah adalah masalah keselamatan. Saya tiada spesifikasi, berat atau ukuran untuk dibandingkan \u2014 senarai kami tidak menyimpannya.",
+				products: [{"name": "Shinko 705 Trail Master 120/70-17", "url": "https://durianbikers.com/product/shinko-705/", "price": "RM 320.00", "image": "", "in_stock": true}, {"name": "Shoei NXR2 Helmet", "url": "https://durianbikers.com/product/shoei-nxr2/", "price": "RM 2,450.00", "image": "", "in_stock": false}]
+			}
+		},
+		fitment: {
+			status: 200,
+			delay: 1400,
+			body: {
+				reply: 'I can\'t confirm fitment for a Yamaha R15 from what I have — our catalogue does not list which bikes each part fits, and I would rather not guess on a brake part. Send us the model year and we will confirm it properly before you order. Would you like me to pass this to the team?',
+				products: []
+			}
+		},
+		/*
+			Roughly a quarter of the catalogue are zero-variation imports:
+			the product page exists but there is no orderable price. Check
+			the card degrades cleanly — out-of-stock pill, no price line,
+			View still goes to the product page.
+		*/
+		unavailable: {
+			status: 200,
+			delay: 1100,
+			body: {
+				reply: 'That one is listed but not available to order at the moment — there is no live price against it. I can point you to the page, or the team can tell you when it is back.',
+				products: [PRODUCTS[1]]
+			}
+		},
+		long: {
+			status: 200,
+			delay: 1200,
+			body: {
+				reply: 'A few things to check before you order tyres.\n\n1. Rim diameter must match exactly — an 18 inch tyre will not go on a 19 inch rim.\n2. Section width and aspect ratio affect handling and clearance; stay close to the manufacturer spec unless you know what you are changing.\n3. Load and speed rating must meet or exceed the original.\n\nAlsoverylongunbrokenstringtocheckthatwrappingworkspropertlyinsidethebubblewithoutoverflowing.\n\nIf you tell me the bike and year I can confirm the correct size.',
+				products: []
+			}
+		},
+		xss: {
+			status: 200,
+			delay: 700,
+			body: {
+				// Model output is untrusted. All of this must appear as literal
+				// text, and the javascript: URL must be dropped entirely.
+				reply: 'XSS probe: <img src=x onerror="alert(\'popped\')"> <script>alert("popped")<\/script> <b>not bold</b>',
+				products: [
+					{
+						name: '<script>alert("name")<\/script> Fake Product',
+						url: 'javascript:alert("url")',
+						price: '<b>RM1.00</b>',
+						image: 'javascript:alert("image")',
+						in_stock: true
+					}
+				]
+			}
+		},
+		/*
+			The reply that sends the customer to a human. The widget spots the
+			handover in the text and gives the footer row a short nudge — six
+			seconds of green border and two pulses, then quiet again. There is
+			deliberately no second button inside the message: one place to
+			look, not two. With prefers-reduced-motion on, the pulse is gone
+			and only the border and tint remain.
+		*/
+		handoff: {
+			status: 200,
+			delay: 1300,
+			body: {
+				reply: 'That one I can\'t answer properly — I\'d be guessing, and on a brake part a guess is worth nothing. The team can check it against the supplier catalogue for you. Message us on WhatsApp using the button below and someone will pick it up.',
+				products: [],
+				pages: []
+			}
+		},
+		/*
+			PRIVACY CHECK. Anything order-shaped in the conversation — typed by
+			the customer OR said by the assistant — permanently switches the
+			WhatsApp prefill off for the rest of the page, because a wa.me URL
+			ends up in browser history and in the OS. After running this
+			scenario the link in the panel above must fall back to the neutral
+			opener, with no order number and no status anywhere in it.
+		*/
+		orderstatus: {
+			status: 200,
+			delay: 1200,
+			body: {
+				reply: 'Order #10428 was picked up by DHL Express on Friday and is out for delivery today. The tracking number is 7412885630 if you want to follow it.',
+				products: [],
+				pages: []
+			}
+		},
+		/*
+			GUIDED PRODUCT FINDER — the follow-up chips.
+
+			Free lookup mode (no API key) offers a chip-driven finder for
+			customers who cannot phrase a question. The response carries one
+			extra key:
+
+			    chips: ["Helmets", "Tyres", ...]
+
+			A FLAT ARRAY OF PLAIN STRINGS, agreed with the backend. Tapping a
+			chip sends its label as the customer's next message, so the label
+			IS the value — which also means TYPING "Helmets" must work exactly
+			the same as tapping the "Helmets" chip. Try both here: the reply
+			is canned either way, but the user row in the transcript should be
+			identical and the chip row should clear both times.
+
+			Up to 6 render, and the row is torn down the moment a new turn
+			starts, so options from an earlier step can never be tapped late.
+		*/
+		finder: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'Happy to help you find something. What are you shopping for?',
+				products: [],
+				pages: [],
+				chips: ['Helmets', 'Tyres', 'Brakes', 'Accessories', 'Something else']
+			}
+		},
+		/*
+			The step that proves the cap matters. The store has 21 helmet
+			brands; only the first 6 chips render. That is why the backend puts
+			an escape option FIRST — "Any brand" survives the truncation, so a
+			customer whose brand is not shown still has a way forward. Check it
+			is visible: if the escape option ever falls off the end, the step
+			is a dead end.
+		*/
+		finderbrands: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'Helmets it is. Any particular brand?',
+				products: [],
+				pages: [],
+				chips: ['Any brand', 'Axxis', 'Shoei', 'Arai', 'HJC', 'LS2', 'Bell', 'Nolan', 'Shark']
+			}
+		},
+		/*
+			The end of the flow: results AND chips at once. Order must read
+			reply -> product cards -> page links -> chips, so the next tap sits
+			closest to the composer.
+		*/
+		finderresults: {
+			status: 200,
+			delay: 1400,
+			body: {
+				reply: 'Here is what I have in that range. Want me to keep narrowing it down?',
+				products: [PRODUCTS[3], PRODUCTS[2]],
+				pages: [
+					{ title: 'Delivery Information', url: 'https://durianbikers.com/delivery-information/' }
+				],
+				chips: ['Show me more', 'Different brand', 'Start over']
+			}
+		},
+		/*
+			Malay flow, in the shape the finder ACTUALLY emits — worth looking
+			at closely, because the row is deliberately mixed-language.
+
+			The bot's own prose and the generic escape option are translated.
+			The category and brand labels are NOT: they stay in the catalogue's
+			own wording, because translating 60 category and 21 brand names
+			would mean maintaining a second catalogue that drifts from the real
+			one. Brand names ("Axxis", "Shinko") would not be translated by
+			anyone anyway, and a Malaysian rider shopping for parts reads
+			"Helmets" on the site itself.
+
+			So: judge whether [Helmets] [Tyres] ... [Tunjukkan semua] under a
+			Malay question reads as natural code-switching or as a half-
+			finished translation.
+		*/
+		findermalay: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'Apa yang anda cari?',
+				products: [],
+				pages: [],
+				chips: ['Helmets', 'Tyres', 'Brakes', 'Accessories', 'Tunjukkan semua']
+			}
+		},
+		/*
+			The finder's real emission pattern at a wide step: at most 5 real
+			options, then the escape option appended as the 6th. It caps its
+			own list rather than trusting this widget to truncate sensibly, so
+			the escape option can never be the entry that falls off. Same 6
+			chips render here as in `finderbrands` — the difference is that
+			nothing was dropped to get there.
+		*/
+		findermalaybrands: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'Baik — topi keledar. Jenama apa yang anda cari?',
+				products: [],
+				pages: [],
+				chips: ['Axxis', 'Shoei', 'Arai', 'HJC', 'LS2', 'Mana-mana jenama']
+			}
+		},
+		/*
+			TRUNCATED LABELS, at the finder's 32-char cap.
+
+			Long category names are cut on a word boundary and an ellipsis is
+			appended, so a truncation always announces itself. That replaced a
+			hard 40-char cut, which produced labels like
+
+			    "Helmet Visors & Replacement Parts Access"
+
+			— truncated, but reading as a complete category name, so a customer
+			had no way to know it had been cut. It was also four characters
+			over the 36 that fit on one line at 375px, so every long chip
+			wrapped to two lines.
+
+			The 32-char cap was chosen against that measured 36, with headroom
+			for wide glyphs. The labels below are the worst cases on purpose:
+			a cut landing exactly at the limit, an ALL-CAPS one (widest glyphs
+			this can produce), and the three-dot "..." spelling as well as the
+			single U+2026 character, since the backend accepts either.
+
+			MEASURED AT 375px, body characters that fit on one line with the
+			ellipsis included:
+
+			    mixed / Title Case   33
+			    ALL CAPS             27
+			    narrow lower-case    52
+
+			So 32 is the right cap for ordinary label casing, and the ONE case
+			below that still wraps is the ALL-CAPS one — a character cap cannot
+			express a width limit. That is left in deliberately rather than
+			tuned away: it is cosmetic, not a dead end. The chip still fits the
+			viewport, still clears 44px, and still sends the same value. Worth
+			knowing because the store's own stock masterlist names brands in
+			caps (SHINKO, BARKBUSTERS, DP BRAKES), so an all-caps taxonomy term
+			is realistic here rather than hypothetical.
+
+			Note the ellipsis is part of the label, and the label is the value:
+			tapping sends the ellipsis too. The backend strips a trailing
+			ellipsis before matching, so a tapped truncated chip and a customer
+			typing the full category name resolve to the same option.
+		*/
+		chipstruncated: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'Which part of the helmet are you after?',
+				products: [],
+				pages: [],
+				chips: [
+					'Helmet Visors & Replacement\u2026',
+					'Handguard Mounting Hardware Kits\u2026',
+					'WATERPROOF TOURING JACKETS MENS\u2026',
+					'Brake Pads Sintered Road & Tr...',
+					'Any category'
+				]
+			}
+		},
+		/*
+			The results turn. The finder ALWAYS sends `chips`, so the end of a
+			flow arrives as an explicit empty array rather than a missing key.
+			That must clear the previous step's chips and render nothing new —
+			distinct from `chipsabsent`, which is an older backend that has
+			never heard of the key at all.
+		*/
+		chipsempty: {
+			status: 200,
+			delay: 1200,
+			body: {
+				reply: 'Ini yang saya jumpa. Klik untuk lihat butiran penuh.',
+				products: [PRODUCTS[3]],
+				pages: [],
+				chips: []
+			}
+		},
+		/*
+			THE BACKWARDS-COMPATIBILITY CHECK. A normal reply that never
+			carries the key at all — the Claude path, or any lookup reply the
+			finder did not handle. That is the majority of replies, not a
+			legacy case: only the finder's own turns emit `chips`. Nothing must
+			appear below the reply, and nothing else about the widget may
+			change. Compare `chipsempty`, which is the finder sending [].
+		*/
+		chipsabsent: {
+			status: 200,
+			delay: 900,
+			body: {
+				reply: 'We stock helmets from Axxis, Shoei, Arai and a few others. Which one were you looking at?',
+				products: [],
+				pages: []
+			}
+		},
+		/*
+			`chips` present but the wrong shape: an object entry, and a number.
+			All-or-nothing on purpose — rendering only "Tyres" here would show
+			a menu that is WRONG rather than absent, and a customer choosing
+			from a menu that quietly lost half its options is worse off than
+			one given no menu at all. Nothing must render.
+		*/
+		chipsbad: {
+			status: 200,
+			delay: 800,
+			body: {
+				reply: 'Malformed chips payload — the widget must render no chip row at all for this one, and otherwise behave normally.',
+				products: [],
+				pages: [],
+				chips: [{ label: 'Helmets', value: 'helmets' }, 'Tyres', 42, null]
+			}
+		},
+		/*
+			Chip labels are server-supplied and built from taxonomy term names,
+			which the owner edits in wp-admin — so a category accidentally
+			named "<b>Sale</b>" is a realistic mistake, not just an attack.
+			Every label below must appear as LITERAL TEXT on the chip face:
+			visible angle brackets, no bold, no script running, no alert.
+			Tapping one sends those same literal characters as the message.
+		*/
+		chipsxss: {
+			status: 200,
+			delay: 800,
+			body: {
+				reply: 'Chip-label XSS probe. Every chip below must read as literal text.',
+				products: [],
+				pages: [],
+				chips: [
+					'<script>alert("chip")<\/script>',
+					'<img src=x onerror="alert(1)">',
+					'<b>not bold</b>',
+					'Helmets & Visors'
+				]
+			}
+		},
+		'429': { status: 429, delay: 500, body: { message: 'Too many messages. Please wait a few minutes and try again.' } },
+		'503': { status: 503, delay: 500, body: { message: 'Our chat assistant is offline right now. Please email us and a human will get back to you.' } },
+		'500': { status: 500, delay: 500, body: { message: 'Sorry, the assistant could not answer that. Please try again.' } },
+		// The widget must recover from this without the customer seeing
+		// anything: fresh nonce, same message re-sent, one time only.
+		'409': { status: 409, delay: 400, staleOnce: true, body: { code: 'db_chat_stale_nonce', message: 'Session expired.' }, then: 'products' },
+		'409hard': { status: 409, delay: 400, body: { code: 'db_chat_stale_nonce', message: 'Session expired.' } },
+		nosession: { sessionDown: true, delay: 400 },
+		network: { network: true, delay: 600 }
+	};
+
+	function currentScenario() {
+		var select = document.getElementById('preview-scenario');
+		return SCENARIOS[select ? select.value : 'products'] || SCENARIOS.products;
+	}
+
+	/* ---- Handoff config scenarios ----
+	   `config` = is there a `handoff` block in dbChat (the cached HTML).
+	   `session` = what the uncached /session route reports: true, false, or
+	   null for "the route said nothing", which must leave the widget making
+	   no open/closed claim at all. */
+	var HANDOFF_MODES = {
+		open:    { config: true,  session: true },
+		closed:  { config: true,  session: false },
+		unknown: { config: true,  session: null },
+		absent:  { config: false, session: null }
+	};
+
+	var handoffMode = 'open';
+	try {
+		var savedMode = window.sessionStorage.getItem('preview_handoff_mode');
+		if (savedMode && HANDOFF_MODES[savedMode]) {
+			handoffMode = savedMode;
+		}
+	} catch (e) { /* private mode: default */ }
+
+	var staleServed = false;
+	var nonceSerial = 0;
+
+	function respond(resolve, reject, scenario, body, status) {
+		if (scenario.network) {
+			reject(new TypeError('Failed to fetch (simulated)'));
+			return;
+		}
+		resolve({
+			ok: status >= 200 && status < 300,
+			status: status,
+			json: function () { return Promise.resolve(body); }
+		});
+	}
+
+	// Replace fetch wholesale — the widget is the only thing on this page
+	// that makes requests. Handles both routes: GET /session and POST /chat.
+	window.fetch = function (url, options) {
+		var scenario = currentScenario();
+		var isSession = String(url).indexOf('/session') !== -1;
+
+		return new Promise(function (resolve, reject) {
+			window.setTimeout(function () {
+				if (isSession) {
+					console.log('[preview] GET session');
+					if (scenario.sessionDown) {
+						resolve({ ok: false, status: 500, json: function () { return Promise.resolve({ message: 'session down' }); } });
+						return;
+					}
+					nonceSerial += 1;
+					var payload = { nonce: 'preview-nonce-' + nonceSerial };
+					// Only the volatile flag rides on this route, and only
+					// when there is a number configured at all.
+					var mode = HANDOFF_MODES[handoffMode];
+					if (mode.config && mode.session !== null) {
+						payload.handoff = { isOpen: mode.session };
+					}
+					resolve({
+						ok: true,
+						status: 200,
+						json: function () { return Promise.resolve(payload); }
+					});
+					return;
+				}
+
+				try {
+					console.log('[preview] POST', url, {
+						nonce: options.headers['X-WP-Nonce'],
+						client: options.headers['X-DB-Chat-Client'],
+						payload: JSON.parse(options.body)
+					});
+				} catch (e) { /* ignore */ }
+
+				// One-shot stale nonce: fail the first POST, succeed the retry.
+				if (scenario.staleOnce && !staleServed) {
+					staleServed = true;
+					respond(resolve, reject, {}, scenario.body, scenario.status);
+					return;
+				}
+				if (scenario.staleOnce) {
+					staleServed = false;
+					var ok = SCENARIOS[scenario.then];
+					respond(resolve, reject, ok, ok.body, ok.status);
+					return;
+				}
+
+				respond(resolve, reject, scenario, scenario.body, scenario.status);
+			}, scenario.delay);
+		});
+	};
+
+	// The object the PHP bootstrap will localize as `dbChat`.
+	// Note: no `nonce` key — it is fetched from the session route at open
+	// time, because LiteSpeed caches the page HTML for 7 days.
+	window.dbChat = {
+		ajaxUrl: 'https://durianbikers.com/wp-json/durianbikers/v1/chat', // never called — fetch is stubbed
+		// These mirror the real PHP defaults (DB_Chat_Settings::default_greeting
+		// and ::default_suggestions) so the preview shows what will actually
+		// ship. The greeting deliberately does not offer fitment help — the
+		// assistant cannot answer fitment, and a starter chip that leads to a
+		// decline is a bad first impression.
+		//
+		// Shipping used to be in that same "cannot answer" bucket. It is not
+		// any more: the backend `search_pages` tool answers from the store's
+		// own policy pages, so a "Do you deliver to Sabah?" chip would now
+		// work. Chips come from the db_chat_suggestions option, which this
+		// file does not own — left alone so the preview keeps matching what
+		// actually ships.
+		greeting: 'Hi! Ask me anything about our parts, tyres and gear.',
+		suggestions: [
+			'Do you have Shinko tyres?',
+			'Show me helmets under RM 500',
+			'What R&G sliders do you stock?'
+		],
+		privacyUrl: 'https://durianbikers.com/privacy-policy/'
+	};
+
+	/*
+		Handoff block, in the real contract shape. The URL is built server-side
+		with digits only and NO prefill — the widget adds `?text=` itself, at
+		click time, and only ever with the customer's own last message.
+
+		Note what is NOT here: `isOpen`. It would be baked into HTML that
+		LiteSpeed serves for up to seven days, so it comes from the session
+		route instead. Pick "unknown" in the control panel to see what happens
+		when that route says nothing: hours still show, and the widget makes no
+		claim about being open — which is the correct failure.
+	*/
+	if (HANDOFF_MODES[handoffMode].config) {
+		window.dbChat.handoff = {
+			url: 'https://wa.me/60196141123',
+			label: 'Chat with us on WhatsApp',
+			hours: 'Mon–Fri 10am–6pm · Sat 10am–3pm',
+			openNote: 'We usually reply within a few minutes.',
+			closedNote: 'We’re closed now — send a message and we’ll reply when we open.'
+		};
+	}
+
+	// Keep the control panel clear of the "this is a mock" banner at every
+	// width — the banner's height changes with the viewport.
+	function placeControls() {
+		var alert = document.querySelector('.preview-alert');
+		var header = document.querySelector('.preview-header');
+		var top = (alert ? alert.offsetHeight : 0) + (header ? header.offsetHeight : 0) + 12;
+		document.documentElement.style.setProperty('--preview-panel-top', top + 'px');
+	}
+	placeControls();
+	window.addEventListener('resize', placeControls);
+
+	// Hostile-CSS toggle.
+	document.getElementById('preview-hostile-toggle').addEventListener('change', function (event) {
+		document.getElementById('preview-hostile').media = event.target.checked ? 'all' : 'not all';
+	});
+
+	// Handoff config picker. dbChat is read once at startup on the real site
+	// too, so switching reloads rather than pretending it can be swapped live.
+	var handoffSelect = document.getElementById('preview-handoff');
+	handoffSelect.value = handoffMode;
+	handoffSelect.addEventListener('change', function (event) {
+		try {
+			window.sessionStorage.setItem('preview_handoff_mode', event.target.value);
+		} catch (e) { /* private mode: the reload just resets to "open" */ }
+		window.location.reload();
+	});
+
+	// Collapse the control panel so it never hides the widget on mobile.
+	var controls = document.getElementById('preview-controls');
+	var toggle = document.getElementById('preview-toggle');
+	document.getElementById('preview-hide').addEventListener('click', function () {
+		controls.hidden = true;
+		toggle.hidden = false;
+	});
+	toggle.addEventListener('click', function () {
+		controls.hidden = false;
+		toggle.hidden = true;
+	});
+
+	/* ------------------------------------------------------------------
+		Stamp every canned reply so it cannot be mistaken for a real answer.
+
+		The store owner read the mock as a working bot, typed two real
+		questions and concluded it was broken. So each assistant row gets a
+		scaffolding tag saying where the text actually came from.
+
+		This is injected from the preview into the widget's shadow root and
+		is deliberately styled NOTHING like the widget (dashed amber box,
+		monospace, uppercase) so the widget's own appearance can still be
+		judged. Nothing in chatbot.js or chatbot.css is modified — remove
+		this block and the widget is untouched.
+	------------------------------------------------------------------ */
+	var TAG_STYLE = [
+		'.preview-stub-tag {',
+		'	display: block;',
+		'	margin: 0 0 6px;',
+		'	padding: 4px 7px;',
+		'	border: 1px dashed #b8860b;',
+		'	border-radius: 4px;',
+		'	background: #fff3cd;',
+		'	color: #5c4400;',
+		'	font: 700 10px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;',
+		'	text-transform: uppercase;',
+		'	letter-spacing: .03em;',
+		'}'
+	].join('\n');
+
+	var TAG_TEXT = {
+		greeting: 'Preview scaffolding: canned greeting from the widget settings. No AI involved.',
+		reply: 'Preview scaffolding: canned reply, chosen by the dropdown — not by what you typed.',
+		products: 'Preview scaffolding: fixed sample products, not a real catalogue search.',
+		pages: 'Preview scaffolding: fixed page links. The URLs are real and will open the live site.',
+		chips: 'Preview scaffolding: canned finder chips from this file. Real chips come from the product finder; tapping one really does send it as your next message.',
+		notice: 'Preview scaffolding: canned error state, chosen by the dropdown.',
+		handoff: 'Preview scaffolding: sample WhatsApp settings from this file. The row itself is real, and so is the link — tapping it will open WhatsApp.'
+	};
+
+	var taggedAReply = false;
+
+	function makeTag(kind) {
+		var tag = document.createElement('p');
+		tag.className = 'preview-stub-tag';
+		tag.textContent = TAG_TEXT[kind];
+		return tag;
+	}
+
+	function tagNode(node) {
+		if (!node || node.nodeType !== 1 || node.querySelector === undefined) {
+			return;
+		}
+
+		// Canned error / notice rows.
+		if (node.classList.contains('db-chat-notice')) {
+			var noticeBody = node.querySelector('div');
+			if (noticeBody && !noticeBody.querySelector('.preview-stub-tag')) {
+				noticeBody.insertBefore(makeTag('notice'), noticeBody.firstChild);
+			}
+			return;
+		}
+
+		if (!node.classList.contains('db-chat-msg') || !node.classList.contains('db-chat-msg-bot')) {
+			return;
+		}
+
+		var body = node.querySelector('.db-chat-msg-body');
+		if (!body || body.querySelector('.preview-stub-tag')) {
+			return;
+		}
+		// The typing indicator is not a reply — leave it alone.
+		if (body.querySelector('.db-chat-typing')) {
+			return;
+		}
+
+		var kind = 'reply';
+		if (body.querySelector('.db-chat-products')) {
+			kind = 'products';
+		} else if (body.querySelector('.db-chat-pages')) {
+			kind = 'pages';
+		} else if (body.querySelector('.db-chat-chips')) {
+			kind = 'chips';
+		} else if (!taggedAReply) {
+			// First bot bubble in the log is the greeting.
+			kind = 'greeting';
+			taggedAReply = true;
+		}
+		body.insertBefore(makeTag(kind), body.firstChild);
+	}
+
+	/*
+		The handoff row is real widget UI, but the settings behind it are fake,
+		so it gets a tag too. The widget re-renders the row when the session
+		response lands, which wipes anything injected — hence the observer,
+		which simply puts the tag back. It never fires in a loop: the second
+		pass finds the tag already there and does nothing.
+
+		The tag sits BELOW the row so the button's own spacing and the
+		border-top above it can still be judged.
+	*/
+	function tagHandoff(row) {
+		if (!row || row.hidden || !row.firstChild) {
+			return;
+		}
+		if (row.querySelector('.preview-stub-tag')) {
+			return;
+		}
+		row.appendChild(makeTag('handoff'));
+	}
+
+	function watchHandoff(row) {
+		if (!row) {
+			return;
+		}
+		tagHandoff(row);
+		new MutationObserver(function () {
+			tagHandoff(row);
+		}).observe(row, { childList: true, attributes: true, attributeFilter: ['hidden'] });
+
+		// Live readout of the wa.me URL, so the prefill can be read without
+		// opening WhatsApp. Polled rather than hooked: the widget rebuilds the
+		// href on pointerdown, focus and click, and this has to show whatever
+		// is there at any given moment.
+		var out = document.getElementById('preview-handoff-href');
+		window.setInterval(function () {
+			var link = row.querySelector('.db-chat-handoff-link');
+			out.textContent = link ? link.getAttribute('href') : 'row not rendered (no handoff config)';
+		}, 400);
+	}
+
+	/*
+		The widget scrolls the log to the bottom the moment it appends a row.
+		These tags are injected a tick later and are tall, so whatever was
+		just added gets pushed back out of view — most visibly the finder
+		chips, which are the thing you are meant to tap. Re-scroll after
+		tagging so the preview shows what the real widget shows. Preview-only:
+		the widget's own scrolling is correct without it.
+	*/
+	function watchLog(log) {
+		Array.prototype.forEach.call(log.children, tagNode);
+		log.scrollTop = log.scrollHeight;
+		new MutationObserver(function (records) {
+			records.forEach(function (record) {
+				Array.prototype.forEach.call(record.addedNodes, tagNode);
+			});
+			log.scrollTop = log.scrollHeight;
+		}).observe(log, { childList: true });
+	}
+
+	// chatbot.js loads after this script and mounts asynchronously, so poll
+	// briefly for the shadow root instead of guessing at its timing.
+	var tries = 0;
+	var wait = window.setInterval(function () {
+		tries += 1;
+		var host = document.getElementById('db-chat-host');
+		var root = host && host.shadowRoot ? host.shadowRoot : host;
+		var log = root ? root.querySelector('.db-chat-log') : null;
+
+		if (log) {
+			window.clearInterval(wait);
+			var style = document.createElement('style');
+			style.textContent = TAG_STYLE;
+			root.appendChild(style);
+			watchLog(log);
+			watchHandoff(root.querySelector('.db-chat-handoff'));
+			return;
+		}
+		if (tries > 100) {
+			window.clearInterval(wait);
+			console.warn('[preview] chat log not found — reply tags not installed');
+		}
+	}, 50);
+})();
+</script>
+
+<!-- Loaded exactly as WordPress will enqueue it: footer, no dependencies. -->
+<script src="chatbot.js"></script>
+</body>
+</html>

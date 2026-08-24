@@ -30,7 +30,6 @@
       "Bash(scp *)",
       "Bash(rsync *)",
       "Bash(curl * --data *)",
-      "Read(./.env)",
       "Read(./.env.*)",
       "Read(./wp-config.php)",
       "Edit(./wp-config.php)"

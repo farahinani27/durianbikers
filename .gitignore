@@ -12,3 +12,5 @@ node_modules/
 
 wp-config.php
 
+# Google service-account key for stock-sync -- never commit
+.secrets/

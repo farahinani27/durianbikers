@@ -1,0 +1,1292 @@
+/*
+Durian Bikers Chatbot — frontend widget styles
+Text domain: durianbikers-chatbot
+
+Class naming follows what motormania-child already uses: flat, lowercase,
+hyphen-separated names with a `db-` product prefix (see .db-cart-toast in
+motormania-child/functions.php). Every chatbot class is prefixed `db-chat-`.
+No BEM, no utility classes, no build step — this file is edited directly.
+
+HOW THIS FILE IS LOADED
+The widget mounts inside a SHADOW ROOT so that MotorMania, Elementor,
+Essential Addons and ShopEngine global CSS cannot leak in and wreck it.
+chatbot.js injects this same stylesheet into the shadow root as a <link>,
+reusing the browser-cached copy that wp_enqueue_style already fetched.
+That is why the file carries both `:host` (shadow context) and
+`.db-chat-host` (light-DOM fallback for browsers without attachShadow)
+selectors, and why the body-level rules further down are here too — they
+only ever match in the light DOM.
+
+RETHEMING
+Change the custom properties in the RETHEME block below. They sit on the
+host element, so they can also be overridden from the theme/Customizer CSS
+with `.db-chat-host { --db-chat-brand: #xxxxxx; }` — custom properties
+inherit through the shadow boundary. Nothing else here hardcodes a colour.
+*/
+
+
+/*------------------------------------------------------------*/
+/*                    RETHEME — EDIT HERE                     */
+/*------------------------------------------------------------*/
+
+:host,
+.db-chat-host {
+    /* Brand — Durian Bikers / MotorMania green. */
+    --db-chat-brand: #5f9d40;
+    --db-chat-brand-hover: #4d8233;
+    --db-chat-brand-ink: #ffffff;              /* text/icon on top of brand */
+
+    /* Surfaces */
+    --db-chat-surface: #ffffff;                /* panel background */
+    --db-chat-surface-alt: #fafafa;            /* transcript background */
+    --db-chat-header-bg: #1d1d1d;              /* dark performance header */
+    --db-chat-header-ink: #ffffff;
+    --db-chat-header-ink-soft: rgba(255, 255, 255, 0.6);
+
+    /* Text */
+    --db-chat-ink: #1d1d1d;
+    --db-chat-ink-muted: #717171;
+
+    /* Bubbles */
+    --db-chat-bubble-bot-bg: #f4f4f4;
+    --db-chat-bubble-bot-ink: #1d1d1d;
+    --db-chat-bubble-user-bg: var(--db-chat-brand);
+    --db-chat-bubble-user-ink: var(--db-chat-brand-ink);
+
+    /* Status pills */
+    --db-chat-in-stock-bg: rgba(95, 157, 64, 0.14);
+    --db-chat-in-stock-ink: #3d6b28;
+    --db-chat-out-stock-bg: #f4f4f4;
+    --db-chat-out-stock-ink: #717171;
+
+    /* WhatsApp handoff. Brand green is the official one — it is the whole
+       point of the row that it reads as WhatsApp at a glance. The ring and
+       tint are the same green; CSS cannot derive alpha from a hex custom
+       property, so they are spelled out. */
+    --db-chat-whatsapp: #25d366;
+    --db-chat-whatsapp-tint: rgba(37, 211, 102, 0.10);
+    --db-chat-whatsapp-ring: rgba(37, 211, 102, 0.45);
+
+    /* Notices (429 / 503 / network / validation) */
+    --db-chat-notice-bg: #f4f4f4;
+    --db-chat-notice-ink: #1d1d1d;
+    --db-chat-error-ink: #b42318;
+
+    /* Lines, corners, depth */
+    --db-chat-border: rgba(29, 29, 29, 0.10);
+    --db-chat-radius-panel: 24px;
+    --db-chat-radius-card: 12px;
+    --db-chat-radius-bubble: 12px;
+    --db-chat-shadow-panel: 0 6px 6px 0 rgba(0, 0, 0, 0.02), 0 8px 24px 0 rgba(0, 0, 0, 0.12);
+    --db-chat-shadow-launcher: rgba(0, 0, 0, 0.2) 0 4px 8px;
+    --db-chat-shadow-composer: -4px -4px 10px rgba(0, 0, 0, 0.1);
+    --db-chat-overlay: rgba(0, 0, 0, 0.5);
+    --db-chat-focus: #1173d4;                  /* visible focus ring */
+
+    /* Type — inherits the theme font by default. */
+    --db-chat-font: inherit;
+    --db-chat-size-frame: 16px;                /* chrome */
+    --db-chat-size-message: 14px;              /* bubbles */
+    --db-chat-size-caption: 12px;              /* captions, footnote */
+
+    /* Geometry */
+    --db-chat-panel-width: 400px;
+    --db-chat-panel-max-height: 704px;
+    --db-chat-launcher-size: 64px;
+
+    /* Position. Raise --db-chat-offset-bottom if a sticky cart or promo bar
+       is ever added; the panel follows the launcher automatically. */
+    --db-chat-offset-right: 20px;
+    --db-chat-offset-bottom: 20px;
+
+    /* Stacking. High on purpose so Elementor sticky sections cannot bury
+       the launcher. The theme's own overlays are handled by the
+       `display: none` rules at the bottom of this file instead. */
+    --db-chat-z: 9999999;
+}
+
+
+/*------------------------------------------------------------*/
+/*                          HOST                              */
+/*------------------------------------------------------------*/
+
+:host,
+.db-chat-host {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    z-index: var(--db-chat-z);
+    width: 0;
+    height: 0;
+    font-family: var(--db-chat-font);
+    font-size: var(--db-chat-size-frame);
+    line-height: 1.5;
+    color: var(--db-chat-ink);
+    -webkit-font-smoothing: antialiased;
+    /* Revealed by chatbot.js once the stylesheet has loaded, so the
+       launcher never flashes unstyled. */
+    visibility: hidden;
+}
+
+:host(.is-ready),
+.db-chat-host.is-ready {
+    visibility: visible;
+}
+
+/* Everything is scoped to .db-chat-root. This same file is also enqueued
+   in the light DOM, so a bare `*` reset here would leak across the whole
+   site. .db-chat-root exists in both the shadow tree and the light-DOM
+   fallback, which makes it the right scope in either case. */
+.db-chat-root,
+.db-chat-root *,
+.db-chat-root *::before,
+.db-chat-root *::after {
+    box-sizing: border-box;
+}
+
+.db-chat-visually-hidden {
+    position: absolute !important;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
+/* One consistent, high-contrast focus ring for the whole widget. */
+.db-chat-root :focus-visible {
+    outline: 3px solid var(--db-chat-focus);
+    outline-offset: 2px;
+}
+
+
+/*------------------------------------------------------------*/
+/*                        LAUNCHER                            */
+/*------------------------------------------------------------*/
+
+.db-chat-launcher {
+    position: fixed;
+    right: var(--db-chat-offset-right);
+    bottom: max(var(--db-chat-offset-bottom), env(safe-area-inset-bottom, 0px));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--db-chat-launcher-size);
+    height: var(--db-chat-launcher-size);
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    cursor: pointer;
+    box-shadow: var(--db-chat-shadow-launcher);
+    transition: all 0.2s ease-in-out;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.db-chat-launcher:hover {
+    background: var(--db-chat-brand-hover);
+    transform: translateY(-2px);
+    box-shadow: rgba(0, 0, 0, 0.28) 0 8px 16px;
+}
+
+.db-chat-launcher:active {
+    transform: scale(0.94);
+}
+
+.db-chat-launcher svg {
+    width: 28px;
+    height: 28px;
+    display: block;
+    pointer-events: none;
+    transition: opacity 0.18s ease-in-out, transform 0.18s ease-in-out;
+}
+
+/* Two icons stacked; open state cross-fades the chat glyph to a white X. */
+.db-chat-launcher .db-chat-icon-close {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    opacity: 0;
+    transform: rotate(-45deg) scale(0.7);
+}
+
+.db-chat-root.is-open .db-chat-launcher .db-chat-icon-open {
+    opacity: 0;
+    transform: rotate(45deg) scale(0.7);
+}
+
+.db-chat-root.is-open .db-chat-launcher .db-chat-icon-close {
+    opacity: 1;
+    transform: rotate(0) scale(1);
+}
+
+/* Unread nudge — a plain dot, no number. Hidden once the panel is opened. */
+.db-chat-launcher-dot {
+    position: absolute;
+    top: 4%;
+    inset-inline-end: 4%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--db-chat-error-ink);
+    border: 2px solid var(--db-chat-surface);
+}
+
+.db-chat-root.is-open .db-chat-launcher-dot,
+.db-chat-root.is-seen .db-chat-launcher-dot {
+    display: none;
+}
+
+
+/*------------------------------------------------------------*/
+/*                     OVERLAY (mobile)                       */
+/*------------------------------------------------------------*/
+
+.db-chat-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--db-chat-overlay);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s ease-out, visibility 0.25s;
+    border: 0;
+    padding: 0;
+    display: none;
+    cursor: pointer;
+}
+
+
+/*------------------------------------------------------------*/
+/*                          PANEL                             */
+/*------------------------------------------------------------*/
+
+.db-chat-panel {
+    position: fixed;
+    right: var(--db-chat-offset-right);
+    bottom: calc(var(--db-chat-offset-bottom) + var(--db-chat-launcher-size) + 16px);
+    display: flex;
+    flex-direction: column;
+    width: var(--db-chat-panel-width);
+    max-width: calc(100vw - (var(--db-chat-offset-right) * 2));
+    height: min(var(--db-chat-panel-max-height), 100vh - 114px);
+    overflow: hidden;
+    background: var(--db-chat-surface);
+    border-radius: var(--db-chat-radius-panel);
+    box-shadow: var(--db-chat-shadow-panel);
+    opacity: 0;
+    visibility: hidden;
+    transform: scale(0);
+    transform-origin: bottom right;
+    /* The slight overshoot in the cubic-bezier is what makes the open feel
+       right. Do not "tidy" these numbers. */
+    transition: transform 0.3s cubic-bezier(0, 1.2, 1, 1), opacity 0.2s ease-out, visibility 0.3s;
+}
+
+.db-chat-root.is-open .db-chat-panel {
+    opacity: 1;
+    visibility: visible;
+    transform: scale(1);
+}
+
+.db-chat-panel[hidden] {
+    display: none;
+}
+
+
+/*  Header — deliberately minimal: identity + an accessible close control.
+    Esc alone is not enough for touch users, so the close button stays. */
+
+.db-chat-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+    padding: 12px 10px 12px 16px;
+    background: var(--db-chat-header-bg);
+    color: var(--db-chat-header-ink);
+}
+
+.db-chat-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    overflow: hidden;
+}
+
+.db-chat-avatar svg {
+    width: 18px;
+    height: 18px;
+}
+
+.db-chat-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.db-chat-heading {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.db-chat-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    line-height: 1.25;
+    color: var(--db-chat-header-ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.db-chat-subtitle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 1px 0 0;
+    font-size: var(--db-chat-size-caption);
+    line-height: 1.3;
+    color: var(--db-chat-header-ink-soft);
+}
+
+.db-chat-subtitle::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--db-chat-brand);
+    flex: 0 0 auto;
+}
+
+.db-chat-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--db-chat-header-ink);
+    cursor: pointer;
+    transition: background-color 0.18s ease-in-out;
+}
+
+.db-chat-close:hover {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+.db-chat-close svg {
+    width: 18px;
+    height: 18px;
+    pointer-events: none;
+}
+
+
+/*------------------------------------------------------------*/
+/*                       TRANSCRIPT                           */
+/*------------------------------------------------------------*/
+
+.db-chat-log {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+    scroll-behavior: smooth;
+    padding: 16px;
+    background: var(--db-chat-surface-alt);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    /* Scrollbar hidden — the transcript reads cleaner without it. */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.db-chat-log::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+.db-chat-msg {
+    display: flex;
+    gap: 8px;
+}
+
+.db-chat-msg-bot {
+    align-items: flex-start;
+}
+
+.db-chat-msg-user {
+    justify-content: flex-end;
+}
+
+.db-chat-msg-avatar {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    overflow: hidden;
+}
+
+.db-chat-msg-avatar svg {
+    width: 17px;
+    height: 17px;
+}
+
+.db-chat-msg-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* Keeps product cards aligned with the bubble above, without a second
+   avatar circle. */
+.db-chat-msg-spacer {
+    flex: 0 0 auto;
+    width: 32px;
+}
+
+.db-chat-msg-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.db-chat-bubble {
+    padding: 8px 12px;
+    border-radius: var(--db-chat-radius-bubble);
+    font-size: var(--db-chat-size-message);
+    line-height: 1.5;
+    /* Assistant text is model output written with textContent — it can hold
+       long unbroken strings, so force it to wrap. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+/* Bot bubbles stop short of the right edge so the column reads as a reply. */
+.db-chat-msg-bot .db-chat-bubble {
+    max-width: calc(100% - 2rem);
+    background: var(--db-chat-bubble-bot-bg);
+    color: var(--db-chat-bubble-bot-ink);
+}
+
+.db-chat-msg-user .db-chat-bubble {
+    max-width: 85%;
+    background: var(--db-chat-bubble-user-bg);
+    color: var(--db-chat-bubble-user-ink);
+}
+
+.db-chat-caption {
+    margin: 0;
+    padding-left: 2px;
+    font-size: var(--db-chat-size-caption);
+    line-height: 1.3;
+    color: var(--db-chat-ink-muted);
+}
+
+
+/*  Typing indicator — pulsing dots, staggered.  */
+
+.db-chat-typing {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 12px;
+}
+
+.db-chat-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--db-chat-ink-muted);
+    opacity: 0.7;
+    animation: db-chat-pulse 1.5s ease-in-out infinite;
+}
+
+.db-chat-dot:nth-child(2) { animation-delay: 0.2s; }
+.db-chat-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes db-chat-pulse {
+    0%, 20%   { transform: scale(1);   opacity: 0.7; }
+    50%       { transform: scale(1.5); opacity: 1; }
+    80%, 100% { transform: scale(1);   opacity: 0.7; }
+}
+
+/* Backend runs a server-side catalogue search loop, so replies can take
+   3-8s. After a beat we say what is happening rather than pulse silently. */
+.db-chat-typing-note {
+    margin: 0;
+    padding-left: 2px;
+    font-size: var(--db-chat-size-caption);
+    line-height: 1.3;
+    color: var(--db-chat-ink-muted);
+}
+
+
+/*  Inline notices (429 / 503 / network / validation)  */
+
+.db-chat-notice {
+    display: flex;
+    gap: 10px;
+    padding: 11px 13px;
+    border-radius: var(--db-chat-radius-card);
+    background: var(--db-chat-notice-bg);
+    color: var(--db-chat-notice-ink);
+    font-size: 13px;
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.db-chat-notice svg {
+    flex: 0 0 auto;
+    width: 17px;
+    height: 17px;
+    margin-top: 1px;
+    color: var(--db-chat-ink-muted);
+}
+
+.db-chat-notice-error svg {
+    color: var(--db-chat-error-ink);
+}
+
+.db-chat-notice-retry {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: var(--db-chat-error-ink);
+    font: inherit;
+    font-weight: 700;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+
+/*------------------------------------------------------------*/
+/*                      PRODUCT CARDS                         */
+/*------------------------------------------------------------*/
+
+/* v2 option: an "Add to cart" action could live on these cards via the
+   WooCommerce AJAX add-to-cart endpoint. Deliberately NOT in v1 — the
+   store went live on real payments and nothing new goes near the cart. */
+
+.db-chat-products {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.db-chat-product {
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    padding: 10px;
+    background: var(--db-chat-surface);
+    border: 1px solid var(--db-chat-border);
+    border-radius: var(--db-chat-radius-card);
+    transition: border-color 0.2s ease-in-out, box-shadow 0.2s ease-in-out, transform 0.2s ease-in-out;
+}
+
+.db-chat-product:hover {
+    border-color: var(--db-chat-brand);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.08);
+    transform: translateY(-1px);
+}
+
+.db-chat-product-thumb {
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 64px;
+    height: 64px;
+    border-radius: 8px;
+    background: var(--db-chat-bubble-bot-bg);
+    overflow: hidden;
+    color: var(--db-chat-ink-muted);
+}
+
+.db-chat-product-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.db-chat-product-thumb svg {
+    width: 22px;
+    height: 22px;
+    opacity: 0.6;
+}
+
+.db-chat-product-body {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+}
+
+.db-chat-product-name {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: var(--db-chat-ink);
+    /* Two-line clamp; motorcycle part names get long. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+}
+
+.db-chat-product-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+/* Price is a pre-formatted MYR string from WooCommerce — never built here. */
+.db-chat-product-price {
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--db-chat-ink);
+}
+
+.db-chat-pill {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.db-chat-pill-in {
+    background: var(--db-chat-in-stock-bg);
+    color: var(--db-chat-in-stock-ink);
+}
+
+.db-chat-pill-out {
+    background: var(--db-chat-out-stock-bg);
+    color: var(--db-chat-out-stock-ink);
+}
+
+.db-chat-product-link {
+    align-self: center;
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.2;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background-color 0.2s ease-in-out;
+}
+
+.db-chat-product-link:hover,
+.db-chat-product-link:focus {
+    background: var(--db-chat-brand-hover);
+    color: var(--db-chat-brand-ink);
+    text-decoration: none;
+}
+
+
+/*------------------------------------------------------------*/
+/*                        PAGE LINKS                          */
+/*------------------------------------------------------------*/
+
+/* Links to the store's own policy pages (delivery, returns…), from the
+   `pages` array in the response. Deliberately quieter than a product card:
+   the product is what the customer buys, this is supporting reading. */
+
+.db-chat-pages-label {
+    margin: 6px 0 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--db-chat-ink-muted);
+}
+
+.db-chat-pages {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.db-chat-page-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 100%;
+    padding: 8px 12px;
+    background: var(--db-chat-surface);
+    border: 1px solid var(--db-chat-border);
+    border-radius: 999px;
+    color: var(--db-chat-ink);
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.3;
+    text-decoration: none;
+    transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+}
+
+.db-chat-page-link:hover,
+.db-chat-page-link:focus {
+    border-color: var(--db-chat-brand);
+    background: var(--db-chat-bubble-bot-bg);
+    color: var(--db-chat-ink);
+    text-decoration: underline;
+}
+
+.db-chat-page-icon {
+    flex: 0 0 auto;
+    width: 15px;
+    height: 15px;
+    color: var(--db-chat-brand);
+}
+
+/* Page titles can be long ("Pre-order Product Duration"); wrap rather than
+   push the bubble column wide. */
+.db-chat-page-title {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+
+/*------------------------------------------------------------*/
+/*                    SUGGESTION CHIPS                        */
+/*------------------------------------------------------------*/
+
+.db-chat-suggestions {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    padding: 0 16px 14px;
+    background: var(--db-chat-surface-alt);
+}
+
+.db-chat-suggestions[hidden] {
+    display: none;
+}
+
+.db-chat-chip {
+    /* inline-flex so the mobile sheet's 44px minimum can centre the label.
+       max-width caps a long label at the row width instead of letting it
+       push out of the panel. */
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 7px 13px;
+    border: 1px solid var(--db-chat-brand);
+    border-radius: 999px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-brand-hover);
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 600;
+    line-height: 1.3;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+.db-chat-chip:hover {
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+}
+
+/* Follow-up chips (guided product finder). Same .db-chat-chip button as the
+   starter row above — only the container differs, because these live INSIDE
+   the transcript, under the reply they belong to, rather than in the pinned
+   row above the composer. So: no background of its own, and the message
+   column's own padding does the spacing. */
+.db-chat-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 7px;
+    /* Bubbles cap at 85%; match that so a wide chip row cannot out-dent the
+       reply sitting directly above it. */
+    max-width: 85%;
+    animation: db-chat-chip-in 0.22s ease-out both;
+}
+
+@keyframes db-chat-chip-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+}
+
+
+/*------------------------------------------------------------*/
+/*                        COMPOSER                            */
+/*------------------------------------------------------------*/
+
+/* The upward shadow lifts the composer off the transcript. */
+.db-chat-composer {
+    position: relative;
+    flex: 0 0 auto;
+    background: var(--db-chat-surface);
+    border-radius: var(--db-chat-radius-panel) var(--db-chat-radius-panel) 0 0;
+    box-shadow: var(--db-chat-shadow-composer);
+    padding: 12px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+.db-chat-form {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+}
+
+.db-chat-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 2.5rem;
+    max-height: 7.5rem;
+    padding: 9px 14px;
+    border: 1px solid var(--db-chat-border);
+    border-radius: 20px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-ink);
+    font-family: inherit;
+    /* 16px keeps iOS Safari from zooming the page on focus. */
+    font-size: 16px;
+    line-height: 1.4;
+    resize: none;
+    /* chatbot.js flips this to `auto` only once the textarea hits its
+       max-height, so an empty scrollbar track is never drawn. */
+    overflow-y: hidden;
+}
+
+.db-chat-input::placeholder {
+    color: var(--db-chat-ink-muted);
+    opacity: 1;
+}
+
+.db-chat-input:focus {
+    border-color: var(--db-chat-brand);
+}
+
+.db-chat-send {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, transform 0.1s ease-in-out;
+}
+
+.db-chat-send:hover:not(:disabled) {
+    background: var(--db-chat-brand-hover);
+}
+
+.db-chat-send:active:not(:disabled) {
+    transform: scale(0.9);
+}
+
+.db-chat-send:disabled {
+    background: var(--db-chat-bubble-bot-bg);
+    color: var(--db-chat-ink-muted);
+    cursor: not-allowed;
+}
+
+.db-chat-send svg {
+    width: 17px;
+    height: 17px;
+    pointer-events: none;
+}
+
+/* Busy state: grey circle with a spinner instead of the arrow. */
+.db-chat-send.is-busy svg {
+    display: none;
+}
+
+.db-chat-send.is-busy::after {
+    content: "";
+    width: 15px;
+    height: 15px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: db-chat-spin 0.7s linear infinite;
+}
+
+@keyframes db-chat-spin {
+    to { transform: rotate(360deg); }
+}
+
+/*------------------------------------------------------------*/
+/*                    HUMAN HANDOFF (WhatsApp)                */
+/*------------------------------------------------------------*/
+
+/* An escape hatch, not a call to action: it sits below the composer, above
+   the disclaimer, and is deliberately quieter than the send button and the
+   product cards. chatbot.js renders nothing at all when no number is
+   configured, and `[hidden]` below makes sure that costs no space — no
+   border, no padding, no gap. */
+
+.db-chat-handoff {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--db-chat-border);
+    text-align: center;
+}
+
+.db-chat-handoff[hidden] {
+    display: none;
+}
+
+.db-chat-handoff-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 36px;
+    max-width: 100%;
+    padding: 7px 14px;
+    border: 1px solid var(--db-chat-border);
+    border-radius: 999px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-ink);
+    font-size: var(--db-chat-size-caption);
+    font-weight: 700;
+    line-height: 1.3;
+    text-decoration: none;
+    transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+}
+
+.db-chat-handoff-link:hover,
+.db-chat-handoff-link:focus {
+    border-color: var(--db-chat-whatsapp);
+    background: var(--db-chat-whatsapp-tint);
+    color: var(--db-chat-ink);
+    text-decoration: none;
+}
+
+.db-chat-handoff-icon {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    color: var(--db-chat-whatsapp);
+}
+
+.db-chat-handoff-label {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.db-chat-handoff-meta {
+    margin: 0;
+    color: var(--db-chat-ink-muted);
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.db-chat-handoff-hours,
+.db-chat-handoff-note {
+    display: block;
+}
+
+/* Status dot on the note line only. No dot at all when the open/closed state
+   is unknown — chatbot.js omits the note entirely in that case, so there is
+   nothing here to colour. */
+.db-chat-handoff.is-open .db-chat-handoff-note::before,
+.db-chat-handoff.is-closed .db-chat-handoff-note::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-inline-end: 5px;
+    border-radius: 50%;
+    vertical-align: middle;
+}
+
+.db-chat-handoff.is-open .db-chat-handoff-note::before {
+    background: var(--db-chat-whatsapp);
+}
+
+.db-chat-handoff.is-closed .db-chat-handoff-note::before {
+    background: var(--db-chat-ink-muted);
+}
+
+/* Brief nudge when the assistant hands the customer over. Six seconds, then
+   it goes quiet again — this is the ONLY prominence mechanism; there is
+   deliberately no second button inside the message. */
+.db-chat-handoff.is-highlight .db-chat-handoff-link {
+    border-color: var(--db-chat-whatsapp);
+    background: var(--db-chat-whatsapp-tint);
+    animation: db-chat-handoff-nudge 1.4s ease-out 2;
+}
+
+@keyframes db-chat-handoff-nudge {
+    0%        { box-shadow: 0 0 0 0 var(--db-chat-whatsapp-ring); }
+    70%, 100% { box-shadow: 0 0 0 9px rgba(37, 211, 102, 0); }
+}
+
+/* Persistent AI disclaimer. Muc-Off ships none; PDPA plus the fitment risk
+   on motorcycle parts both argue for keeping it visible at all times. */
+.db-chat-footnote {
+    margin: 8px 0 0;
+    color: var(--db-chat-ink-muted);
+    font-size: var(--db-chat-size-caption);
+    line-height: 1.35;
+    text-align: center;
+}
+
+.db-chat-footnote a {
+    color: inherit;
+    text-decoration: underline;
+}
+
+.db-chat-footnote a:hover {
+    color: var(--db-chat-ink);
+}
+
+
+/*------------------------------------------------------------*/
+/*                       RESPONSIVE                           */
+/*------------------------------------------------------------*/
+
+/* Short desktop viewports: the height clamp above already handles this,
+   but drop the max so a 768px-tall laptop still gets a usable transcript. */
+@media (max-height: 760px) {
+    :host,
+    .db-chat-host {
+        --db-chat-panel-max-height: 600px;
+    }
+}
+
+/* Mobile: full-screen sheet over a dimmed overlay. 375px is the reference
+   width. Breakpoint held at 600px per SPEC — a 400px panel still fits
+   comfortably at 601-768px. */
+@media (max-width: 600px) {
+    :host,
+    .db-chat-host {
+        --db-chat-launcher-size: 56px;
+        --db-chat-offset-right: 16px;
+        --db-chat-offset-bottom: 16px;
+    }
+
+    .db-chat-overlay {
+        display: block;
+    }
+
+    .db-chat-root.is-open .db-chat-overlay {
+        opacity: 1;
+        visibility: visible;
+    }
+
+    .db-chat-panel {
+        right: 0;
+        left: 0;
+        bottom: env(safe-area-inset-bottom, 0px);
+        width: 100vw;
+        max-width: none;
+        /* Sheet stops short of the top so the page stays visible behind. */
+        height: calc(100vh - 64px);
+        height: calc(100dvh - 64px);
+        border-radius: var(--db-chat-radius-panel) var(--db-chat-radius-panel) 0 0;
+        transform: translateY(100%);
+        transform-origin: bottom center;
+        transition: transform 0.3s cubic-bezier(0, 1.2, 1, 1), opacity 0.2s ease-out, visibility 0.3s;
+    }
+
+    .db-chat-root.is-open .db-chat-panel {
+        transform: translateY(0);
+    }
+
+    /* The launcher is behind the sheet; the header close button is the
+       affordance, plus tapping the overlay. */
+    .db-chat-root.is-open .db-chat-launcher {
+        opacity: 0;
+        pointer-events: none;
+    }
+
+    .db-chat-msg-user .db-chat-bubble {
+        max-width: 90%;
+    }
+
+    .db-chat-product-link {
+        padding: 7px 12px;
+    }
+
+    /* Thumb-sized target on the sheet. */
+    .db-chat-page-link {
+        min-height: 44px;
+        padding: 10px 14px;
+    }
+
+    .db-chat-handoff-link {
+        min-height: 44px;
+        padding: 10px 18px;
+    }
+
+    /* Thumb-sized target for EVERY chip — starter row and finder chips alike.
+       They are the same affordance, so two different touch-target sizes would
+       read as an oversight, and the 44px minimum exists for people with less
+       precise motor control who have no reason to care which row they are
+       tapping. The starter row costs the most height but pays it at open,
+       when the log is empty and the sheet is at its roomiest. */
+    .db-chat-chip {
+        min-height: 44px;
+        padding: 10px 16px;
+    }
+}
+
+
+/*------------------------------------------------------------*/
+/*                   MOTION / CONTRAST                        */
+/*------------------------------------------------------------*/
+
+@media (prefers-reduced-motion: reduce) {
+    .db-chat-root,
+    .db-chat-root *,
+    .db-chat-root *::before,
+    .db-chat-root *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+
+    .db-chat-launcher:hover,
+    .db-chat-launcher:active,
+    .db-chat-product:hover,
+    .db-chat-send:active:not(:disabled) {
+        transform: none;
+    }
+
+    /* Dots must still read as "working" without motion. */
+    .db-chat-dot {
+        animation: none;
+        opacity: 0.8;
+    }
+
+    /* The handoff nudge loses its pulse entirely; the green border and tint
+       stay for the same six seconds, so the row is still findable without
+       anything moving. */
+    .db-chat-handoff.is-highlight .db-chat-handoff-link {
+        animation: none;
+    }
+
+    /* Follow-up chips appear with no entrance at all. They still arrive in
+       the log's live region, so nothing about how they are announced depends
+       on the animation. */
+    .db-chat-chips {
+        animation: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .db-chat-panel,
+    .db-chat-product,
+    .db-chat-notice,
+    .db-chat-chip,
+    .db-chat-bubble {
+        border: 1px solid CanvasText;
+    }
+
+    .db-chat-launcher,
+    .db-chat-send,
+    .db-chat-product-link,
+    .db-chat-page-link,
+    .db-chat-handoff-link {
+        border: 1px solid ButtonText;
+    }
+
+    /* The brand green is dropped in forced colours, so the status dot needs a
+       shape the OS palette can actually draw. */
+    .db-chat-handoff.is-open .db-chat-handoff-note::before,
+    .db-chat-handoff.is-closed .db-chat-handoff-note::before {
+        border: 1px solid CanvasText;
+    }
+}
+
+
+/*------------------------------------------------------------*/
+/*        LIGHT-DOM RULES (never match inside the shadow)      */
+/*------------------------------------------------------------*/
+
+/* Body scroll lock for the mobile sheet. chatbot.js stores the scroll
+   position and restores it on close — position:fixed is the only lock iOS
+   Safari actually honours. */
+body.db-chat-locked {
+    position: fixed;
+    left: 0;
+    right: 0;
+    width: 100%;
+    overflow: hidden;
+}
+
+/* MotorMania's back-to-top button sits at bottom:80px / right:30px with a
+   50px icon and collides with the launcher. Nudge it clear, but only while
+   the chatbot is actually mounted. Delete this rule to leave it alone. */
+body.db-chat-active #backtotop {
+    bottom: 96px;
+}
+
+/* Stay out of the way of the theme's fullscreen overlays. :has() is a
+   progressive enhancement — older browsers simply skip these rules. */
+body.off-canvas-menu-visible .db-chat-host,
+body:has(.mobile-menu.active) .db-chat-host,
+body:has(.search-popup.active) .db-chat-host {
+    display: none;
+}

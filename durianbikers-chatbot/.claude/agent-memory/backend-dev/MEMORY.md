@@ -1,0 +1,3 @@
+- [Chatbot free lookup mode](project_chatbot-free-lookup-mode.md) — no-API-key brain; db_chat_mode semantics and the decisions not to undo
+- [PHP lint binary](feedback_php-lint-binary.md) — lint with /opt/homebrew/opt/php@8.3/bin/php (8.3.33 = server), not bare php (8.5.9)
+- [Verify without local WordPress](feedback_verify-without-local-wordpress.md) — offline harnesses that load the real files against stubbed WP; state what they don't prove
