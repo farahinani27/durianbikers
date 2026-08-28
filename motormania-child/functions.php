@@ -207,6 +207,19 @@ function durianbikers_cart_toast_markup() {
 <?php
 }
 
+// Load child theme fonts
+function motormania_child_enqueue_fonts() {
+
+    wp_enqueue_style(
+        'motormania-child-fonts',
+        'https://fonts.googleapis.com/css2?family=Archivo:wght@200;300;400;500;600;700&display=swap',
+        array(),
+        null
+    );
+
+}
+
+add_action('wp_enqueue_scripts', 'motormania_child_enqueue_fonts', 20);
 // Register a widget area for the header currency switcher
 add_action( 'widgets_init', function() {
 	register_sidebar( array(
@@ -548,6 +561,3 @@ add_action( 'wp_enqueue_scripts', function() {
         true
     );
 }, 20 );
-
-?>
-
