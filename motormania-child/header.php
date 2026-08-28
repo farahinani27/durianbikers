@@ -53,8 +53,7 @@ $header_style = isset($motormania_opt['header_style']) ? $motormania_opt['header
         get_template_part( 'template-parts/header/header', '1' );
     } ?>
 	
-	<?php if ( !is_page_template( 'custom-page-without-breadcrumb.php' ) ) { ?>
-		
+<?php if ( !is_page_template( 'custom-page-without-breadcrumb.php' ) && !is_404() ) { ?>		
 	
 	<section class="breadcrumbs">
 		<div class="container">
