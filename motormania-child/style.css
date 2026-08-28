@@ -14,7 +14,6 @@
 	Add your custom styles here
 	*/
 
-
 	/*------------------------------------------------------------*/ 
 	/*                          ELEMENTOR                         */
 	/*------------------------------------------------------------*/ 
@@ -449,7 +448,8 @@
 		color: #000;
 		font-size: 18px;
 		font-weight: 500;
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 	}
 
 	.submenu-back {
@@ -1342,6 +1342,45 @@
 
 	.wpcf7 input[type=submit] {
 		width: 100% !important;
+		margin-top: 80px !important;
+	}
+
+	.elementor-55 .elementor-element.elementor-element-0f1bb9f {
+		padding-top: 80px !important;
+	}
+
+
+	@media (min-width: 768px) {
+	  .elementor-55 .elementor-element.elementor-element-ed6720d > .elementor-widget-wrap {
+		align-content: stretch;
+		padding: 13px;
+	  }
+	  .elementor-55 .elementor-element.elementor-element-0f1bb9f {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	  }
+	}
+
+	@media (min-width: 1025px) {
+	  body .elementor-55 .elementor-element.elementor-element-344134c { 
+		  width: 40%; 
+		}
+		
+	  body .elementor-55 .elementor-element.elementor-element-ed6720d {
+		  width: 60%; 
+		}
+
+	  .elementor-55 .elementor-element.elementor-element-ed6720d > .elementor-widget-wrap {
+		align-content: stretch;
+		padding: 13px;
+	  }
+		
+	  .elementor-55 .elementor-element.elementor-element-0f1bb9f {
+		display: flex;
+		flex-direction: column;
+		justify-content: center;
+	  }
 	}
 
 	/* ------------------------------------------------- END Contact Us page ------- */
@@ -1763,7 +1802,8 @@
 	}
 
 	body {
-		font-family: Oswald;
+        font-family: Archivo;
+		font-weight: 700;
 		margin: 0;
 		color: #808080;
 		line-height: 26px;
@@ -1779,11 +1819,11 @@
 	h4,
 	h5,
 	h6 {
-		font-weight: 500;
 		color: #333;
 		-ms-word-wrap: break-word;
 		word-wrap: break-word;
-	}
+        font-family: Archivo;
+		font-weight: 700;	}
 
 
 	pre {
@@ -1798,7 +1838,8 @@
 	input[type=text],
 	input[type=url],
 	textarea {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		width: 100%;
 		border: 1px solid #dfdfdf;
 		height: 50px;
@@ -1819,7 +1860,8 @@
 	input[type="button"],
 	input[type="reset"],
 	input[type="submit"] {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		cursor: pointer;
 		color: #fff;
 		font-size: 16px;
@@ -1867,7 +1909,8 @@
 	}
 
 	select {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		width: 100%;
 		height: 45px;
 		padding: 0 15px;
@@ -1955,7 +1998,8 @@
 
 	a {
 		background-color: transparent;
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 	}
 
 	a,
@@ -1976,7 +2020,8 @@
 	dl,
 	ol,
 	ul {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		padding-left: 18px;
 	}
 
@@ -2021,7 +2066,8 @@
 	}
 
 	blockquote p {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		font-size: 24px;
 		color: #333;
 		font-weight: 500;
@@ -2435,7 +2481,8 @@
 
 
 	.primary-menu ul li {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		display: inline-block;
 		margin-right: 30px;
 		position: relative;
@@ -2892,6 +2939,8 @@
 		font-size: 52px;
 		margin-bottom: 0;
 		color: #fff;
+		font-family: Archivo;
+		font-weight: 700;
 	}
 
 	.breadcrumbs ul {
@@ -3420,7 +3469,8 @@
 	}
 
 	.the_excerpt .excerpt-date {
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		position: absolute;
 		bottom: 20px;
 		left: 20px;
@@ -3603,7 +3653,8 @@
 
 	.related-posts h4 {
 		margin-bottom: 50px;
-		font-weight: bold;
+		font-family: Archivo;
+		font-weight: 700;
 	}
 
 	.single-related-post {
@@ -3701,9 +3752,9 @@
 
 	.comment-reply-title {
 		font-size: 1.5rem;
-		font-family: Oswald;
+		font-family: Archivo;
+		font-weight: 700;
 		margin-bottom: 30px;
-		font-weight: 500;
 		color: #333;
 		display: block;
 	}
@@ -3933,7 +3984,7 @@
 	.mc4wp-form .mc4wp-form-fields p button[type="submit"]:hover {
 	  background: #4e8434;
 	}
-	
+
 	.mc4wp-form-fields {
 		position: relative;
 	}
@@ -4042,27 +4093,152 @@
 	}
 
 	/*404*/
-	.error-404 {
-		padding: 120px 0;
+	.container.error-404-page {
+		width: 100% !important;
+		max-width: none !important;
+		margin: 0 !important;
+		min-height: 100vh;
+		min-height: 100dvh;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
 		text-align: center;
+		padding: 60px 20px;
+		box-sizing: border-box;
+		background: #000;
+
+		/* added for the grid */
+		position: relative;
+		overflow: hidden;
+		--db-404-grid-gap: clamp(47px, 9.6vw, 123px);
+		--db-404-grid-line: #a69e9d;
+		--db-accent: #5f9d40;
+		--db-black: #0a0a0a;
+		--db-white: #ffffff;
+	}
+
+	/* animated background grid */
+	.container.error-404-page::before {
+		content: "";
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		z-index: 0;
+		width: 340vmax;
+		height: 340vmax;
+		margin: -170vmax 0 0 -170vmax;
+		background-image:
+			repeating-linear-gradient(0deg,  var(--db-404-grid-line) 0 1px, transparent 1px var(--db-404-grid-gap)),
+			repeating-linear-gradient(90deg, var(--db-404-grid-line) 0 1px, transparent 1px var(--db-404-grid-gap));
+		opacity: .34;
+		animation: db-404-grid-spin 240s linear infinite;
+		will-change: transform;
+		pointer-events: none;
+	}
+
+	/* keep the text above the grid */
+	.container.error-404-page > .row {
+		position: relative;
+		z-index: 1;
+		width: 100%;
+	}
+
+	@keyframes db-404-grid-spin {
+		from { transform: rotateX(64deg) rotateZ(0deg); }
+		to   { transform: rotateX(64deg) rotateZ(360deg); }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.container.error-404-page::before {
+			animation: none;
+			transform: rotateX(64deg) rotateZ(45deg);
+		}
 	}
 
 	.error-404 h1 {
-		font-weight: bold;
 		margin-bottom: 30px;
+		color: #fff !important;
+		font-family: Archivo;
+		font-weight: 700;
+		font-size: 65px !important;
 	}
 
-	.error-404 a {
-		margin-top: 50px;
+	.error-404 p {
+		font-family: Archivo;
+		color: #eee !important;
+		font-weight: 300;
+		font-size: 20px !important;
 	}
 
-	.error-404 a:hover {
-		color: #fff;
+	.error-404 .db-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 9px;
+		height: clamp(46px, 4.4vw, 58px);
+		padding: 0 clamp(26px, 2.8vw, 46px);
+		margin-top: 30px;
+		border: 1px solid transparent;
+		border-radius: 999px;
+		background: var(--db-accent);
+		font-family: Archivo, "Helvetica Neue", Helvetica, Arial, sans-serif;
+		font-size: clamp(11px, 1vw, 14px);
+		font-weight: 700;
+		letter-spacing: .1em;
+		text-transform: uppercase;
+		text-decoration: none;
+		cursor: pointer;
+		transition: background-color .25s, color .25s, border-color .25s;
 	}
 
-	/*backtotop*/
+	.error-404 .db-btn,
+	.error-404 .db-btn:hover,
+	.error-404 .db-btn:focus,
+	.error-404 .db-btn:focus-visible,
+	.error-404 .db-btn:active {
+		color: var(--db-white) !important;
+	}
 
-	
+	.error-404 .db-btn__swap {
+		position: relative;
+		display: block;
+		overflow: hidden;
+	}
+
+	.error-404 .db-btn__line {
+		display: block;
+		white-space: nowrap;
+	}
+
+	.error-404 .db-btn__line--in {
+		position: absolute;
+		inset: 0;
+	}
+
+	.error-404 .db-btn__ch {
+		display: inline-block;
+		transition: transform .42s cubic-bezier(.22, 1, .36, 1);
+		transition-delay: calc(var(--i, 0) * 60ms);
+	}
+
+	.error-404 .db-btn__line--in .db-btn__ch {
+		transform: translateY(-100%);
+	}
+
+	.error-404 .db-btn:hover .db-btn__line .db-btn__ch,
+	.error-404 .db-btn:focus-visible .db-btn__line .db-btn__ch {
+		transform: translateY(100%);
+	}
+
+	.error-404 .db-btn:hover .db-btn__line--in .db-btn__ch,
+	.error-404 .db-btn:focus-visible .db-btn__line--in .db-btn__ch {
+		transform: translateY(0);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.error-404 .db-btn__ch { transition: none; }
+	}
+
 	/*backtotop*/
 
 	#backtotop {
@@ -4783,10 +4959,17 @@
 
     /* Woocommerce CSS */
 
-
 /*--------------------------------------------------------------
 # Checkout Page
 --------------------------------------------------------------*/
+
+	.woocommerce-result-count {
+		font-family: Archivo;
+	}
+	.product_meta > span {
+		font-family: Archivo;
+	}
+
     .woocommerce .cart-collaterals .cart_totals,
     .woocommerce-page .cart-collaterals .cart_totals {
         width: 100% !important;
@@ -4939,7 +5122,7 @@
 
 
 
-	@media screen and (max-width: 768px) {
+@media screen and (max-width: 768px) {
 		
 	.page-id-13162 .cart_totals .checkout-button {
 		margin-top: 30px;
