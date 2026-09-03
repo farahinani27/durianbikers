@@ -1,0 +1,342 @@
+[
+ {
+  "id": 57910,
+  "name": "Dummy Test Product",
+  "type": "simple",
+  "status": "publish",
+  "stock": "instock",
+  "price": "1",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 49645,
+  "name": "Bell Eliminator Cheekpads (XS/S/M) (35MM) (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 1,
+  "coded": 1
+ },
+ {
+  "id": 49635,
+  "name": "Bell Eliminator Cheekpads (M/L, L, XL) (35MM) (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "220",
+  "nvar": 1,
+  "coded": 1
+ },
+ {
+  "id": 49625,
+  "name": "Bell Eliminator Cheekpads (M/L, L, XL) (40MM) (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "220",
+  "nvar": 1,
+  "coded": 1
+ },
+ {
+  "id": 49615,
+  "name": "Bell Eliminator Cheekpads (XXL/XXXL) (25MM) (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 1,
+  "coded": 1
+ },
+ {
+  "id": 49605,
+  "name": "Bell Eliminator Cheekpads (XXL/XXXL) (30MM) (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 1,
+  "coded": 1
+ },
+ {
+  "id": 49440,
+  "name": "Bell Eliminator Interior (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 6,
+  "coded": 6
+ },
+ {
+  "id": 49360,
+  "name": "Bell MX-9 Adventure Interior (Grey)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "176",
+  "nvar": 4,
+  "coded": 4
+ },
+ {
+  "id": 49318,
+  "name": "Bell Pit Boss Neck Curtain (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "114",
+  "nvar": 2,
+  "coded": 2
+ },
+ {
+  "id": 49223,
+  "name": "Bell Qualifier Interior (Grey)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "176",
+  "nvar": 3,
+  "coded": 3
+ },
+ {
+  "id": 49191,
+  "name": "Bell Revolver Evo Interior (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "132",
+  "nvar": 5,
+  "coded": 5
+ },
+ {
+  "id": 49181,
+  "name": "Bell Rogue Interior (Grey)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "176",
+  "nvar": 5,
+  "coded": 5
+ },
+ {
+  "id": 34781,
+  "name": "Bell Bullitt Interior (Brown)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 4,
+  "coded": 4
+ },
+ {
+  "id": 23331,
+  "name": "Bell Bullitt Interior (Oxblood)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 4,
+  "coded": 4
+ },
+ {
+  "id": 22003,
+  "name": "Scorpion Helmet ADX-2 (Galane Gray/Black/Neon Yellow)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "349.95",
+  "nvar": 3,
+  "coded": 3
+ },
+ {
+  "id": 21537,
+  "name": "Durian Bikers D-24 Men Jacket Parka (Army Green)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21524,
+  "name": "Durian Bikers D-24 Lady Jacket Parka (Army Green)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21510,
+  "name": "Durian Bikers D-24 Lady Jacket Parka (Grey)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21505,
+  "name": "Durian Bikers D-24 Men Jacket Parka (Navy Blue)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21501,
+  "name": "Durian Bikers D-24 Men Jacket Parka (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21497,
+  "name": "Durian Bikers D-24 Men Jacket Mesh (Black/Red)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21485,
+  "name": "Durian Bikers D-24 Men Jacket Mesh (Black/Hi Viz)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21315,
+  "name": "NHK Helmet S1GP S Doodles (Black/Silver Doft)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21261,
+  "name": "SHINKO TIRE TYRES TAYAR SR567 SCOOTER Tyres Series 110/70-16 120/70-15",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21258,
+  "name": "Shinko Tyres Series E270  Zig Zag Super Classic Harley Davidson Caferacer 4.0 4.5 5.0 16 18 19",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 21251,
+  "name": "KOREA SHINKO TYRES SERIES R010 F010 190/50ZR17 170/60ZR17 190 50 17 170 60 17 DUCATI SUZUKI KAWASAKI YAMAHA HONDA",
+  "type": "variable",
+  "status": "publish",
+  "stock": "outofstock",
+  "price": "",
+  "nvar": 0,
+  "coded": 0
+ },
+ {
+  "id": 20030,
+  "name": "Bell Bullitt Interior Sparepart Black",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "220",
+  "nvar": 4,
+  "coded": 4
+ },
+ {
+  "id": 20006,
+  "name": "Bell Qualifier Cheekpads Sparepart (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "176",
+  "nvar": 6,
+  "coded": 6
+ },
+ {
+  "id": 19773,
+  "name": "Axxis Storm S Interrior Padding",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "280",
+  "nvar": 3,
+  "coded": 3
+ },
+ {
+  "id": 19690,
+  "name": "Axxis Gecko Interrior Padding",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "253",
+  "nvar": 5,
+  "coded": 5
+ },
+ {
+  "id": 19667,
+  "name": "NHK S1GP Pro Cheekpads Sparepart (Black)",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "80",
+  "nvar": 4,
+  "coded": 4
+ },
+ {
+  "id": 18793,
+  "name": "SHINKO TIRE TYRES TAYAR SR567 SCOOTER Tyres Series 110/70-16 120/70-15",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "273",
+  "nvar": 1,
+  "coded": 1
+ },
+ {
+  "id": 18692,
+  "name": "Shinko Tyres Series E270  Zig Zag Super Classic Harley Davidson Caferacer 4.0 4.5 5.0 16 18 19",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "683",
+  "nvar": 6,
+  "coded": 6
+ },
+ {
+  "id": 18519,
+  "name": "KOREA SHINKO TYRES SERIES R010 F010 190/50ZR17 170/60ZR17 190 50 17 170 60 17 DUCATI SUZUKI KAWASAKI YAMAHA HONDA",
+  "type": "variable",
+  "status": "publish",
+  "stock": "instock",
+  "price": "133.18",
+  "nvar": 2,
+  "coded": 2
+ }
+]
