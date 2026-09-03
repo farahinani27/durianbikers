@@ -338,6 +338,16 @@
 		align-items: center;
 	}
 
+	
+	.header-icon.account-link:hover,
+	.header-icon.account-link:hover i,
+	.header-icon.account-link:hover svg,
+	.header-icon.account-link:hover {
+		color: #5f9d40 !important;
+		fill: #5f9d40 !important;
+	}
+	
+
 	/* Mobile Menu */
 	.mobile-menu {
 		position: fixed;
@@ -2502,7 +2512,6 @@
 		color: #fff;
 		font-weight: 600;
 		font-size: 14px;
-
 	}
 
 	.primary-menu ul li .children,
@@ -5268,14 +5277,22 @@
 	}
 
 	.header-pill .primary-menu ul li > a:hover {
-		opacity: 0.7;
+		color: #5f9d40 !important;
 	}
-
+	
 	.header-pill .header-icon,
 	.header-pill .account-name {
 		color: var(--db-pill-text);
 	}
-
+	
+	.header-pill .header-icon:hover,
+	.header-pill .header-icon:hover i,
+	.header-pill .header-icon:hover svg,
+	.header-pill .account-name:hover {
+		color: #5f9d40 !important;
+		fill: #5f9d40 !important;
+	}
+	
 	.custom-transparent-header.sticky-header.fixed-top {
 		background: transparent;
 		box-shadow: none;
