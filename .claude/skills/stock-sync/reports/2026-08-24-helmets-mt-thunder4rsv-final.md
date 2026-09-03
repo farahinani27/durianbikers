@@ -1,0 +1,31 @@
+| SKU | BRANDS | SERIES | MODEL / COLOUR | PRICE (MASTERLIST) | PRICE (WOOCOMMERCE) | XS (WC→ML) | S (WC→ML) | M (WC→ML) | L (WC→ML) | XL (WC→ML) | XXL (WC→ML) | XXXL (WC→ML) | STATUS |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| MT/THUNDER/4RSV/PURE/A1/GB | MT HELMET | THUNDER 4 R SV | PURE A1 GLOSS BLACK (SOLID COLOR) | 650.00 | 749.00 | 0→0 | 0→0 | 0→0 | 47→47 | 48→48 | 42→42 | 18→18 | NOT MATCH ❌ |
+| MT/THUNDER/4RSV/WT/B13/G | MT HELMET | THUNDER 4 R SV | WIND TUNNEL B13 GLOSS (GRAPHIC COLOR) | 699.00 | 749.00 | 0→0 | 0→0 | 0→0 | 41→41 | 41→41 | 47→47 | 18→18 | NOT MATCH ❌ |
+| MT/THUNDER/4RSV/RELE/C15/G | MT HELMET | THUNDER 4 R SV | RELEVANT C5 GLOSS (GRAPHIC COLOR) | 699.00 | 749.00 | 0→0 | 0→0 | 0→0 | 41→41 | 47→47 | 39→39 | 18→18 | NOT MATCH ❌ |
+| MT/THUNDER/4RSV/DANI/B5/G | MT HELMET | THUNDER 4 R SV | DANISH B5 GLOSS (GRAPHIC COLOR) | 699.00 | 749.00 | 0→0 | 0→0 | 0→0 | 35→35 | 36→36 | 44→44 | 17→17 | NOT MATCH ❌ |
+| MT/THUNDER/4RSV/YAMA/C5/G | MT HELMET | THUNDER 4 R SV | YAMANAKA 26 SEASON C5 GLOSS (GRAPHIC COLOR) | 699.00 | 749.00 | 0→0 | 0→0 | 0→0 | 42→42 | 37→37 | 41→41 | 17→17 | NOT MATCH ❌ |
+
+## Counts
+
+| | |
+|---|---|
+| Active rows reconciled | 5 |
+| MATCH ✅ | 0 |
+| NOT MATCH ❌ | 5 |
+
+### NOT MATCH breakdown
+
+| Cause | Rows |
+|---|---|
+| other / unclassified | 5 |
+
+## Unresolved / needs a decision
+
+| Sheet row | Item | Note |
+|---|---|---|
+| 2806 | MT HELMET THUNDER 4 R SV PURE A1 GLOSS BLACK (SOLID COLOR) | Site price RM749 is a logged intentional override (see price-overrides.md) - no action. Stock in sync. |
+| 2807 | MT HELMET THUNDER 4 R SV WIND TUNNEL B13 GLOSS (GRAPHIC COLOR) | Site price RM749 is a logged intentional override (see price-overrides.md) - no action. Stock in sync. |
+| 2808 | MT HELMET THUNDER 4 R SV RELEVANT C5 GLOSS (GRAPHIC COLOR) | Site price RM749 is a logged intentional override (see price-overrides.md) - no action. Stock in sync. |
+| 2809 | MT HELMET THUNDER 4 R SV DANISH B5 GLOSS (GRAPHIC COLOR) | Site price RM749 is a logged intentional override (see price-overrides.md) - no action. Stock in sync. |
+| 2810 | MT HELMET THUNDER 4 R SV YAMANAKA 26 SEASON C5 GLOSS (GRAPHIC COLOR) | Site price RM749 is a logged intentional override (see price-overrides.md) - no action. Stock in sync. |

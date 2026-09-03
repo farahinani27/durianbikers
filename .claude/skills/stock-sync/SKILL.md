@@ -68,6 +68,31 @@ Universal read rules:
 - **Blank BRAND/SERIES means "same as the row above".** Carry the last non-blank value forward.
 - **Normalise brand spellings** before matching (`MT` / `MT HELMET` / `MT HELMETS`).
 
+## Daily BigSeller check (masterlist ↔ BigSeller)
+
+Separate from the WooCommerce reconciliation below. This replaces searching each SKU in
+BigSeller by hand:
+
+```bash
+# 1. BigSeller: Inventory > Inventory List > Import & Export > Export
+# 2. Then, from the repo root:
+python3 .claude/skills/stock-sync/scripts/bigseller_diff.py \
+    --tab 'DP BRAKES' --bigseller ~/Downloads/inventory.xlsx
+```
+
+Writes `sync/<date>-<tab>-diff.md` (review) plus `-stock-in.csv` and `-stock-out.csv`.
+**It writes to no system** — the operator reviews and uploads.
+
+- BigSeller adjusts stock by **delta**, not absolute quantity, and Manual Stock-In only
+  *adds* — so the two directions are separate files, uploaded via Inventory > Manual
+  Stock-In and Manual Stock-Out.
+- Leave **"Stock-In Immediately" unticked**: the list lands pending and is committed
+  with one click after review. That is the approval gate.
+- It auto-detects the SKU and stock columns on both sides and prints which it chose —
+  check that line before uploading. Override with `--sheet-sku-col` / `--bs-stock-col` etc.
+- SKUs on several BigSeller warehouse lines are **summed**, and listed in the report.
+- HELMETS is refused by design — it has no SKU column (see `references/helmets.md`).
+
 ## Step 2 — Query WooCommerce (read-only)
 
 ```bash

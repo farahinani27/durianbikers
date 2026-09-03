@@ -1,7 +1,8 @@
 # Tab: HELMETS
 
 **Status:** audited 2026-08-19 (see `../reports/2026-08-19-helmets-audit.md`).
-**No writes have ever been applied.**
+**First writes applied 2026-08-24** — MT THUNDER 4 R SV only (rows 2806–2810, 14 variations,
+stock only). The rest of the tab is still unwritten.
 
 This is the hardest tab — the only one where SKU matching does not work at all.
 
