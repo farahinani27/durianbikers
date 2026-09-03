@@ -22,7 +22,7 @@
         "http.server",
         "8766",
         "--directory",
-        "motormania-child/assets/mock"
+        "motormania-child"
       ],
       "port": 8766
     },

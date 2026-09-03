@@ -14,3 +14,9 @@ wp-config.php
 
 # Google service-account key for stock-sync -- never commit
 .secrets/
+
+# daily BigSeller stock diffs (operational, regenerated each run)
+sync/
+
+# local scratch: order PDFs, chat screenshots, file backups
+downloads/
