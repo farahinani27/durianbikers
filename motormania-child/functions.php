@@ -7,6 +7,24 @@ function motormania_child_enqueue_styles() {
 
 // --- my custom code without the parent theme --- //
 
+add_action( 'wp_footer', 'durianbikers_respondio_widget' );
+function durianbikers_respondio_widget() {
+	if ( is_admin() ) {
+		return;
+	}
+	?>
+	<script id="respondio__widget" src="https://cdn.respond.io/webchat/widget/widget.js?cId=bab8a693c0417873b78486ab05d24b0"></script>
+	<?php
+}
+
+// Allow shortcode to be implement in HTML Widget
+add_filter( 'elementor/widget/render_content', function( $content, $widget ) {
+	if ( 'html' === $widget->get_name() ) {
+		$content = do_shortcode( $content );
+	}
+	return $content;
+}, 10, 2 );
+
 
 // GSAP
 function custom_gsap_scripts() {
@@ -561,3 +579,495 @@ add_action( 'wp_enqueue_scripts', function() {
         true
     );
 }, 20 );
+
+
+/* =============================================================
+ * DUAL STORE — URL-prefix storefronts
+ *
+ *   /            splash, no store
+ *   /my/...      Malaysia, MYR
+ *   /gb/...      Global, USD
+ *
+ * The URL is the source of truth. No store cookie, and cached
+ * pages are per-store because the prefix is part of the cache key.
+ * ============================================================= */
+
+/** Where unprefixed URLs go — old links, search results. 'my' or 'gb'. */
+define( 'DB_DEFAULT_STORE', 'my' );
+
+/** 302 while testing. Move to 301 only once the URLs are settled. */
+define( 'DB_LEGACY_REDIRECT_STATUS', 302 );
+
+
+/* -------------------------------------------------------------
+ * 1. The store map
+ * ----------------------------------------------------------- */
+
+function db_store_map() {
+	return array(
+		'my' => array( 'store' => 'local',  'currency' => 'MYR' ),
+		'gb' => array( 'store' => 'global', 'currency' => 'USD' ),
+	);
+}
+
+/** Storefront homepage page IDs, keyed by prefix. */
+function db_store_home_ids() {
+
+	$home = 55540; 
+
+	return array(
+		'my' => $home,
+		'gb' => $home,
+	);
+}
+
+/* -------------------------------------------------------------
+ * 2. Paths that are never store URLs
+ *
+ *    REST and the Stripe callback live here. Prefixing either one
+ *    breaks checkout, so this list is load-bearing.
+ * ----------------------------------------------------------- */
+
+function db_is_reserved_path( $path ) {
+
+	$path = ltrim( (string) $path, '/' );
+
+	if ( '' === $path ) {
+		return false;
+	}
+
+	$reserved = array(
+		'wp-admin', 'wp-login.php', 'wp-cron.php', 'wp-json',
+		'xmlrpc.php', 'wp-content', 'wp-includes', 'wc-api',
+	);
+
+	foreach ( $reserved as $prefix ) {
+		if ( $path === $prefix || 0 === strpos( $path, $prefix . '/' ) ) {
+			return true;
+		}
+	}
+
+	// robots.txt, favicon.ico, sitemaps — anything file-like at the root.
+	return (bool) preg_match( '#^[^/]+\.[a-z0-9]{2,4}$#i', $path );
+}
+
+
+/* -------------------------------------------------------------
+ * 3. Read the store off the URL, then hide the prefix from WP
+ * ----------------------------------------------------------- */
+
+$GLOBALS['db_store_prefix'] = '';
+
+function db_detect_store_prefix() {
+
+	if ( empty( $_SERVER['REQUEST_URI'] ) ) {
+		return;
+	}
+
+	$uri  = $_SERVER['REQUEST_URI'];
+	$path = (string) parse_url( $uri, PHP_URL_PATH );
+
+	if ( db_is_reserved_path( $path ) ) {
+		return;
+	}
+
+	// Whole first segment only. /my/shop/ matches; /my-account/ and
+	// /my-1/ must not.
+	$keys = implode( '|', array_keys( db_store_map() ) );
+
+	if ( ! preg_match( '#^/(' . $keys . ')(/.*)?$#', $path, $m ) ) {
+
+		// Cart fragments can still arrive at /?wc-ajax=… unprefixed —
+		// a cached script, or third-party code holding the old URL.
+		// Take the store from the page that asked, so the fragment
+		// comes back with prefixed cart links either way.
+		if ( ! empty( $_GET['wc-ajax'] ) ) {
+			$GLOBALS['db_store_prefix'] = db_effective_store_prefix();
+		}
+
+		return;
+	}
+
+	$prefix = $m[1];
+	$rest   = isset( $m[2] ) ? $m[2] : '';
+
+	$GLOBALS['db_store_prefix']         = $prefix;
+	$GLOBALS['db_original_request_uri'] = $uri;
+
+	// Always strip the prefix — including on the bare store roots.
+	//
+	// Leaving /my/ intact would make WP resolve it as the page "my",
+	// which sets is_singular and silently DISCARDS ?s=… — so search
+	// from inside a store would return the storefront homepage with
+	// no results and no error. Strip to '/' instead and let
+	// db_route_store_home() below put the right page back.
+	if ( '' === $rest || '/' === $rest ) {
+
+		$query = parse_url( $uri, PHP_URL_QUERY );
+
+		$_SERVER['REQUEST_URI'] = '/' . ( $query ? '?' . $query : '' );
+
+	} else {
+
+		$_SERVER['REQUEST_URI'] = substr( $uri, strlen( '/' . $prefix ) );
+	}
+}
+
+db_detect_store_prefix();
+
+
+/* -------------------------------------------------------------
+ * 4. Accessors
+ * ----------------------------------------------------------- */
+
+/** The prefix from the path: 'my', 'gb', or '' on the splash. */
+function db_store_prefix() {
+	return isset( $GLOBALS['db_store_prefix'] ) ? $GLOBALS['db_store_prefix'] : '';
+}
+
+/**
+ * The store for pricing, links and shipping decisions.
+ *
+ * REST (/wp-json/wc/store/*) and admin-ajax carry no prefix, so for
+ * those we read the referring page instead. Without this the block
+ * cart could total in a different currency than the page it sits on,
+ * and AJAX search results would come back with unprefixed links.
+ */
+function db_effective_store_prefix() {
+
+	$prefix = db_store_prefix();
+
+	if ( $prefix ) {
+		return $prefix;
+	}
+
+	if ( ! empty( $_SERVER['HTTP_REFERER'] ) ) {
+
+		$ref  = (string) parse_url( $_SERVER['HTTP_REFERER'], PHP_URL_PATH );
+		$keys = implode( '|', array_keys( db_store_map() ) );
+
+		if ( preg_match( '#^/(' . $keys . ')(/|$)#', $ref, $m ) ) {
+			return $m[1];
+		}
+	}
+
+	return '';
+}
+
+/** 'local' | 'global' | '' */
+function db_get_store() {
+
+	$map    = db_store_map();
+	$prefix = db_effective_store_prefix();
+
+	return isset( $map[ $prefix ] ) ? $map[ $prefix ]['store'] : '';
+}
+
+/** The real URL of this request, prefix included. */
+function db_current_store_url() {
+
+	$uri = isset( $GLOBALS['db_original_request_uri'] )
+		? $GLOBALS['db_original_request_uri']
+		: ( isset( $_SERVER['REQUEST_URI'] ) ? $_SERVER['REQUEST_URI'] : '/' );
+
+	// get_option() rather than home_url() — home_url is filtered below
+	// and we need the unprefixed base here.
+	return untrailingslashit( get_option( 'home' ) ) . $uri;
+}
+
+
+/* -------------------------------------------------------------
+ * 5. Currency, decided by the URL
+ *
+ *    CURCY reads its current currency from the wmc_current_currency
+ *    cookie. We overwrite that value in-process as this file loads,
+ *    so the very first render already uses the right currency, then
+ *    tell CURCY properly on init so it persists the choice.
+ *
+ *    The cookie is not our state — the URL is. We rewrite it from
+ *    the URL on every request, so it can never drift or expire into
+ *    the wrong store.
+ * ----------------------------------------------------------- */
+
+function db_seed_store_currency() {
+
+	$map    = db_store_map();
+	$prefix = db_effective_store_prefix();
+
+	if ( isset( $map[ $prefix ] ) ) {
+		$_COOKIE['wmc_current_currency'] = $map[ $prefix ]['currency'];
+	}
+}
+
+db_seed_store_currency();
+
+add_action( 'init', 'db_force_store_currency', 0 );
+
+function db_force_store_currency() {
+
+	if ( is_admin() && ! wp_doing_ajax() ) {
+		return;
+	}
+
+	$map    = db_store_map();
+	$prefix = db_effective_store_prefix();
+
+	if ( ! isset( $map[ $prefix ] ) ) {
+		return;
+	}
+
+	$want = $map[ $prefix ]['currency'];
+
+	// CURCY names its singleton accessor get_ins(); other builds use
+	// get_instance(). Try both.
+	foreach ( array( 'WOOMULTI_CURRENCY_F_Data', 'WOOMULTI_CURRENCY_Data' ) as $class ) {
+
+		if ( ! class_exists( $class ) ) {
+			continue;
+		}
+
+		foreach ( array( 'get_ins', 'get_instance' ) as $accessor ) {
+
+			if ( ! method_exists( $class, $accessor ) ) {
+				continue;
+			}
+
+			$curcy = call_user_func( array( $class, $accessor ) );
+
+			if ( is_object( $curcy ) && method_exists( $curcy, 'set_current_currency' ) ) {
+				$curcy->set_current_currency( $want );
+				return;
+			}
+		}
+	}
+
+	// Nothing matched. The page will render in whatever currency CURCY
+	// picked on its own, which on a /gb/ URL means MYR prices behind a
+	// global storefront — so this must be loud, not silent.
+	error_log( sprintf(
+		'[durianbikers] CURCY setter not found; could not force %s on store "%s". Check woo-multi-currency after a plugin update.',
+		$want,
+		$prefix
+	) );
+}
+
+
+/* -------------------------------------------------------------
+ * 6. Put the prefix on every generated link
+ *
+ *    home_url() is the root of virtually every front-end URL in WP
+ *    and WooCommerce, so this one filter covers menus, permalinks,
+ *    archives, pagination, cart, checkout and my-account.
+ * ----------------------------------------------------------- */
+
+add_filter( 'home_url', 'db_prefix_home_url', 10, 3 );
+
+function db_prefix_home_url( $url, $path, $scheme ) {
+
+	// Effective, not raw: admin-ajax carries no prefix in its own URL,
+	// and AJAX search results must still come back with store links.
+	$prefix = db_effective_store_prefix();
+
+	if ( ! $prefix ) {
+		return $url;
+	}
+
+	// REST URLs keep their own shape.
+	if ( 'rest' === $scheme ) {
+		return $url;
+	}
+
+	$candidate = '/' . ltrim( (string) $path, '/' );
+
+	if ( db_is_reserved_path( $candidate ) ) {
+		return $url;
+	}
+
+	// Relative URLs — home_url( '/', 'relative' ), which is how
+	// WooCommerce builds its AJAX endpoint and its add-to-cart
+	// links. No host to anchor to, so insert at the front.
+	if ( ! preg_match( '#^https?://#i', $url ) ) {
+		return '/' . $prefix . '/' . ltrim( $url, '/' );
+	}
+
+	// Insert the segment straight after the host.
+	return preg_replace(
+		'#^(https?://[^/]+)#',
+		'${1}/' . $prefix,
+		$url,
+		1
+	);
+}
+
+
+/* -------------------------------------------------------------
+ * 6b. Keep the prefix out of WordPress's own request parsing
+ *
+ *     WP::parse_request() calls home_url() to work out the site's
+ *     base path, then strips that path off the front of the request.
+ *     With the filter on it sees a base of /my — so /my/ resolves to
+ *     nothing and falls through to the front page, and /my/my-account/
+ *     becomes "-account" and 404s. Switch it off for the parse only.
+ * ----------------------------------------------------------- */
+
+add_filter( 'do_parse_request', function( $continue ) {
+	remove_filter( 'home_url', 'db_prefix_home_url', 10 );
+	return $continue;
+}, 0 );
+
+add_action( 'parse_request', function() {
+
+	add_filter( 'home_url', 'db_prefix_home_url', 10, 3 );
+
+	// Routing is finished, so put the real URL back. add_query_arg()
+	// builds on REQUEST_URI, and WooCommerce uses it for add-to-cart
+	// links, pagination and the sorting dropdown — all of which drop
+	// the prefix while the stripped copy is still in place.
+	if ( ! empty( $GLOBALS['db_original_request_uri'] ) ) {
+		$_SERVER['REQUEST_URI'] = $GLOBALS['db_original_request_uri'];
+	}
+}, 0 );
+
+
+/* -------------------------------------------------------------
+ * 6c. Put the storefront homepage back
+ *
+ *     Section 3 strips /my/ down to '/', which WP resolves to the
+ *     splash. Point the bare store root at that store's own page
+ *     instead. Only when there are no query vars — a search or a
+ *     filtered archive must fall through untouched.
+ * ----------------------------------------------------------- */
+
+add_action( 'parse_query', 'db_route_store_home' );
+
+function db_route_store_home( $q ) {
+
+	if ( is_admin() || ! $q->is_main_query() ) {
+		return;
+	}
+
+	$prefix = db_store_prefix();
+
+	if ( ! $prefix || ! empty( $q->query ) ) {
+		return;
+	}
+
+	$pages = db_store_home_ids();
+
+	if ( empty( $pages[ $prefix ] ) ) {
+		return;
+	}
+
+	$q->set( 'page_id', $pages[ $prefix ] );
+
+	$q->is_home     = false;
+	$q->is_page     = true;
+	$q->is_singular = true;
+}
+
+
+/* -------------------------------------------------------------
+ * 7. Stop WordPress fighting us over the canonical URL
+ *
+ *    redirect_canonical compares the stripped REQUEST_URI against a
+ *    prefixed permalink, decides they differ, and redirects — for
+ *    ever. Inside a store we own the URL shape, so switch it off.
+ * ----------------------------------------------------------- */
+
+add_filter( 'redirect_canonical', function( $redirect_url ) {
+	return db_store_prefix() ? false : $redirect_url;
+}, 10, 1 );
+
+
+/* -------------------------------------------------------------
+ * 8. Send unprefixed front-end URLs into a store
+ *
+ *    Old links, indexed URLs, anything hardcoded in Elementor.
+ *    GET only — redirecting a POST would throw the body away.
+ * ----------------------------------------------------------- */
+
+add_action( 'template_redirect', 'db_redirect_unprefixed_urls', 1 );
+
+function db_redirect_unprefixed_urls() {
+
+	if ( db_store_prefix() ) {
+		return; // already in a store
+	}
+
+	if ( is_admin() || wp_doing_ajax() || is_front_page() ) {
+		return; // wp-admin, AJAX, and the splash itself
+	}
+
+	if ( ! isset( $_SERVER['REQUEST_METHOD'] ) || 'GET' !== $_SERVER['REQUEST_METHOD'] ) {
+		return;
+	}
+
+	if ( ! empty( $_GET['wc-ajax'] ) ) {
+		return;
+	}
+
+	$path = (string) parse_url( $_SERVER['REQUEST_URI'], PHP_URL_PATH );
+
+	if ( db_is_reserved_path( $path ) ) {
+		return;
+	}
+
+	// Keep the visitor in the store they came from. Any link we failed
+	// to prefix — an Elementor button, a custom menu item, an AJAX
+	// result — lands here, and sending a global customer to the default
+	// store would silently switch them to MYR. The referer is not
+	// reliable, so DB_DEFAULT_STORE remains the backstop.
+	$prefix = db_effective_store_prefix();
+
+	if ( ! $prefix ) {
+		$prefix = DB_DEFAULT_STORE;
+	}
+
+	$target = preg_replace(
+		'#^(https?://[^/]+)#',
+		'${1}/' . $prefix,
+		db_current_store_url(),
+		1
+	);
+
+	wp_safe_redirect( $target, DB_LEGACY_REDIRECT_STATUS );
+	exit;
+}
+
+
+/* -------------------------------------------------------------
+ * 9. Restrict billing + shipping countries to match the store
+ * ----------------------------------------------------------- */
+
+add_filter( 'woocommerce_countries_allowed_countries',  'db_store_countries' );
+add_filter( 'woocommerce_countries_shipping_countries', 'db_store_countries' );
+
+function db_store_countries( $countries ) {
+
+	// Never restrict wp-admin — you still need every country when
+	// editing orders or configuring shipping zones.
+	if ( is_admin() && ! wp_doing_ajax() ) {
+		return $countries;
+	}
+
+	$store = db_get_store();
+
+	// No store in the URL and no referer to read it from: REST calls,
+	// cron, webhooks. Fall back to the default store rather than
+	// letting the request drift into "global" and lock out Malaysia.
+	if ( ! $store ) {
+		$map   = db_store_map();
+		$store = $map[ DB_DEFAULT_STORE ]['store'];
+	}
+
+	if ( 'local' === $store ) {
+		return isset( $countries['MY'] )
+			? array( 'MY' => $countries['MY'] )
+			: $countries;
+	}
+
+	// Global store: everywhere except Malaysia.
+	unset( $countries['MY'] );
+
+	return $countries;
+}
