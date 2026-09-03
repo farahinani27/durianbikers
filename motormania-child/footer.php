@@ -30,7 +30,7 @@ $backtotop = isset( $motormania_opt['backtotop'] ) ? $motormania_opt['backtotop'
 		endif; ?>
 
 
-		<div class="copyright-bar">
+<!-- 		<div class="copyright-bar">
 			<div class="container">
 				<div class="row justify-content-center">
 					<div class="col-sm-<?php if ( $supported_currency ) { echo'7 text-left'; }else{ echo'12 text-center'; }?>">
@@ -66,7 +66,7 @@ $backtotop = isset( $motormania_opt['backtotop'] ) ? $motormania_opt['backtotop'
 					
 				</div>
 			</div>
-		</div>
+		</div> -->
 	</footer>
 
 <?php if ($backtotop == true) {?>
