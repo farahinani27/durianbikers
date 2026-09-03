@@ -1,0 +1,1195 @@
+/*------------------------------------------------------------*/
+/*  HERO BANNER  (page 58663 "hero-banner")                    */
+/*  Two full-viewport panels + shared 3D helmet layer.         */
+/*------------------------------------------------------------*/
+
+.db-hero-page {
+	--db-black:      #0a0a0a;
+	--db-white:      #ffffff;
+	--db-accent:     #93d952;
+	--db-muted:      rgba(255, 255, 255, .45);
+	--db-muted-dark: rgba(10, 10, 10, .45);
+	--db-line:       rgba(255, 255, 255, .14);
+	--db-line-dark:  rgba(10, 10, 10, .14);
+
+	--db-font-sans:  "Archivo", "Helvetica Neue", Helvetica, Arial, sans-serif;
+	--db-font-serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+
+	--db-gutter: clamp(16px, 3.2vw, 56px);
+
+	margin: 0;
+	background: var(--db-black);
+	font-family: var(--db-font-sans);
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
+/* The theme/Elementor wrap can clip a fixed child - neutralise it. */
+.db-hero-page #page,
+.db-hero-page .site-content,
+.db-hero-page .elementor,
+.db-hero-page .entry-content {
+	overflow: visible;
+}
+
+.db-hero * { box-sizing: border-box; }
+
+/*--------------------------------------------------*/
+/*  Panels                                          */
+/*--------------------------------------------------*/
+
+.db-panel {
+	position: relative;
+	width: 100%;
+	min-height: 100vh;          /* fallback */
+	min-height: 100svh;         /* mobile browser-chrome safe */
+	overflow: hidden;
+	display: flex;
+	flex-direction: column;
+}
+
+.db-panel--dark  { background: var(--db-black); color: var(--db-white); }
+.db-panel--light { background: var(--db-white); color: var(--db-black); }
+
+/*--------------------------------------------------*/
+/*  Intro - scroll-driven video zoom                 */
+/*--------------------------------------------------*/
+
+.db-intro {
+	--db-intro-ink: #e8e6dc;
+	position: relative;
+	width: 100%;
+	height: 100vh;
+	height: 100svh;
+	overflow: hidden;
+	background: var(--db-black);
+}
+
+/*  Marquee  ---------------------------------------------------------------
+    Two rows running opposite ways behind the video. Each track holds the
+    words twice and shifts by exactly half its width, so the loop is seamless
+    without measuring anything.                                             */
+
+.db-intro__marquee {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	gap: clamp(2px, .6vh, 10px);
+	pointer-events: none;
+	overflow: hidden;
+}
+
+.db-mq { overflow: hidden; }
+
+.db-mq__track {
+	display: flex;
+	width: max-content;
+	white-space: nowrap;
+	will-change: transform;
+}
+
+.db-mq__track > span { padding-right: .38em; }
+
+.db-mq--serif .db-mq__track {
+	font-family: var(--db-font-serif);
+	font-style: italic;
+	font-weight: 500;
+	text-transform: uppercase;
+	font-size: clamp(44px, 8.2vw, 150px);
+	line-height: 1;
+	color: var(--db-accent);
+	animation: db-mq-left 34s linear infinite;
+}
+
+.db-mq--sans .db-mq__track {
+	font-family: var(--db-font-sans);
+	font-weight: 800;
+	font-size: clamp(38px, 7vw, 128px);
+	line-height: 1;
+	letter-spacing: -.02em;
+	text-transform: uppercase;
+	color: var(--db-intro-ink);
+	animation: db-mq-right 40s linear infinite;
+}
+
+@keyframes db-mq-left {
+	from { transform: translate3d(0, 0, 0); }
+	to   { transform: translate3d(-50%, 0, 0); }
+}
+
+@keyframes db-mq-right {
+	from { transform: translate3d(-50%, 0, 0); }
+	to   { transform: translate3d(0, 0, 0); }
+}
+
+/* Faded in by the zoom's own timeline, so the words arrive as the video
+   shrinks off them rather than sitting behind a full-bleed video. */
+.db-intro__marquee { opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+	.db-mq__track { animation: none; }
+}
+
+/* The frame starts as the whole viewport and is scaled down by the scroll
+   driver. Scaling the frame rather than resizing it keeps the picture's
+   composition intact - it shrinks as one piece instead of re-cropping, which
+   is what the reference does. */
+.db-intro__frame {
+	position: absolute;
+	inset: 0;
+	transform-origin: center center;
+	will-change: transform;
+	overflow: hidden;
+}
+
+/* Sits inside the frame, so it scales with the video and never darkens the
+   section around it. Driven by the scroll, not a transition. */
+.db-intro__veil {
+	position: absolute;
+	inset: 0;
+	background: #000;
+	opacity: 0;
+	pointer-events: none;
+}
+
+.db-intro__video {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+}
+
+/* Until the video can actually play, the section stays flat black rather than
+   zooming an empty box. */
+.db-intro:not(.is-ready) .db-intro__frame { opacity: 0; }
+
+/* If it cannot play at all - .mov is not supported everywhere - drop the whole
+   section rather than leaving a black screen and a stretch of dead scroll. */
+.db-intro.is-failed { display: none; }
+
+/*--------------------------------------------------*/
+/*  Shared 3D layer - spans both panels              */
+/*--------------------------------------------------*/
+
+.db-stage {
+	position: fixed;
+	inset: 0;
+	/* Above panel content (z 3), so scrolling copy and cards pass behind the
+	   helmet instead of over it. Safe because the layer never takes pointer
+	   events - links and buttons underneath stay clickable. */
+	z-index: 4;
+	pointer-events: none;
+	contain: strict;
+}
+
+.db-stage canvas {
+	display: block;
+	width: 100%;
+	height: 100%;
+}
+
+/* Poster shown until the model is ready, and as the no-WebGL fallback. */
+.db-stage__poster {
+	position: absolute;
+	inset: 0;
+	display: grid;
+	place-items: center;
+	transition: opacity .6s ease;
+}
+
+.db-stage.is-ready .db-stage__poster { opacity: 0; }
+
+.db-stage__spinner {
+	width: 30px;
+	height: 30px;
+	border: 2px solid var(--db-line);
+	border-top-color: var(--db-accent);
+	border-radius: 50%;
+	animation: db-spin 0.9s linear infinite;
+}
+
+@keyframes db-spin { to { transform: rotate(360deg); } }
+
+/*--------------------------------------------------*/
+/*  Header                                          */
+/*--------------------------------------------------*/
+
+.db-hero__header {
+	position: relative;
+	z-index: 10;
+	display: grid;
+	grid-template-columns: 1fr auto 1fr;
+	align-items: start;
+	gap: 16px;
+	padding: var(--db-gutter);
+}
+
+.db-nav {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 0 clamp(10px, 1.2vw, 22px);
+	font-size: clamp(10px, .82vw, 13px);
+	font-weight: 700;
+	letter-spacing: .1em;
+	text-transform: uppercase;
+}
+
+.db-nav a {
+	position: relative;
+	color: var(--db-white);
+	text-decoration: none;
+	white-space: nowrap;
+	transition: color .2s ease;
+}
+
+.db-nav a:hover,
+.db-nav a:focus-visible { color: var(--db-accent); }
+
+/* Hairline separators between items, drawn in the gap. */
+.db-nav a + a::before {
+	content: "";
+	position: absolute;
+	left: calc(clamp(10px, 1.2vw, 22px) / -2);
+	top: 50%;
+	width: 1px;
+	height: 1em;
+	transform: translateY(-50%);
+	background: var(--db-line);
+}
+
+.db-hero__mark {
+	justify-self: center;
+	display: block;
+	width: clamp(46px, 5.2vw, 80px);
+	height: auto;
+}
+
+.db-hero__mark img {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+.db-hero__actions {
+	justify-self: end;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+}
+
+.db-btn {
+	display: inline-flex;
+	align-items: center;
+	gap: 9px;
+	height: clamp(40px, 4.2vw, 56px);
+	padding: 0 clamp(14px, 1.5vw, 24px);
+	border-radius: 999px;
+	border: 1px solid transparent;
+	font-size: clamp(11px, 1vw, 14px);
+	font-weight: 700;
+	letter-spacing: .1em;
+	text-transform: uppercase;
+	text-decoration: none;
+	cursor: pointer;
+	transition: background-color .25s ease, color .25s ease, border-color .25s ease;
+}
+
+.db-btn--accent {
+	background: var(--db-accent);
+	color: var(--db-black);
+}
+
+/* No colour swap: the label's motion is the whole affordance.
+
+   The theme applies its own `a:hover { color }` to every link, which turned the
+   label a mid-green against the accent fill and read as the text fading out.
+   These are #db-hero-prefixed so they outrank it. */
+#db-hero .db-btn--accent,
+#db-hero .db-btn--accent:hover,
+#db-hero .db-btn--accent:focus,
+#db-hero .db-btn--accent:focus-visible,
+#db-hero .db-btn--accent:active { color: var(--db-black); }
+
+#db-hero .db-btn--ghost,
+#db-hero .db-btn--ghost:hover,
+#db-hero .db-btn--ghost:focus,
+#db-hero .db-btn--ghost:focus-visible,
+#db-hero .db-btn--ghost:active { color: var(--db-white); }
+
+.db-btn--ghost {
+	width: clamp(40px, 4.2vw, 56px);
+	padding: 0;
+	justify-content: center;
+	border-radius: 14px;
+	border-color: var(--db-line);
+	background: transparent;
+	color: var(--db-white);
+}
+
+.db-btn--ghost:hover,
+.db-btn--ghost:focus-visible { border-color: var(--db-white); }
+
+.db-btn svg { flex: none; }
+
+/* Hover: the label slides out through the bottom while a duplicate drops in
+   from above, clipped to the button. The copy is aria-hidden so the label is
+   still announced once. */
+.db-btn__swap {
+	position: relative;
+	display: block;
+	overflow: hidden;
+}
+
+.db-btn__line {
+	display: block;
+	white-space: nowrap;
+}
+
+.db-btn__line--in {
+	position: absolute;
+	inset: 0;
+}
+
+/* Each letter carries its own index, so the swap runs left to right rather
+   than as one block. 60ms apart against a 420ms slide - close enough to read
+   as one gesture, far enough apart to read letter by letter. */
+.db-btn__ch {
+	display: inline-block;
+	transition: transform .42s cubic-bezier(.22, 1, .36, 1);
+	transition-delay: calc(var(--i, 0) * 60ms);
+}
+
+.db-btn__line--in .db-btn__ch { transform: translateY(-100%); }
+
+.db-btn:hover .db-btn__line .db-btn__ch,
+.db-btn:focus-visible .db-btn__line .db-btn__ch { transform: translateY(100%); }
+
+.db-btn:hover .db-btn__line--in .db-btn__ch,
+.db-btn:focus-visible .db-btn__line--in .db-btn__ch { transform: translateY(0); }
+
+@media (prefers-reduced-motion: reduce) {
+	.db-btn__ch { transition: none; transition-delay: 0s; }
+}
+
+/*--------------------------------------------------*/
+/*  Panel 1 body                                    */
+/*--------------------------------------------------*/
+
+.db-hero__body {
+	position: relative;
+	flex: 1;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	align-content: start;
+	column-gap: clamp(24px, 4vw, 72px);
+	padding: 0 var(--db-gutter) var(--db-gutter);
+	min-height: 0;
+}
+
+/* Wider right gutter on panel 1 so the meta strip, copy and card rail pull
+   away from the screen edge. Phones keep the normal gutter - they have no
+   width to spare. */
+.db-panel--dark .db-hero__body { padding-right: clamp(24px, 6.5vw, 120px); }
+
+/* Oversized headline, deliberately bleeding past the right edge. */
+.db-hero__title {
+	grid-column: 1 / -1;
+	/* Shrink-to-fit so the lockup can be centred in the section rather than
+	   sitting left-weighted with dead space to its right. */
+	justify-self: center;
+	position: relative;
+	margin: clamp(8px, 1.4vh, 24px) 0 0;
+	/* Capped by height as well as width: the panel is one viewport tall, so a
+	   width-only headline overruns the fold on short laptop screens. */
+	font-size: clamp(52px, min(25.5vh, 17vw), 300px);
+	font-weight: 800;
+	line-height: .82;
+	letter-spacing: -.045em;
+	text-transform: uppercase;
+	white-space: nowrap;
+	pointer-events: none;
+}
+
+.db-hero__title-track {
+	display: block;
+	margin-left: 1.16em;
+	font-size: 1em;   /* = the 25.5vh set on .db-hero__title */
+	color: var(--db-white);
+	/* The wipe waits for the section to be reached - see db-head-armed below.
+	   It used to run on load, which was right while this was the first thing
+	   on screen and is now two sections too early. */
+}
+
+/* "On" is drawn from the real Instrument Serif italic outlines so a stroke can
+   be animated along them. Armed hidden in CSS (before first paint); the script
+   measures the true path length and tweens it. Without the script the glyphs
+   simply render filled. */
+.db-on-svg {
+	display: block;
+	height: .767em;
+	width: auto;
+	overflow: visible;
+}
+
+.db-on-svg path {
+	fill: currentColor;
+	stroke: currentColor;
+	stroke-width: 7;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+.db-hero__title-on.db-sketch .db-on-svg path {
+	fill-opacity: 0;
+	stroke-dasharray: 9000;
+	stroke-dashoffset: 9000;
+}
+
+/* Description reveal: a coloured bar sweeps across each line, uncovering the
+   text behind it. Armed with visibility (not display) so the layout does not
+   reflow when the animation takes over. */
+.db-hero__lede.db-lede-armed { visibility: hidden; }
+
+.db-ln { position: relative; display: block; }
+
+.db-ln-bar {
+	position: absolute;
+	left: -.06em;
+	right: -.06em;
+	top: .04em;
+	bottom: .04em;
+	background: var(--db-accent);
+	transform: scaleX(0);
+	transform-origin: left center;
+	pointer-events: none;
+}
+
+.db-ln.db-ln-masked,
+.db-ln.db-ln-masked * { color: transparent !important; }
+
+/* Same treatment for the meta strip. The flag is an emoji, which ignores
+   `color`, so nested elements are hidden with opacity instead - excluding the
+   bar itself, which is also a child. */
+.db-hero__meta.db-lede-armed { visibility: hidden; }
+
+.db-hero__meta > span { position: relative; }
+
+.db-hero__meta > span > .db-ln-bar { top: .16em; bottom: -.1em; }
+
+.db-hero__meta > span.db-mt-masked { color: transparent !important; }
+
+.db-hero__meta > span.db-mt-masked > *:not(.db-ln-bar) { opacity: 0; }
+
+/* db-head-armed is set by script, so a page without JS simply shows the
+   headline rather than holding it clipped forever. is-in lands when the
+   section comes into view. */
+.db-head-armed .db-hero__title-track { clip-path: inset(0 0 100% 0); }
+
+.db-head-armed.is-in .db-hero__title-track {
+	animation: db-track-reveal 1100ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes db-track-reveal {
+	from { clip-path: inset(0 0 100% 0); }
+	to   { clip-path: inset(0 0 0 0); }
+}
+
+
+
+
+.db-hero__title-on {
+	position: absolute;
+	left: -.055em;
+	top: -0.23em;
+	z-index: 1;
+	font-family: var(--db-font-serif);
+	font-style: italic;
+	font-weight: 500;
+	font-size: 1.45em;
+	letter-spacing: -.02em;
+	color: var(--db-accent);
+	line-height: 0;
+}
+
+/* Panel-1 content sits above the headline but below the helmet layer. */
+.db-hero__meta,
+.db-hero__copy,
+.db-cards {
+	position: relative;
+	z-index: 3;
+}
+
+/* Layering, back to front: Track, On, panel content, then the helmet on top. */
+.db-hero__title-track {
+	position: relative;
+	z-index: 0;
+}
+
+/* Meta strip under the headline, right half only. */
+.db-hero__meta {
+	grid-column: 2;
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: space-between;
+	gap: 12px 24px;
+	margin-top: clamp(14px, 1.6vw, 26px);
+	font-size: clamp(13px, 1.15vw, 18px);
+	color: var(--db-white);
+	font-weight: 700;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+}
+
+.db-hero__meta span { display: inline-flex; align-items: center; gap: 8px; }
+
+/* Copy block */
+.db-hero__copy {
+	grid-column: 2;
+	align-self: center;
+	max-width: 85ch;
+	margin-top: clamp(24px, 4vh, 72px);
+}
+
+.db-panel--dark .db-eyebrow { color: var(--db-accent); }
+
+.db-eyebrow {
+	margin: 0 0 clamp(12px, 1.4vw, 22px);
+	font-size: clamp(10px, .85vw, 13px);
+	font-weight: 700;
+	letter-spacing: .16em;
+	text-transform: uppercase;
+	color: var(--db-muted);
+}
+
+.db-hero__lede {
+	margin: 0;
+	color: var(--db-white);
+	font-size: clamp(17px, 1.6vw, 28px);
+	font-weight: 500;
+	line-height: 1.28;
+	letter-spacing: -.015em;
+}
+
+.db-hero__lede em {
+	font-family: var(--db-font-serif);
+	font-style: italic;
+	font-weight: 400;
+	color: var(--db-accent);
+}
+
+/*--------------------------------------------------*/
+/*  Card rail                                       */
+/*--------------------------------------------------*/
+
+.db-cards {
+	grid-column: 2;
+	align-self: end;
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 10px;
+	margin-top: clamp(14px, 2.4vh, 48px);
+}
+
+.db-card {
+	/* Three fixed bands - label, value, footer - so the value sits on the same
+	   line across all four cards even when a card has no footer. flex with
+	   space-between let a two-child card drop its value to the bottom. */
+	display: grid;
+	grid-template-rows: auto 1fr auto;
+	justify-items: center;
+	text-align: center;
+	gap: 12px;
+	min-height: clamp(94px, 12.8vh, 158px);
+	padding: clamp(12px, 1vw, 18px);
+	border: 1px solid var(--db-line);
+	border-radius: 14px;
+	background: rgba(255, 255, 255, .015);
+}
+
+.db-card--muted { opacity: .4; }
+
+.db-card__label {
+	grid-row: 1;
+	font-size: clamp(9px, .72vw, 11px);
+	font-weight: 700;
+	letter-spacing: .14em;
+	text-transform: uppercase;
+	color: var(--db-muted);
+}
+
+.db-card__value {
+	grid-row: 2;
+	align-self: center;
+	font-size: clamp(11px, .92vw, 14px);
+	font-weight: 800;
+	letter-spacing: .01em;
+	text-transform: uppercase;
+	line-height: 1.22;
+}
+
+.db-card__value--xl {
+	font-size: clamp(24px, 2.6vw, 44px);
+	white-space: nowrap;
+	line-height: .9;
+	color: var(--db-accent);
+}
+
+.db-card__foot {
+	grid-row: 3;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 6px;
+	line-height: 1.35;
+	font-size: clamp(8px, .66vw, 10px);
+	font-weight: 700;
+	letter-spacing: .08em;
+	text-transform: uppercase;
+	color: var(--db-muted);
+}
+
+.db-card__flag { font-size: 18px; line-height: 1; }
+
+.db-card__glyph { width: 100%; height: auto; max-height: 46px; color: var(--db-muted); }
+
+
+
+/*--------------------------------------------------*/
+/*  Panel 2                                         */
+/*--------------------------------------------------*/
+
+.db-panel--light .db-panel__inner {
+	position: relative;
+	z-index: 3;
+	flex: 1;
+	display: grid;
+	grid-template-rows: auto 1fr auto auto;
+	gap: 24px;
+	padding: var(--db-gutter);
+	text-align: center;
+	pointer-events: none;
+}
+
+.db-panel--light .db-panel__inner > * { pointer-events: auto; }
+
+.db-panel--light .db-eyebrow { color: var(--db-muted-dark); }
+
+.db-spec__title {
+	margin: 0;
+	font-size: clamp(38px, 7vw, 118px);
+	font-weight: 800;
+	line-height: .9;
+	letter-spacing: -.04em;
+	text-transform: uppercase;
+}
+
+/* Reserve the middle band for the helmet - copy sits either side of it. */
+.db-spec__stage { position: relative; min-height: clamp(150px, 32vh, 440px); }
+
+
+
+
+.db-buy {
+	display: flex;
+	justify-content: center;
+	padding-bottom: clamp(10px, 1.8vh, 30px);
+}
+
+.db-btn--lg {
+	height: clamp(46px, 4.4vw, 58px);
+	padding: 0 clamp(26px, 2.8vw, 46px);
+	font-size: clamp(11px, 1vw, 14px);
+	border-radius: 999px;
+}
+
+/*--------------------------------------------------*/
+/*  Tablet                                          */
+/*--------------------------------------------------*/
+
+@media (max-width: 767px) {
+	.db-hero__body { grid-template-columns: 1fr; }
+
+	.db-hero__meta,
+	.db-hero__copy,
+	.db-cards { grid-column: 1; }
+
+	/* Helmet occupies the upper band on narrow screens. Rather than reserving
+	   it with a fixed margin (which overflows the fold on small phones), the
+	   text block is pushed to the bottom of the panel and whatever space is
+	   left over becomes the band. hero-banner.js measures it and fits the
+	   helmet to it, so panel 1 stays exactly one viewport tall. */
+	.db-hero__body { display: flex; flex-direction: column; }
+
+	/* align-self meant "bottom" in the two-column grid; in this flex column it
+	   would mean "right" and shrink the item to its content. */
+	.db-hero__copy,
+	.db-cards { align-self: stretch; }
+
+	.db-hero__title { align-self: center; margin-left: .04em; }
+
+	.db-panel--dark .db-hero__body {
+		padding-right: var(--db-gutter);
+		padding-top: clamp(96px, 11vh, 130px);
+	}
+
+	.db-hero__meta { margin-top: clamp(7px, 1.1vh, 18px); }
+	.db-hero__copy { margin-top: auto; max-width: none; }
+
+
+}
+
+/*--------------------------------------------------*/
+/*  Desktop - centre the right column vertically     */
+/*--------------------------------------------------*/
+
+@media (min-width: 768px) {
+	.db-hero__body {
+		grid-template-rows: auto 1fr auto auto auto 1fr;
+	}
+
+	.db-hero__title { grid-row: 1; }
+	.db-hero__meta  { grid-row: 3; }
+	.db-hero__copy  { grid-row: 4; align-self: start; }
+	.db-cards       { grid-row: 5; align-self: start; }
+}
+
+/*--------------------------------------------------*/
+/*  Desktop below 1440 - card rail goes 2 x 2        */
+/*--------------------------------------------------*/
+
+/* Four across gets cramped once the column narrows; two rows of two gives the
+   longer values room. Card height comes down to pay for the second row. */
+@media (min-width: 768px) and (max-width: 1440px) {
+	.db-cards {
+		grid-template-columns: repeat(2, 1fr);
+		gap: 8px;
+		margin-top: clamp(8px, 1.2vh, 22px);
+	}
+
+	.db-card { min-height: clamp(58px, 6.4vh, 84px); }
+
+	.db-hero__lede { font-size: clamp(16px, min(1.6vw, 2.5vh), 26px); }
+
+	.db-hero__copy { margin-top: clamp(10px, 1.6vh, 26px); }
+}
+
+/*--------------------------------------------------*/
+/*  Tablet only - kept out of the phone range        */
+/*--------------------------------------------------*/
+
+/* These two are overridden below for phones. Declared as an exclusive range
+   because the cache layer may reorder equally-specific media blocks. */
+@media (min-width: 641px) and (max-width: 1024px) {
+	.db-cards {
+		grid-template-columns: repeat(2, 1fr);
+		gap: 8px;
+		margin-top: clamp(10px, 1.6vh, 24px);
+	}
+
+	.db-card {
+		min-height: clamp(52px, 5.6vh, 78px);
+		padding: 9px;
+		gap: 6px;
+	}
+
+	.db-card__value { font-size: clamp(11px, .95vw, 13px); }
+
+	/* Larger headline across the whole tablet range. Safe against the centred
+	   logo because TRACK's cap height is anchored near the fixed top of the
+	   title box and grows downward - clearance barely moves with size. The vh
+	   term keeps short viewports from overflowing the fold; the cost of the
+	   extra size lands on the helmet's band. */
+	.db-hero__title { font-size: clamp(52px, min(15vw, 18vh), 118px); }
+
+	.db-hero__copy { margin-bottom: clamp(6px, 1vh, 14px); }
+}
+
+/*--------------------------------------------------*/
+/*  Panel 3                                          */
+/*--------------------------------------------------*/
+
+/* .db-panel is already a full-height flex column; centring both axes is all
+   this needs. Its own class rather than .db-panel__inner, which carries
+   panel 2's grid. */
+.db-panel--three {
+	align-items: center;
+	justify-content: center;
+	padding: var(--db-gutter);
+}
+
+/*  Cursor image trail  ---------------------------------------------------
+    Images are dealt out along the pointer's path across the statement, then
+    fade back out. Pointer devices only - there is no hover to follow on a
+    touch screen, and it would just be weight.                              */
+
+.db-trail {
+	position: absolute;
+	inset: 0;
+	overflow: hidden;
+	pointer-events: none;
+	z-index: 0;
+}
+
+.db-trail__img {
+	position: absolute;
+	top: 0;
+	left: 0;
+	width: clamp(120px, 13vw, 220px);
+	/* The art is square, cut-out product icons rather than photography, so it
+	   is fitted whole instead of cropped to a portrait frame. */
+	aspect-ratio: 1 / 1;
+	object-fit: contain;
+	opacity: 0;
+	will-change: transform, opacity;
+}
+
+/* The words stay in front of whatever is dealt behind them. */
+.db-three__title { position: relative; z-index: 1; }
+
+/* Sits above the cursor trail with the words, and keeps its distance from the
+   statement rather than crowding the last line. */
+.db-three__cta {
+	position: relative;
+	z-index: 1;
+	margin-top: clamp(26px, 4.5vh, 64px);
+}
+
+.db-three__title {
+	max-width: min(1180px, 92vw);
+	margin: 0;
+	font-size: clamp(30px, 5.4vw, 96px);
+	font-weight: 800;
+	line-height: .96;
+	letter-spacing: -.025em;
+	text-transform: uppercase;
+	text-align: center;
+	color: #e8e6dc;
+}
+
+/* The accented words carry the headline's serif - the same pairing the hero's
+   "On" uses, so emphasis speaks with one voice across the page. */
+.db-three__title em {
+	font-family: var(--db-font-serif);
+	font-style: italic;
+	font-weight: 500;
+	letter-spacing: -.01em;
+	color: var(--db-accent);
+}
+
+/* Below the desktop layout the statement was landing on its 30px floor and
+   filling barely a third of its section, which read as a long black gap rather
+   than a held pause. Scale it with the viewport instead. The vh term keeps
+   short screens from overflowing, where width alone would push it too far. */
+@media (max-width: 1024px) {
+	.db-three__title { max-width: 94vw; }
+
+	/* The section centres its content, but the theme's header is fixed over the
+	   top of it - without this the first line sits underneath the logo. */
+	.db-panel--three { padding-top: clamp(96px, 12vh, 132px); }
+}
+
+/* Two ranges, because the same rule cannot serve both. A narrow screen wraps
+   this sentence into ten-odd lines, so height is the binding constraint; a
+   tablet fits far more per line and needs a much larger share of the width
+   before it fills anything. One vh cap tuned for phones left 1024 smaller than
+   it started. */
+@media (max-width: 640px) {
+	.db-three__title { font-size: clamp(32px, min(12.5vw, 5.6vh), 84px); }
+}
+
+@media (min-width: 641px) and (max-width: 1024px) {
+	.db-three__title { font-size: clamp(40px, min(9vw, 8.5vh), 92px); }
+}
+
+/*--------------------------------------------------*/
+/*  Panel 2 callouts                                 */
+/*--------------------------------------------------*/
+
+/* Narrow screens have no room beside the helmet, so the callouts read as a
+   plain two-column list under it. The leader-line treatment is layered on at
+   wider widths, where there is space either side. */
+.db-notes {
+	--db-lead: clamp(18px, 4.5vw, 88px);
+	--db-gap: clamp(8px, .9vw, 16px);    /* breathing room after the text */
+	--db-dot: clamp(6px, .55vw, 9px);
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: clamp(8px, 1.4vh, 16px) clamp(14px, 3vw, 30px);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+	text-align: left;
+}
+
+.db-note {
+	font-size: clamp(13px, 1.05vw, 18px);
+	font-weight: 600;
+	line-height: 1.4;
+	color: var(--db-black);
+}
+
+.db-note b { font-weight: 800; }
+
+/* No room for a leader beside the helmet at these widths. */
+.db-note__line,
+.db-note__dot { display: none; }
+
+@media (min-width: 641px) {
+	.db-note__line,
+	.db-note__dot { display: block; }
+}
+
+@media (min-width: 641px) {
+	/* Pinned to the helmet's own box: hero-banner.js publishes the settled
+	   helmet's half-width and the stage's position, so the callouts sit just
+	   clear of the silhouette at any viewport instead of at a guessed offset. */
+	.db-notes {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: var(--db-stage-top, 0px);
+		height: var(--db-stage-h, 0px);
+		display: block;
+		pointer-events: none;
+	}
+
+	.db-note {
+		position: absolute;
+		width: clamp(112px, 15vw, 250px);
+	}
+
+	/* The leader: a hairline drawn from the text towards the helmet. Scaled
+	   rather than widened so it stays correct when --db-lead changes with the
+	   viewport, and so GSAP can drive it on the compositor. */
+	.db-note__line {
+		position: absolute;
+		top: .62em;
+		height: 1px;
+		width: calc(var(--db-lead) - var(--db-gap));
+		background: currentColor;
+		opacity: .55;
+		transform: scaleX(0);
+		transition: transform .6s cubic-bezier(.22, 1, .36, 1) .1s;
+	}
+
+	.db-note--a,
+	.db-note--b {
+		right: calc(50% + var(--db-helm-half, 140px) + var(--db-lead));
+		text-align: right;
+	}
+
+	.db-note--a .db-note__line,
+	.db-note--b .db-note__line {
+		left: calc(100% + var(--db-gap));
+		transform-origin: left center;
+	}
+
+	.db-note--c,
+	.db-note--d {
+		left: calc(50% + var(--db-helm-half, 140px) + var(--db-lead));
+		text-align: left;
+	}
+
+	.db-note--c .db-note__line,
+	.db-note--d .db-note__line {
+		right: calc(100% + var(--db-gap));
+		transform-origin: right center;
+	}
+
+	.db-note--a, .db-note--c { top: 14%; }
+	.db-note--b, .db-note--d { top: 56%; }
+
+	.db-settled .db-note__line { transform: scaleX(1); }
+
+	.db-note__dot {
+		position: absolute;
+		top: .62em;
+		width: var(--db-dot);
+		height: var(--db-dot);
+		margin-top: calc(var(--db-dot) / -2);
+		border-radius: 50%;
+		background: currentColor;
+		opacity: .55;
+		transform: scale(0);
+		transition: transform .35s cubic-bezier(.22, 1, .36, 1) .5s;
+	}
+
+	.db-note--a .db-note__dot,
+	.db-note--b .db-note__dot {
+		left: calc(100% + var(--db-lead));
+		margin-left: calc(var(--db-dot) / -2);
+	}
+
+	.db-note--c .db-note__dot,
+	.db-note--d .db-note__dot {
+		right: calc(100% + var(--db-lead));
+		margin-right: calc(var(--db-dot) / -2);
+	}
+
+	.db-settled .db-note__dot { transform: scale(1); }
+}
+
+/* The callouts arrive one at a time, in order, once the helmet has settled.
+   Each point's text fades in, its leader draws, and only then does the next
+   one start - a 0.55s step against a 0.4s fade, so they never overlap.
+
+   db-notes-armed is added by hero-banner.js when the helmet first renders, so
+   if the 3D layer never loads the points simply stay visible. The delays live
+   on the settled state alone: leaving the section hides them together instead
+   of unwinding the sequence backwards. */
+.db-notes-armed .db-note {
+	opacity: 0;
+	transform: translateY(8px);
+	transition: opacity .4s ease, transform .4s ease;
+}
+
+
+.db-notes-armed.db-settled .db-note {
+	opacity: 1;
+	transform: none;
+}
+
+.db-settled .db-note--a           { transition-delay: 0s; }
+.db-settled .db-note--a .db-note__line { transition-delay: .18s; }
+.db-settled .db-note--a .db-note__dot  { transition-delay: .55s; }
+.db-settled .db-note--b           { transition-delay: .55s; }
+.db-settled .db-note--b .db-note__line { transition-delay: .73s; }
+.db-settled .db-note--b .db-note__dot  { transition-delay: 1.1s; }
+.db-settled .db-note--c           { transition-delay: 1.1s; }
+.db-settled .db-note--c .db-note__line { transition-delay: 1.28s; }
+.db-settled .db-note--c .db-note__dot  { transition-delay: 1.65s; }
+.db-settled .db-note--d           { transition-delay: 1.65s; }
+.db-settled .db-note--d .db-note__line { transition-delay: 1.83s; }
+.db-settled .db-note--d .db-note__dot  { transition-delay: 2.2s; }
+
+@media (prefers-reduced-motion: reduce) {
+	.db-notes-armed .db-note,
+	.db-notes-armed .db-note__line,
+	.db-notes-armed .db-note__dot {
+		transition: none;
+		transition-delay: 0s;
+	}
+}
+
+/* When ScrollTrigger drives the sequence it owns opacity, transform and the
+   leader's scale outright, so the timed fallback must get out of the way -
+   otherwise every scrubbed frame fights a transition and the points lag the
+   scroll. */
+.db-notes-scrub .db-note,
+.db-notes-scrub .db-note__line,
+.db-notes-scrub .db-note__dot {
+	transition: none !important;
+	transition-delay: 0s !important;
+}
+
+/*--------------------------------------------------*/
+/*  Stacked layout on a short viewport               */
+/*--------------------------------------------------*/
+
+/* A resized desktop window (e.g. 845x654) has very little vertical budget: the
+   theme header, headline, copy and card rail left the helmet under 100px.
+   Trim the copy and cards so the band can breathe. */
+@media (max-width: 767px) and (max-height: 760px) {
+	.db-hero__lede { font-size: clamp(13px, 1.7vw, 16px); }
+
+	.db-cards {
+		grid-template-columns: repeat(4, 1fr);
+		gap: 6px;
+		margin-top: clamp(8px, 1.2vh, 16px);
+	}
+
+	.db-card__label,
+	.db-card__foot { font-size: 8px; letter-spacing: .06em; }
+
+	.db-card {
+		min-height: 0;
+		padding: 7px;
+		gap: 4px;
+	}
+
+	.db-card__value { font-size: clamp(10px, .95vw, 12px); }
+
+	.db-hero__copy { margin-bottom: clamp(4px, .8vh, 10px); }
+}
+
+/*--------------------------------------------------*/
+/*  Phone                                           */
+/*--------------------------------------------------*/
+
+@media (max-width: 640px) {
+	.db-hero__header {
+		grid-template-columns: auto 1fr;
+		gap: 12px;
+	}
+
+	.db-nav { display: none; }
+
+	.db-hero__mark { justify-self: start; width: clamp(38px, 11vw, 48px); }
+
+	/* Single line, as on every other width - On sits over the start of Track
+	   rather than above it. Sized to fit the line in the viewport, which also
+	   halves the headline's height and hands that space to the helmet. */
+	.db-hero__title { font-size: clamp(34px, 13.5vw, 92px); }
+
+	/* The headline is centred and the logo sits dead centre, so On's top-right
+	   corner runs into it on the narrowest phones (it clipped by 3px at 360).
+	   A slightly smaller On is both narrower and lower. */
+	.db-hero__title-on {
+		font-size: 1.3em;
+		top: -0.2em;
+	}
+
+
+
+	.db-hero__meta {
+		/* space-between strands them at the edges at this width and flex-start
+		   left-clustered the group; centre it as a block instead. */
+		justify-content: center;
+		gap: 6px 14px;
+		font-size: 10px;
+	}
+
+	.db-hero__lede { font-size: clamp(14px, 3.8vw, 17px); line-height: 1.42; }
+
+
+	.db-cards { grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: clamp(10px, 1.6vh, 20px); }
+
+	.db-card { min-height: 62px; padding: 9px; gap: 5px; }
+
+	.db-card__label,
+	.db-card__foot { font-size: 8px; letter-spacing: .08em; }
+
+	.db-card__value { font-size: 12px; }
+
+	.db-card__value--xl { font-size: 22px; }
+
+	.db-btn { letter-spacing: .06em; }
+
+}
+
+/* Very short landscape phones: let the panels grow instead of squashing. */
+/* Short phones (e.g. 360x640) have no vertical budget: at the full phone
+   headline the panel overflows the fold and the helmet's band collapses.
+   Scale the headline back so panel 1 stays exactly one viewport tall. */
+@media (max-width: 640px) and (max-height: 720px) {
+	.db-hero__title { font-size: clamp(40px, 11.5vw, 62px); }
+}
+
+@media (max-height: 520px) and (max-width: 767px) {
+	.db-panel { min-height: 640px; }
+}
+
+/*--------------------------------------------------*/
+/*  Reduced motion                                  */
+/*--------------------------------------------------*/
+
+@media (prefers-reduced-motion: reduce) {
+	.db-hero__title-track { animation: none; clip-path: none; }
+
+	.db-stage__poster,
+	.db-stage.is-ready .db-stage__poster { transition: none; }
+	.db-stage__spinner { animation: none; }
+}

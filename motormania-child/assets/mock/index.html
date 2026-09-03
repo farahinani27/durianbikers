@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hero banner - local mock (not the live site)</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700;800;900&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="../css/hero-banner.css">
+
+<style>
+	/* Mock-only: stands in for the theme reset + flags this as a preview. */
+	html, body { margin: 0; padding: 0; }
+	.mock-flag {
+		position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+		z-index: 999; padding: 7px 16px; border-radius: 999px;
+		background: #ff2d55; color: #fff;
+		font: 700 11px/1 "Archivo", Arial, sans-serif; letter-spacing: .12em;
+		text-transform: uppercase; pointer-events: none;
+	}
+	.mock-after {
+		padding: 80px 6vw 140px; background: #0a0a0a; color: rgba(255,255,255,.35);
+		font: 500 14px/1.6 "Archivo", Arial, sans-serif;
+	}
+</style>
+
+<script type="importmap">
+{
+	"imports": {
+		"three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+		"three/addons/": "https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"
+	}
+}
+</script>
+</head>
+
+<body class="db-hero-page">
+
+<div class="db-hero">
+
+	<!-- Shared 3D layer, spans both panels -->
+	<div class="db-stage" data-model="../models/helmet-opt.glb" aria-hidden="true">
+		<div class="db-stage__poster"><div class="db-stage__spinner"></div></div>
+	</div>
+
+	<!-- Intro: the video fills the screen, then zooms down to a framed
+	     card as you scroll, before handing over to panel 1. -->
+	<section class="db-intro" aria-label="Intro">
+		<div class="db-intro__marquee" aria-hidden="true"><div class="db-mq db-mq--serif"><div class="db-mq__track"><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span><span>Durian Bikers</span></div></div><div class="db-mq db-mq--sans"><div class="db-mq__track"><span>100% original, imported bike helmets, apparels, parts, accessories, and gears! It&rsquo;s #TimetoRide!</span><span>100% original, imported bike helmets, apparels, parts, accessories, and gears! It&rsquo;s #TimetoRide!</span><span>100% original, imported bike helmets, apparels, parts, accessories, and gears! It&rsquo;s #TimetoRide!</span><span>100% original, imported bike helmets, apparels, parts, accessories, and gears! It&rsquo;s #TimetoRide!</span></div></div></div>
+		<div class="db-intro__frame">
+			<video class="db-intro__video" playsinline muted loop preload="metadata" data-src="https://durianbikers.com/wp-content/uploads/2021/11/header-video.mov"></video><i class="db-intro__veil" aria-hidden="true"></i>
+		</div>
+	</section>
+
+	<!--============ PANEL 1 - BLACK ============-->
+	
+	<!-- Statement, first pass - straight after the intro video. -->
+	<section class="db-panel db-panel--dark db-panel--three">
+		<h2 class="db-three__title"><em>Original</em> parts only, from the brands riders <em>trust</em>, delivered across Malaysia. Geared up for every <em>ride</em>, on and off the road.</h2>
+	<div class="db-three__cta"><a class="db-btn db-btn--accent db-btn--lg" href="#" aria-label="View All Categories"><span class="db-btn__swap" aria-hidden="true"><span class="db-btn__line"><span class="db-btn__ch" style="--i:0">V</span><span class="db-btn__ch" style="--i:1">i</span><span class="db-btn__ch" style="--i:2">e</span><span class="db-btn__ch" style="--i:3">w</span><span class="db-btn__ch" style="--i:4">&nbsp;</span><span class="db-btn__ch" style="--i:5">A</span><span class="db-btn__ch" style="--i:6">l</span><span class="db-btn__ch" style="--i:7">l</span><span class="db-btn__ch" style="--i:8">&nbsp;</span><span class="db-btn__ch" style="--i:9">C</span><span class="db-btn__ch" style="--i:10">a</span><span class="db-btn__ch" style="--i:11">t</span><span class="db-btn__ch" style="--i:12">e</span><span class="db-btn__ch" style="--i:13">g</span><span class="db-btn__ch" style="--i:14">o</span><span class="db-btn__ch" style="--i:15">r</span><span class="db-btn__ch" style="--i:16">i</span><span class="db-btn__ch" style="--i:17">e</span><span class="db-btn__ch" style="--i:18">s</span></span><span class="db-btn__line db-btn__line--in"><span class="db-btn__ch" style="--i:0">V</span><span class="db-btn__ch" style="--i:1">i</span><span class="db-btn__ch" style="--i:2">e</span><span class="db-btn__ch" style="--i:3">w</span><span class="db-btn__ch" style="--i:4">&nbsp;</span><span class="db-btn__ch" style="--i:5">A</span><span class="db-btn__ch" style="--i:6">l</span><span class="db-btn__ch" style="--i:7">l</span><span class="db-btn__ch" style="--i:8">&nbsp;</span><span class="db-btn__ch" style="--i:9">C</span><span class="db-btn__ch" style="--i:10">a</span><span class="db-btn__ch" style="--i:11">t</span><span class="db-btn__ch" style="--i:12">e</span><span class="db-btn__ch" style="--i:13">g</span><span class="db-btn__ch" style="--i:14">o</span><span class="db-btn__ch" style="--i:15">r</span><span class="db-btn__ch" style="--i:16">i</span><span class="db-btn__ch" style="--i:17">e</span><span class="db-btn__ch" style="--i:18">s</span></span></span></a></div></section>
+
+	<section class="db-panel db-panel--dark">
+
+		<header class="db-hero__header">
+			<nav class="db-nav" aria-label="Primary">
+				<a href="/">Home</a>
+				<a href="/shop/">Shop</a>
+				<a href="/motorcycle-helmet/">Motorcycle Helmet</a>
+				<a href="/about-us/">About Us</a>
+				<a href="/contact-us/">Contact Us</a>
+			</nav>
+
+			<picture class="db-hero__mark">
+				<source srcset="../img/db-logo.webp" type="image/webp">
+				<img src="../img/db-logo.png" alt="Durian Bikers" width="176" height="176" decoding="async">
+			</picture>
+
+			<div class="db-hero__actions">
+				<a class="db-btn db-btn--accent" href="#" aria-label="Store">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+						<path d="M6 7h12l-1 13H7L6 7Z"/><path d="M9 7a3 3 0 0 1 6 0"/>
+					</svg><span class="db-btn__swap" aria-hidden="true"><span class="db-btn__line"><span class="db-btn__ch" style="--i:0">S</span><span class="db-btn__ch" style="--i:1">t</span><span class="db-btn__ch" style="--i:2">o</span><span class="db-btn__ch" style="--i:3">r</span><span class="db-btn__ch" style="--i:4">e</span></span><span class="db-btn__line db-btn__line--in"><span class="db-btn__ch" style="--i:0">S</span><span class="db-btn__ch" style="--i:1">t</span><span class="db-btn__ch" style="--i:2">o</span><span class="db-btn__ch" style="--i:3">r</span><span class="db-btn__ch" style="--i:4">e</span></span></span></a>
+				<button class="db-btn db-btn--ghost" type="button" aria-label="Open menu">
+					<svg width="17" height="17" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2" aria-hidden="true">
+						<path d="M4 9h16"/><path d="M4 15h10"/>
+					</svg>
+				</button>
+			</div>
+		</header>
+
+		<div class="db-hero__body">
+
+			<h1 class="db-hero__title">
+				<span class="db-hero__title-on"><svg class="db-on-svg" viewBox="40.0 -744.0 1136.2 767.0" role="img" aria-label="On" preserveAspectRatio="xMinYMid meet"><path d="M223 9L223 9Q145 9 99.50-55Q54-119 54-243L54-243Q54-317 71-388Q88-459 118-520.50Q148-582 187.50-629.50Q227-677 272.50-703.50Q318-730 366-730L366-730Q444-730 489.50-666.50Q535-603 535-478L535-478Q535-404 518-333Q501-262 471-200.50Q441-139 401.50-91.50Q362-44 316.50-17.50Q271 9 223 9ZM221-17L221-17Q258-17 293.50-46.50Q329-76 360.50-127.50Q392-179 416-246.50Q440-314 453.50-390Q467-466 467-544L467-544Q467-704 368-704L368-704Q331-704 295.50-674.50Q260-645 228.50-593.50Q197-542 173-474.50Q149-407 135.50-331Q122-255 122-177L122-177Q122-17 221-17ZM906 9L906 9Q893 9 889-7L889-7L743-603Q742-608 738-608Q734-608 732-603L732-603L613-86Q606-58 612.50-43.50Q619-29 643-25L643-25L655-23Q668-22 666-11L666-11Q663 0 648 0L648 0L505 0Q490 0 493-11L493-11Q495-22 508-23L508-23L522-25Q549-29 562-43.50Q575-58 582-86L582-86L713-654Q718-675 713-682Q708-689 686-693L686-693L664-697Q651-700 654-709L654-709Q656-720 671-720L671-720L768-720Q793-720 798-698L798-698L924-180Q926-173 930.50-173Q935-173 936-180L936-180L1041-634Q1049-666 1041-678.50Q1033-691 1016-694L1016-694L999-697Q986-700 989-709L989-709Q991-720 1006-720L1006-720L1149-720Q1164-720 1162-709L1162-709Q1158-698 1146-697L1146-697L1132-695Q1105-691 1092.50-678.50Q1080-666 1072-634L1072-634L929-13Q924 9 906 9Z"/></svg></span>
+				<span class="db-hero__title-track">Track</span>
+			</h1>
+
+			<p class="db-hero__meta">
+				<span>MT Thunder 4R SV</span>
+				<span>Hakim Danish</span>
+				<span>Malaysia <span class="db-card__flag">&#127474;&#127486;</span></span>
+			</p>
+
+			<div class="db-hero__copy">
+				<p class="db-eyebrow">Built for the ride</p>
+				<p class="db-hero__lede">
+					The MT Thunder 4R balances safety, comfort and everyday use &mdash; improved
+					intakes, a redesigned spoiler, Pinlock anti-fog as standard and MT&rsquo;s
+					QVSS quick-release visor. <em>Premium performance at a competitive price</em>.
+				</p>
+			</div>
+
+			<div class="db-cards">
+
+				<article class="db-card">
+					<span class="db-card__label">Shell</span>
+					<span class="db-card__value">Shell made of HIRP</span>
+					<span class="db-card__foot">High Impact Resistant Polymer</span>
+				</article>
+
+				<article class="db-card">
+					<span class="db-card__label">Model / Series</span>
+					<span class="db-card__value">Thunder 4R SV Danish B5 Gloss</span>
+					<span class="db-card__foot">New in <span class="db-card__flag">&#127474;&#127486;</span></span>
+				</article>
+
+				<article class="db-card">
+					<span class="db-card__label">Ventilation</span>
+					<span class="db-card__value">Optimized ventilation system</span>
+				</article>
+
+				<article class="db-card">
+					<span class="db-card__label">Price</span>
+					<span class="db-card__value db-card__value--xl">RM&nbsp;749</span>
+					<span class="db-card__foot">In stock</span>
+				</article>
+
+			</div>
+	</section>
+
+	<!--============ PANEL 2 - WHITE ============-->
+	<section class="db-panel db-panel--light">
+		<div class="db-panel__inner">
+
+			<div>
+				<p class="db-eyebrow">MT Helmets</p>
+				<h2 class="db-spec__title">Hakim Danish</h2>
+			</div>
+
+			<!-- Reserved band: the helmet settles here, facing front. -->
+			<div class="db-spec__stage" aria-hidden="true"></div>
+
+			<div class="db-buy">
+				<a class="db-btn db-btn--accent db-btn--lg" href="#" aria-label="Buy Now"><span class="db-btn__swap" aria-hidden="true"><span class="db-btn__line"><span class="db-btn__ch" style="--i:0">B</span><span class="db-btn__ch" style="--i:1">u</span><span class="db-btn__ch" style="--i:2">y</span><span class="db-btn__ch" style="--i:3">&nbsp;</span><span class="db-btn__ch" style="--i:4">N</span><span class="db-btn__ch" style="--i:5">o</span><span class="db-btn__ch" style="--i:6">w</span></span><span class="db-btn__line db-btn__line--in"><span class="db-btn__ch" style="--i:0">B</span><span class="db-btn__ch" style="--i:1">u</span><span class="db-btn__ch" style="--i:2">y</span><span class="db-btn__ch" style="--i:3">&nbsp;</span><span class="db-btn__ch" style="--i:4">N</span><span class="db-btn__ch" style="--i:5">o</span><span class="db-btn__ch" style="--i:6">w</span></span></span></a>
+			</div>
+
+			<ul class="db-notes">
+				<li class="db-note db-note--a"><b>1.</b> Integrated sun visor<i class="db-note__line" aria-hidden="true"></i><i class="db-note__dot" aria-hidden="true"></i></li>
+				<li class="db-note db-note--b"><b>2.</b> Fully removable and washable interior<i class="db-note__line" aria-hidden="true"></i><i class="db-note__dot" aria-hidden="true"></i></li>
+				<li class="db-note db-note--c"><b>3.</b> Ready for MT-B01 communication system (MT-Rider Sync)<i class="db-note__line" aria-hidden="true"></i><i class="db-note__dot" aria-hidden="true"></i></li>
+				<li class="db-note db-note--d"><b>4.</b> Micrometric retention system<i class="db-note__line" aria-hidden="true"></i><i class="db-note__dot" aria-hidden="true"></i></li>
+			</ul>
+
+		</div>
+	</section>
+
+	<!-- Section 3 - full-bleed black, same footprint as 1 and 2. -->
+	<section class="db-panel db-panel--dark db-panel--three">
+		<h2 class="db-three__title"><em>Original</em> parts only, from the brands riders <em>trust</em>, delivered across Malaysia. Geared up for every <em>ride</em>, on and off the road.</h2>
+	</section>
+
+</div>
+
+<!-- Proves the fixed canvas releases the page after the hero. -->
+<div class="mock-after">Content after the hero starts here.</div>
+
+<div class="mock-flag">Local mock &mdash; not the live site</div>
+
+<script type="module" src="../js/hero-banner.js"></script>
+</body>
+</html>

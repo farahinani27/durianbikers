@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>frame renderer</title>
+<style>html,body{margin:0;background:transparent}canvas{display:block}</style>
+<script type="importmap">
+{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js",
+"three/addons/":"https://cdn.jsdelivr.net/npm/three@0.185.1/examples/jsm/"}}
+</script>
+</head><body>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader }      from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder }  from 'three/addons/libs/meshopt_decoder.module.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+// Square frame. The helmet is drawn at a FIXED height fraction so its scale is
+// identical in every frame - only the yaw changes. Page CSS then sizes the
+// whole square, which keeps the responsive framing logic unchanged.
+const modelParam=1;
+const SIZE        = Number(new URLSearchParams(location.search).get('size') || 1000);
+const HEIGHT_FRAC = 0.78;
+
+const renderer = new THREE.WebGLRenderer({alpha:true, antialias:true, preserveDrawingBuffer:true});
+renderer.setPixelRatio(1);
+renderer.setSize(SIZE, SIZE, false);
+renderer.setClearAlpha(0);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+document.body.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 100);
+camera.position.set(0, 0, 6);
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const key = new THREE.DirectionalLight(0xffffff, 2.1); key.position.set(2.5,3,4);    scene.add(key);
+const rim = new THREE.DirectionalLight(0xffffff, 1.4); rim.position.set(-3,1.2,-2.5); scene.add(rim);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x202020, 0.6));
+
+const pivot = new THREE.Group();
+scene.add(pivot);
+
+new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).load(new URLSearchParams(location.search).get('m') || '../models/helmet-opt.glb', (gltf) => {
+	const m = gltf.scene;
+
+	// Two passes. position is in PARENT space and is not affected by the
+	// object's own scale, so centring before scaling leaves the offset in
+	// unscaled model units - which threw the helmet off-frame. Normalise the
+	// scale first, then measure the scaled result and centre that.
+	const box1 = new THREE.Box3().setFromObject(m);
+	m.scale.setScalar(1 / box1.getSize(new THREE.Vector3()).y);
+	m.updateMatrixWorld(true);
+	const box2 = new THREE.Box3().setFromObject(m);
+	m.position.sub(box2.getCenter(new THREE.Vector3()));
+
+	m.traverse(o => { if (o.isMesh) { o.frustumCulled = false;
+		[].concat(o.material).forEach(mt => { if (mt && mt.map) mt.map.anisotropy = 8; }); } });
+
+	pivot.add(m);
+
+	const visibleH = 2 * Math.tan((34 * Math.PI/180)/2) * camera.position.z;
+	pivot.scale.setScalar(visibleH * HEIGHT_FRAC);
+
+	window.__setYaw = (deg) => {
+		pivot.rotation.y = deg * Math.PI / 180;
+		renderer.render(scene, camera);
+	};
+	const yawParam = Number(new URLSearchParams(location.search).get('yaw') || 0);
+	window.__setYaw(yawParam);
+	window.__ready = true;
+}, undefined, (e) => { window.__error = String(e); });
+</script>
+</body></html>
