@@ -23,50 +23,45 @@ $motormania_navbar_button_url =  !empty( $motormania_opt['motormania_navbar_butt
 			</button>
 		</div>
 
-		<!-- LEFT : Menu -->
-		<div class="header-left primary-menu">
-			<nav class="desktop-menu">
+		<!-- PILL 1 : Logo + Menu -->
+		<div class="header-pill header-pill-nav">
+
+			<!-- Logo -->
+			<div class="header-centre">
 				<?php
-				wp_nav_menu( array(
-					'theme_location' => 'primary',
-					'depth'          => 3,
-					'container'      => 'ul',
-				) );
-				?>
-			</nav>
+				if ( has_custom_logo() ) {
+					the_custom_logo();
+				} else { ?>
+				<a href="<?php echo esc_url(home_url('/')); ?>" class="site-title">
+					<?php bloginfo('name'); ?>
+				</a>
+				<?php } ?>
+			</div>
+
+			<!-- Menu -->
+			<div class="header-left primary-menu">
+				<nav class="desktop-menu">
+					<?php
+					wp_nav_menu( array(
+						'theme_location' => 'primary',
+						'depth'          => 3,
+						'container'      => 'ul',
+					) );
+					?>
+				</nav>
+			</div>
+
 		</div>
 
-		<!-- CENTRE : Logo -->
-		<div class="header-centre">
-			<?php
-			if ( has_custom_logo() ) {
-				the_custom_logo();
-			} else { ?>
-			<a href="<?php echo esc_url(home_url('/')); ?>" class="site-title">
-				<?php bloginfo('name'); ?>
-			</a>
-			<?php } ?>
-		</div>
-
-		<!-- RIGHT : Search + Cart -->
-		<div class="header-right">
+		<!-- PILL 2 : Search + Account + Cart -->
+		<div class="header-right header-pill header-pill-actions">
 
 			<!-- Search -->
 			<a href="#" class="header-icon" id="search-trigger">
 				<i class="fal fa-search"></i>
 			</a>
-			
-			<!-- Currency Switcher -->
-<!-- 			<?php if ( is_active_sidebar( 'header-currency' ) ) : ?>
-				<div class="header-icon header-currency-wrap">
-					<?php dynamic_sidebar( 'header-currency' ); ?>
-				</div>
-			<?php endif; ?> -->
 
 			<!-- My Account -->
-<!-- 			<a href="<?php echo esc_url( wc_get_page_permalink( 'myaccount' ) ); ?>" class="header-icon" id="myaccount-trigger">
-				<i class="fal fa-user"></i>
-			</a> -->
 			<a class="header-icon account-link" href="<?php echo esc_url( wc_get_page_permalink( 'myaccount' ) ); ?>">
 				<?php if ( is_user_logged_in() ) :
 				$current_user = wp_get_current_user(); ?>
@@ -75,20 +70,7 @@ $motormania_navbar_button_url =  !empty( $motormania_opt['motormania_navbar_butt
 				<i class="fal fa-user"></i>
 				<?php endif; ?>
 			</a>
-			<!-- 	Use $user->display_name for a friendly name, or $user->user_login for the exact login username		 -->
-			
-			<!-- Cart -->
-<!-- 			<a href="<?php echo wc_get_cart_url(); ?>" class="header-icon cart-icon">
 
-				<i class="fal fa-shopping-cart"></i>
-
-				<?php if ( WC()->cart->get_cart_contents_count() > 0 ) : ?>
-				<span class="cart-badge">
-					<?php echo WC()->cart->get_cart_contents_count(); ?>
-				</span>
-				<?php endif; ?>
-			</a> -->
-			
 			<!-- Cart -->
 			<a href="<?php echo esc_url( wc_get_cart_url() ); ?>" class="header-icon cart-icon">
 				<i class="fal fa-shopping-cart"></i>
@@ -121,11 +103,6 @@ $motormania_navbar_button_url =  !empty( $motormania_opt['motormania_navbar_butt
 	));
 	?>
 	
-	<!-- Currency on Sidebar Mobile&Tablet -->
-<!-- 	<div class="mobile-currency-switcher">
-		<p class="mobile-currency-label">Choose your region:</p>
-		<?php dynamic_sidebar( 'header-currency' ); ?>
-	</div> -->
 </div>
 
 <!-- SEARCH POPUP -->
@@ -134,23 +111,6 @@ $motormania_navbar_button_url =  !empty( $motormania_opt['motormania_navbar_butt
 	<button class="search-close" id="search-close">
 		×
 	</button>
-
-	<!--    <form method="get" action="<?php echo esc_url(home_url('/')); ?>">
-
-	<input type="hidden" name="post_type" value="product">
-
-		<input
-			type="search"
-			name="s"
-			placeholder="Search products..."
-			required
-		>
-
-		<button type="submit">
-			Search
-		</button>
-
-	</form> -->
 
 	<form class="ajax-search-form" action="<?php echo esc_url(home_url( '/' )); ?>">
 		<input type="text" name="s" id="keyword" placeholder="<?php echo esc_attr__( 'Search', 'motormania' ); ?>">
