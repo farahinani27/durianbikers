@@ -193,6 +193,11 @@
 		transition: background 0.3s ease, padding 0.3s ease, box-shadow 0.3s ease;
 	}
 
+	.elementor-background-overlay {
+		border: 0.5px grey solid;
+		box-shadow: 0 12px 30px rgba(0, 0, 0, 0.35);
+	}
+
 	.header-inner {
 		display: flex;
 		align-items: center;
@@ -200,7 +205,6 @@
 	}
 
 	.header-left,
-	.header-centre,
 	.header-right {
 		flex: 1;
 	}
@@ -240,7 +244,7 @@
 			width: 65px !important; 
 		}
 		.custom-logo-link img {
-			width: 65px !important;
+			width: 50px !important;
 		}
 		.custom-transparent-header {
 			padding: 16px 20px;
@@ -321,12 +325,12 @@
 
 	/* Displayed Name Header */
 	.account-name {
-		font-size: 15px;
+		font-size: 14px;
 		color: inherit;
 		text-decoration: none;
 		white-space: nowrap;
 		text-transform: uppercase;
-		font-weight: 500
+		font-weight: 600
 	}
 
 	.header-icon.account-link {
@@ -2465,10 +2469,6 @@
 		display: inline-block;
 	}
 
-	.custom-logo-link img {
-		width: 270px;
-	}
-
 	.navbar-logo-text {
 		font-size: 22px;
 		font-weight: bolder;
@@ -2493,16 +2493,15 @@
 	}
 
 	.primary-menu ul li>a {
-		font-weight: 500 !important;
+		font-weight: 600 !important;
 		color: #fff;
-		font-size: 15px !important;
-		/*     text-transform: uppercase; */
+		font-size: 14px !important;
 	}
 
 	.primary-menu ul li .sub-menu li > a {
-		color: #000;
-		font-weight: 500;
-		font-size: 15px;
+		color: #fff;
+		font-weight: 600;
+		font-size: 14px;
 
 	}
 
@@ -2510,11 +2509,6 @@
 	.primary-menu ul li .sub-menu {
 		position: absolute;
 		z-index: 9;
-		border-radius: 0;
-		border: none;
-		background: #fff;
-		-webkit-box-shadow: 0px 13px 25px -12px rgba(0, 0, 0, 0.25);
-		box-shadow: 0px 13px 25px -12px rgba(0, 0, 0, 0.25);
 		display: block;
 		left: 0;
 		opacity: 0;
@@ -2522,9 +2516,15 @@
 		top: 52px;
 		padding-left: 0;
 		visibility: hidden;
+		background: rgba(18, 18, 18, 0.42);
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		border-radius: 10px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+		backdrop-filter: blur(5px) saturate(20%);
+/* 		-webkit-backdrop-filter: blur(16px) saturate(140%); */
+		-webkit-backdrop-filter: blur(5px) saturate(20%);
+		box-sizing: border-box;
 		min-width: 230px;
-		-webkit-box-shadow: 0px 30px 70px 0px rgba(137, 139, 142, 0.15);
-		box-shadow: 0px 30px 70px 0px rgba(137, 139, 142, 0.15);
 		margin: 0;
 		-webkit-transform: scale(1, 0);
 		-ms-transform: scale(1, 0);
@@ -2608,8 +2608,11 @@
 
 	.primary-menu ul li .children li a:hover,
 	.primary-menu ul li .sub-menu li a:hover {
-		color: #fff;
-		background: #5f9d40;
+		color: #5f9d40 !important;
+		background: transparent !important; 
+/* 		background: #5f9d40 !important; */
+		z-index: 9999 !important;
+		opacity: 1 !important;
 	}
 
 	.header-btn a {
@@ -5178,6 +5181,158 @@
         white-space: nowrap;
     }
 }
+/*------------------------------------------------------------*/
+/*                    DARK GLASS PILL HEADER                  */
+/*------------------------------------------------------------*/
 
+:root {
+	--db-pill-text: #fff;
+	--db-pill-green: #5f9d40;
+}
+
+.header-pill-nav {
+	display: flex;
+	align-items: center;
+	flex: 1;
+}
+
+.custom-logo-link img {
+	width: 40px !important;
+}
+
+
+/*------------------------------------------------------------*/
+/*                         DESKTOP                            */
+/*------------------------------------------------------------*/
+
+@media screen and (min-width: 1025px) {
+
+	.custom-transparent-header {
+		padding: 30px 150px;
+		background: transparent;
+	}
+
+	.header-pill {
+		display: flex;
+		align-items: center;
+		min-height: 60px;
+		box-sizing: border-box;
+
+		background: rgba(18, 18, 18, 0.42);
+		border: 1px solid rgba(255, 255, 255, 0.16);
+		border-radius: 999px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.28);
+
+		backdrop-filter: blur(16px) saturate(140%);
+		-webkit-backdrop-filter: blur(16px) saturate(140%);
+	}
+
+	.header-pill-nav {
+		flex: 0 0 auto;
+		gap: 30px;
+		padding: 0 30px;
+	}
+
+	.header-right.header-pill {
+		flex: 0 0 auto;
+		gap: 22px;
+		padding: 0 26px;
+	}
+
+	.header-pill .header-left,
+	.header-pill .header-centre {
+		flex: 0 0 auto;
+	}
+
+	.header-pill .custom-logo-link img,
+	.header-pill img.custom-logo {
+		width: 44px !important;
+		height: auto !important;
+	}
+
+	.header-pill .site-title {
+		color: var(--db-pill-text);
+		font-size: 20px;
+	}
+
+	.header-pill .primary-menu ul li {
+		margin-right: 26px;
+	}
+
+	.header-pill .primary-menu ul li > a {
+		color: var(--db-pill-text);
+	}
+
+	.header-pill .primary-menu ul li.current-menu-item > a {
+		color: var(--db-pill-green);
+	}
+
+	.header-pill .primary-menu ul li > a:hover {
+		opacity: 0.7;
+	}
+
+	.header-pill .header-icon,
+	.header-pill .account-name {
+		color: var(--db-pill-text);
+	}
+
+	.custom-transparent-header.sticky-header.fixed-top {
+		background: transparent;
+		box-shadow: none;
+		padding: 20px 150px;
+	}
+
+	.custom-transparent-header.fixed-top .header-pill {
+		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.10);
+	}
+
+	.custom-transparent-header.fixed-top .header-pill .primary-menu ul li > a,
+	.custom-transparent-header.fixed-top .header-pill .header-icon,
+	.custom-transparent-header.fixed-top .header-pill .site-title {
+		color: #fff;
+	}
+
+	.custom-transparent-header.fixed-top .header-pill .primary-menu ul li.current-menu-item > a {
+		color: var(--db-pill-green);
+	}
+}
+
+/*------------------------------------------------------------*/
+/*                    TABLET / MOBILE                         */
+/*------------------------------------------------------------*/
+
+@media screen and (max-width: 1024px) {
+
+	.header-pill-nav {
+		background: none;
+		padding: 0;
+	}
+}
+/*------------------------------------------------------------*/
+/*                 SCROLL HEADER BEHAVIOUR                    */
+/*------------------------------------------------------------*/
+
+@media screen and (min-width: 1025px) {
+
+	/* Header transition */
+	.custom-transparent-header {
+		transition: transform 0.35s ease, opacity 0.35s ease;
+	}
+
+	/* Header hidden while scrolling */
+	.custom-transparent-header.db-header-hidden {
+		transform: translateY(-120%);
+		opacity: 0;
+		pointer-events: none;
+	}
+
+	.custom-transparent-header.db-header-scrolled .header-pill {
+		flex: 0 0 auto;
+	}
+
+	.custom-transparent-header.db-header-top .header-pill-nav {
+		display: flex;
+	}
+}
 /* 	}
 } */
