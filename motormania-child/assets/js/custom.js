@@ -1,22 +1,74 @@
 (function($) {
 	
-// --	GSAP --- //
+// -- GSAP -- //
 	
-    document.addEventListener('DOMContentLoaded', function() {
-		gsap.registerPlugin(ScrollTrigger, SplitText);
-		
-		// --- SECTION 1 ---
-		ScrollTrigger.create({
-				trigger: '.stack',
-				start: "0% 0%",
-				end: "+=100%",
-				scrub: true,
-				pin: true,
-				pinSpacing: false,
-		})
-		
-		// --- SECTION 2 ---
-		 const section2 = gsap.timeline({
+document.addEventListener('DOMContentLoaded', function() {
+
+	gsap.registerPlugin(ScrollTrigger, SplitText);
+
+
+	// =========================================================
+	// HEADER SCROLL BEHAVIOUR
+	// =========================================================
+
+	const header = document.querySelector('.custom-transparent-header');
+
+	if (header) {
+
+		let scrollTimer;
+
+		header.classList.add('db-header-top');
+
+		window.addEventListener('scroll', function() {
+
+			const currentScrollY = window.scrollY;
+
+			// At top → full header
+			if (currentScrollY <= 10) {
+
+				clearTimeout(scrollTimer);
+
+				header.classList.remove(
+					'db-header-hidden',
+					'db-header-scrolled'
+				);
+
+				header.classList.add('db-header-top');
+
+				return;
+			}
+
+			// Scrolling → hide header
+			header.classList.remove('db-header-top');
+			header.classList.add('db-header-hidden');
+
+			// Stop scrolling → show logo + right content
+			clearTimeout(scrollTimer);
+
+			scrollTimer = setTimeout(function() {
+
+				header.classList.remove('db-header-hidden');
+				header.classList.add('db-header-scrolled');
+
+			}, 250);
+
+		}, { passive: true });
+	}
+
+
+	// --- SECTION 1 ---
+	ScrollTrigger.create({
+		trigger: '.stack',
+		start: "0% 0%",
+		end: "+=100%",
+		scrub: true,
+		pin: true,
+		pinSpacing: false,
+	});
+
+
+	// --- SECTION 2 ---
+	const section2 = gsap.timeline({
 			scrollTrigger: {
 				trigger: '.pinned',
 				start: "0% 0%",
