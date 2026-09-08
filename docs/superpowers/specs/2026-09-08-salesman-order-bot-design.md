@@ -3,7 +3,7 @@
 - **Date:** 2026-09-08
 - **Status:** Draft for review
 - **Owner:** Farah / Durian Bikers (Tuned By QBEE)
-- **Related:** AutoCount integration, respond.io bridge, WooCommerce stock API
+- **Related:** AutoCount integration, WhatsApp Cloud API, WooCommerce stock API
 
 ## 1. Purpose
 
@@ -12,7 +12,8 @@ number, photo, or voice note) and have those orders turned into **AutoCount Sale
 and, after a human approval, **AutoCount Invoices** — without anyone re-typing them by hand.
 
 This is "Track B" (order-taking). It is distinct from "Track A" (the existing respond.io
-stock/price question bot), though both share the same WhatsApp channel.
+stock/price question bot). Track B connects **directly to the Meta WhatsApp Cloud API**
+(no paid middleman platform), so it is independent of Track A's respond.io setup.
 
 ## 2. Users & scale
 
@@ -62,9 +63,12 @@ stock/price question bot), though both share the same WhatsApp channel.
 ```
 
 - **Ears — WhatsApp (official).** Receives text/voice/photo/PDF, sends replies + the SO PDF,
-  supports tappable [✅ CONFIRM]/[❌ CANCEL] buttons. Delivered through **respond.io** (a
-  Meta-approved WhatsApp BSP the business already uses), so there is **no ban risk**. Runs
-  effectively on the VPS side via respond.io's Developer API v2.
+  supports tappable [✅ CONFIRM]/[❌ CANCEL] buttons. Connected **directly to the Meta WhatsApp
+  Cloud API** — Meta's own official service, so there is **no ban risk** and **no monthly
+  platform fee** (only Meta's per-conversation messaging fees, which are low/free for the
+  inbound, user-initiated traffic this bot handles). A webhook on the **VPS** receives messages;
+  the VPS calls the Cloud API to reply. respond.io is deliberately **not** used here (it is a
+  paid convenience layer we would be replacing with our own Claude logic).
 - **Brain — Claude.** Reads each message (transcribes voice, reads images), identifies the
   dealer, matches products, decides what to confirm, drafts replies. Runs on the **VPS**.
 - **Hands — AutoCount bridge.** The only part that writes into AutoCount. Must run on the
@@ -79,7 +83,7 @@ one genuinely fiddly seam, and exactly what the AutoCount API quote resolves.
 
 ## 5. WhatsApp channel decision
 
-**Official Meta route, via respond.io.** Rationale:
+**Official Meta route — direct Meta WhatsApp Cloud API (no paid middleman).** Rationale:
 - Business-critical and long-term → the unofficial linked-device method's permanent, no-appeal
   ban risk is unacceptable.
 - Trade-off accepted: official WhatsApp is **1:1 only — it cannot operate inside a group**.
@@ -91,14 +95,22 @@ one genuinely fiddly seam, and exactly what the AutoCount API quote resolves.
 - The group's **chat history** is still usable: do a one-time WhatsApp "Export Chat" and feed
   it to the bot once to seed dealer names / nicknames / past-order patterns.
 
-Open question for review: confirm respond.io is the intended gateway for Track B too (it already
-carries Track A), vs. wiring raw Meta Cloud API directly.
+**Cost decision (operator: no extra monthly cost).** Direct Meta Cloud API has **no platform
+subscription** — only Meta's messaging fees (low/free for inbound). respond.io is a paid platform
+(no free production tier; already used for Track A) and is skipped here. Testing is free via Meta's
+developer sandbox. The only unavoidable per-use cost is the Claude API (the "brain") — tiny,
+pay-as-you-go, no subscription. AutoCount API cost is separate (pending quote).
+
+**Number constraint (for production, not testing):** a WhatsApp number can be connected to only
+one platform at a time. Track A uses respond.io; so in production either both tracks share one
+number/platform or the order bot uses its own number. For testing this is moot — the spare number
+connects directly to Meta.
 
 ## 6. Phased delivery
 
 | Phase | Scope | Depends on | Start |
 |------|-------|-----------|-------|
-| **1** | Ears + Brain: receive WhatsApp (text/voice/photo), understand the order, match dealer + products, draft "confirm?" — using **exported CSV** data | Spare number + WhatsApp test setup | **Now** |
+| **1** | Ears + Brain: receive WhatsApp (text/voice/photo), understand the order, match dealer + products, draft "confirm?" — using **exported CSV** data | Spare number + Meta Cloud API sandbox (free) | **Now** |
 | **2** | Live lookups (real-time dealer/stock from AutoCount) | Read-only SQL login | Login delivered |
 | **3** | Hands: create SO → PDF → confirm → Invoice | AutoCount API quote + setup | Quote approved |
 | **4** | Dashboard + nickname learning + go-live on the official number | Phases 1–3 | Last |
@@ -110,7 +122,7 @@ messy Malay/English voice note (and photos, and text) and picks the **right deal
 **right AutoCount stock items** — before any AutoCount writing exists.
 
 **In scope (Phase 1):**
-- A test WhatsApp connection (spare number; respond.io test setup or Meta sandbox).
+- A test WhatsApp connection: spare number registered in Meta's **free Cloud API developer sandbox**.
 - Receive and transcribe voice notes; read order photos; parse text/SKU.
 - Dealer matching against an **exported debtor CSV** (name + phone + agent + contact).
 - Product matching against an **exported stock CSV** (code + description + price).
@@ -135,10 +147,11 @@ production number, the real group.
 - **Read-only SQL login** — pending from the reseller/engineer; enables Phase 2 live reads.
   (Confirmed possible "without restriction". Server encrypts with a self-signed cert; Windows
   Auth fails on the workgroup, so SQL Server Authentication is used.)
-- **respond.io plan limits** — Track A works around the Growth plan's lack of outbound HTTP by
-  inverting the call (cron pulls). Track B's needs (send/receive media, buttons, PDFs) must be
-  checked against the current respond.io plan.
-- **Hosting** — VPS (Exabytes NVMe C4) for Ears/Brain/Memory; Windows office PC for Hands.
+- **Meta WhatsApp Cloud API setup** — Meta Business account + WhatsApp app in the developer
+  portal + the dedicated number. Test mode works without full business verification; production
+  needs business verification. The Cloud API number cannot also be used in the normal WhatsApp app.
+- **Hosting** — VPS (Exabytes NVMe C4) for Ears/Brain/Memory (needs a public HTTPS webhook URL
+  for Meta to deliver messages); Windows office PC for Hands.
 - **Dealer phone data quality** — "detect by phone" only works if dealer phone numbers are
   actually stored on AutoCount debtor records. Verify during Phase 2.
 - **Product/SKU discipline** — per project rule, never infer or invent SKUs; ambiguous product
