@@ -53,67 +53,68 @@ stock/price question bot). Track B connects **directly to the Meta WhatsApp Clou
 ```
   1. EARS            2. BRAIN              3. HANDS
   WhatsApp    ──▶    Claude        ──▶    AutoCount bridge
-  (official,         understands &        creates SO/Invoice,
-   via respond.io)   matches, decides     exports PDF
-             ◀──                    ◀──   (runs on the Windows PC)
+  (unofficial        understands &        creates SO/Invoice,
+   bridge, IN        matches, decides     exports PDF
+   the group)  ◀──                  ◀──   (runs on the Windows PC)
                         │
                         ▼
                   4. MEMORY
-                  Orders dashboard + dealer/alias store
+                  Order log + dealer/alias store (dashboard optional)
 ```
 
-- **Ears — WhatsApp (official).** Receives text/voice/photo/PDF, sends replies + the SO PDF,
-  supports tappable [✅ CONFIRM]/[❌ CANCEL] buttons. Connected **directly to the Meta WhatsApp
-  Cloud API** — Meta's own official service, so there is **no ban risk** and **no monthly
-  platform fee** (only Meta's per-conversation messaging fees, which are low/free for the
-  inbound, user-initiated traffic this bot handles). A webhook on the **VPS** receives messages;
-  the VPS calls the Cloud API to reply. respond.io is deliberately **not** used here (it is a
-  paid convenience layer we would be replacing with our own Claude logic).
+- **Ears — WhatsApp (unofficial bridge, in the group).** A **normal WhatsApp account on a
+  dedicated spare number**, automated via an unofficial bridge (the existing `whatsapp-mcp`
+  companion-device setup is the basis). This account is a **member of the salesmen's group**,
+  reads group messages (text/voice/photo), and replies in the group; it also handles **1:1 dealer
+  chats** on the same number. Runs on the **VPS**. **Trade-off (accepted by operator):** this
+  breaks WhatsApp's ToS and the number can be banned; blast radius is limited to the spare number
+  (recoverable ~30 min re-setup) because it is internal, low-volume, and not the main business line.
 - **Brain — Claude.** Reads each message (transcribes voice, reads images), identifies the
   dealer, matches products, decides what to confirm, drafts replies. Runs on the **VPS**.
 - **Hands — AutoCount bridge.** The only part that writes into AutoCount. Must run on the
   **Windows machine** next to AutoCount (the office server `DESKTOP-29M5DOL`). Mechanism TBD
   by the AutoCount API quote (paid plugin/API) with a free fallback of AutoCount Excel import.
-- **Memory — dashboard + store.** A small database of every order and its status, plus learned
-  dealer nicknames; a **web dashboard** (hosted on the VPS, opened by link / Add-to-Home-Screen)
-  gives the 3 salesmen + admin the shared visibility the group used to provide. Runs on the VPS.
+- **Memory — order log + store.** A small database of every order and its status, plus learned
+  dealer nicknames. Because the bot is **in the group**, the group itself provides shared
+  visibility, so a web dashboard is **optional** (nice-to-have for searchable history). Runs on the VPS.
 
 The Brain (VPS) and Hands (Windows) are on different machines and talk over the network — the
 one genuinely fiddly seam, and exactly what the AutoCount API quote resolves.
 
 ## 5. WhatsApp channel decision
 
-**Official Meta route — direct Meta WhatsApp Cloud API (no paid middleman).** Rationale:
-- Business-critical and long-term → the unofficial linked-device method's permanent, no-appeal
-  ban risk is unacceptable.
-- Trade-off accepted: official WhatsApp is **1:1 only — it cannot operate inside a group**.
-  (WhatsApp "Channels" are broadcast-only and unusable for orders.)
-- Group functions are replaced:
-  - Placing orders → direct 1:1 chats with the bot.
-  - Shared visibility → the **web dashboard**.
-  - The salesmen's existing human group stays as-is for chatter; the bot is not in it.
-- The group's **chat history** is still usable: do a one-time WhatsApp "Export Chat" and feed
-  it to the bot once to seed dealer names / nicknames / past-order patterns.
+**Unofficial bridge — the bot is a real WhatsApp account IN the salesmen's group.** Chosen by
+the operator (2026-09-08) after weighing the alternatives: the group workflow is what the salesmen
+actually use, and being *inside* the group matters more to them than avoiding all ban risk.
 
-**Cost decision (operator: no extra monthly cost).** Direct Meta Cloud API has **no platform
-subscription** — only Meta's messaging fees (low/free for inbound). respond.io is a paid platform
-(no free production tier; already used for Track A) and is skipped here. Testing is free via Meta's
-developer sandbox. The only unavoidable per-use cost is the Claude API (the "brain") — tiny,
-pay-as-you-go, no subscription. AutoCount API cost is separate (pending quote).
+- **Why not official:** an official Meta Cloud API number is a business endpoint, not a normal
+  account — it **cannot join or be in a WhatsApp group at all** (a hard technical limit, not a
+  rule). "Official + in the group" is impossible; only a normal account can be in a group, and
+  automating a normal account is the unofficial method.
+- **Risk, consciously accepted:** automating a normal WhatsApp account **violates WhatsApp's ToS**
+  (a private policy, not a law) and the number **can be banned**. Mitigations that make this
+  tolerable for THIS internal use:
+  - Use a **dedicated spare number**, never the main business line → a ban costs only that number.
+  - It's a **private internal group** of 3 known salesmen + dealers, **low volume**, not mass
+    messaging strangers → far lower ban likelihood.
+  - If banned: get another spare number, re-add to the group (~30 min). Group + salesmen unaffected.
+- **Basis:** the existing `whatsapp-mcp` unofficial companion-device bridge (already working) is
+  the starting point. One normal account serves **both** the salesmen group and 1:1 dealer chats.
+- **Contrast (recorded for later):** the **customer bot** (Track A / public) must stay **official**
+  on the main number — a ban there WOULD be a disaster. Unofficial-in-group is only acceptable for
+  this internal salesman tool.
 
-**Number constraint (for production, not testing):** a WhatsApp number can be connected to only
-one platform at a time. Track A uses respond.io; so in production either both tracks share one
-number/platform or the order bot uses its own number. For testing this is moot — the spare number
-connects directly to Meta.
+**Cost.** No WhatsApp platform fee (unofficial bridge is self-hosted on the VPS). The only
+per-use cost is the Claude API ("brain") — tiny, pay-as-you-go. AutoCount API is separate (quote).
 
 ## 6. Phased delivery
 
 | Phase | Scope | Depends on | Start |
 |------|-------|-----------|-------|
-| **1** | Ears + Brain: receive WhatsApp (text/voice/photo), understand the order, match dealer + products, draft "confirm?" — using **exported CSV** data | Spare number + Meta Cloud API sandbox (free) | **Now** |
+| **1** | Ears + Brain: bot in a **test group** receives WhatsApp (text/voice/photo), understands the order, matches dealer + products, drafts "confirm?" — using **exported CSV** data | Spare number + `whatsapp-mcp` bridge + a test group | **Now** |
 | **2** | Live lookups (real-time dealer/stock from AutoCount) | Read-only SQL login | Login delivered |
 | **3** | Hands: create SO → PDF → confirm → Invoice | AutoCount API quote + setup | Quote approved |
-| **4** | Dashboard + nickname learning + go-live on the official number | Phases 1–3 | Last |
+| **4** | Nickname learning + (optional dashboard) + go-live in the real group | Phases 1–3 | Last |
 
 ## 7. Phase 1 — detail (what we build & test now)
 
@@ -122,7 +123,8 @@ messy Malay/English voice note (and photos, and text) and picks the **right deal
 **right AutoCount stock items** — before any AutoCount writing exists.
 
 **In scope (Phase 1):**
-- A test WhatsApp connection: spare number registered in Meta's **free Cloud API developer sandbox**.
+- The bot (spare number, `whatsapp-mcp` bridge) joins a **test group** (you + spare number + maybe
+  one helper) — never the real salesmen group yet.
 - Receive and transcribe voice notes; read order photos; parse text/SKU.
 - Dealer matching against an **exported debtor CSV** (name + phone + agent + contact).
 - Product matching against an **exported stock CSV** (code + description + price).
@@ -147,11 +149,11 @@ production number, the real group.
 - **Read-only SQL login** — pending from the reseller/engineer; enables Phase 2 live reads.
   (Confirmed possible "without restriction". Server encrypts with a self-signed cert; Windows
   Auth fails on the workgroup, so SQL Server Authentication is used.)
-- **Meta WhatsApp Cloud API setup** — Meta Business account + WhatsApp app in the developer
-  portal + the dedicated number. Test mode works without full business verification; production
-  needs business verification. The Cloud API number cannot also be used in the normal WhatsApp app.
-- **Hosting** — VPS (Exabytes NVMe C4) for Ears/Brain/Memory (needs a public HTTPS webhook URL
-  for Meta to deliver messages); Windows office PC for Hands.
+- **WhatsApp bridge** — the unofficial `whatsapp-mcp` bridge on a **dedicated spare number**,
+  running on the VPS (or the Mac for testing). Ban risk accepted (see §5); use the spare number,
+  never the main line. Have a spare-number re-setup runbook ready in case of a ban.
+- **Hosting** — VPS (Exabytes NVMe C4) for Ears/Brain/Memory; Windows office PC for Hands.
+  (No public webhook needed — the bridge connects out to WhatsApp itself.)
 - **Dealer phone data quality** — "detect by phone" only works if dealer phone numbers are
   actually stored on AutoCount debtor records. Verify during Phase 2.
 - **Product/SKU discipline** — per project rule, never infer or invent SKUs; ambiguous product
@@ -161,5 +163,6 @@ production number, the real group.
 
 - No writing to raw AutoCount database tables — ever.
 - No auto-invoicing without a human CONFIRM.
-- No operating inside the real salesmen WhatsApp group (official API can't, and we won't risk it).
-- Not replacing the salesmen's human coordination group.
+- The bot's number is a **dedicated spare**, never the main business line (ban-blast-radius control).
+- The **customer/public bot** (later) must NOT use this unofficial method — official only there.
+- No testing in the real salesmen group until Phase 1 passes in a test group.
