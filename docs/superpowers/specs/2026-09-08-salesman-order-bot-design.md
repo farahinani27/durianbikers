@@ -166,3 +166,34 @@ production number, the real group.
 - The bot's number is a **dedicated spare**, never the main business line (ban-blast-radius control).
 - The **customer/public bot** (later) must NOT use this unofficial method — official only there.
 - No testing in the real salesmen group until Phase 1 passes in a test group.
+
+## Order parsing & stock contention (design, 2026-09-09)
+
+**Per-sender sessions:** each order is a private draft keyed by the SENDER's WhatsApp id, not the
+group — so multiple salesmen ordering different items at once never collide. The bot replies by
+**quoting each salesman's message** for clarity in a busy group.
+
+**Pipeline:** WHO (salesman + dealer) → WHAT ({product,qty} via Claude, incl. voice/photo) → MATCH
+(product → AutoCount stock code+price from the 17,440-item catalog; confirm if ambiguous) → STOCK
+(available = on-hand − outstanding SO) → DRAFT summary → CONFIRM → SO.
+
+**Stock contention — FIRST-CONFIRM-WINS:** stock is committed only at CONFIRM (SO creation); the bot
+RE-CHECKS live availability at that moment. Two orders for the same scarce item → whoever confirms
+first gets it; the second is told it's gone (offer backorder/alternative). Early "⚠️ another order
+pending" warning shown at draft. Admin sees contention and can manually allocate.
+- AutoCount SO does NOT deduct physical stock — it adds an "outstanding SO" commitment. So
+  available = on-hand − outstanding SO; confirming raises the commitment, cancelling releases it.
+  Requires LIVE stock (the read-only SQL login) to be accurate.
+
+**Cancellation (decided 2026-09-09):** a salesman may **self-cancel his own order BEFORE it is
+invoiced** → cancels the SO → releases the reserved units back to available. After invoice =
+return/credit note, ADMIN only.
+
+**Refinements (both enabled):**
+- **Auto-notify:** when a cancel frees a scarce item, ping the salesman who was told "sold out".
+- **Reservation timeout:** an SO with no invoice after ~24–48h is flagged to admin / auto-released,
+  to prevent ghost reservations.
+
+**Build prerequisites:** Claude API key (understanding), stock catalog extract (from the XML dump),
+and the read-only SQL login for LIVE stock (accurate contention). The parser can be built on the
+snapshot first, then swapped to live data.
