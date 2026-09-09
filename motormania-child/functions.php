@@ -7,16 +7,6 @@ function motormania_child_enqueue_styles() {
 
 // --- my custom code without the parent theme --- //
 
-add_action( 'wp_footer', 'durianbikers_respondio_widget' );
-function durianbikers_respondio_widget() {
-	if ( is_admin() ) {
-		return;
-	}
-	?>
-	<script id="respondio__widget" src="https://cdn.respond.io/webchat/widget/widget.js?cId=bab8a693c0417873b78486ab05d24b0"></script>
-	<?php
-}
-
 // Allow shortcode to be implement in HTML Widget
 add_filter( 'elementor/widget/render_content', function( $content, $widget ) {
 	if ( 'html' === $widget->get_name() ) {
@@ -1070,4 +1060,12 @@ function db_store_countries( $countries ) {
 	unset( $countries['MY'] );
 
 	return $countries;
+}
+
+add_filter( 'woocommerce_get_availability_text', 'custom_backorder_text', 10, 2 );
+function custom_backorder_text( $availability, $product ) {
+    if ( $product->is_on_backorder() ) {
+        $availability = 'Out of stock — pre-order yours now';
+    }
+    return $availability;
 }
