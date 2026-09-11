@@ -94,6 +94,19 @@ class DB_Chat_Pending_Order {
 	public $created = 0;
 
 	/**
+	 * The language this purchase started in.
+	 *
+	 * Held for the whole conversation rather than re-detected per message. A
+	 * customer who opens in Chinese and then answers "which one?" by pasting
+	 * an English product title has not switched language — but per-message
+	 * detection sees English and replies in English, so the purchase changes
+	 * language halfway through and reads as broken.
+	 *
+	 * @var string
+	 */
+	public $language = '';
+
+	/**
 	 * Parse whatever the browser sent.
 	 *
 	 * Returns null rather than a half-populated object whenever the payload is
@@ -120,6 +133,7 @@ class DB_Chat_Pending_Order {
 		$order->variation_id = isset( $raw['variation_id'] ) ? absint( $raw['variation_id'] ) : 0;
 		$order->quantity     = self::clamp_quantity( isset( $raw['quantity'] ) ? $raw['quantity'] : 1 );
 		$order->created      = isset( $raw['created'] ) ? absint( $raw['created'] ) : 0;
+		$order->language     = self::clean_language( isset( $raw['language'] ) ? $raw['language'] : '' );
 
 		if ( isset( $raw['offered'] ) && is_array( $raw['offered'] ) ) {
 			$order->offered = array_slice( array_values( $raw['offered'] ), 0, self::MAX_OFFERED );
@@ -142,6 +156,7 @@ class DB_Chat_Pending_Order {
 		$order->variation_id = isset( $state['variation_id'] ) ? absint( $state['variation_id'] ) : 0;
 		$order->quantity     = self::clamp_quantity( isset( $state['quantity'] ) ? $state['quantity'] : 1 );
 		$order->created      = time();
+		$order->language     = self::clean_language( isset( $state['language'] ) ? $state['language'] : '' );
 
 		if ( isset( $state['offered'] ) && is_array( $state['offered'] ) ) {
 			$order->offered = array_slice( array_values( $state['offered'] ), 0, self::MAX_OFFERED );
@@ -176,6 +191,7 @@ class DB_Chat_Pending_Order {
 			'quantity'     => $this->quantity,
 			'offered'      => $this->offered,
 			'created'      => $this->created,
+			'language'     => $this->language,
 		);
 	}
 
@@ -186,6 +202,21 @@ class DB_Chat_Pending_Order {
 	 */
 	public static function stages() {
 		return array( self::STAGE_PRODUCT, self::STAGE_VARIATION, self::STAGE_CONFIRM );
+	}
+
+	/**
+	 * Only a language this plugin actually speaks.
+	 *
+	 * Anything else becomes '' and the caller detects afresh, so a junk value
+	 * cannot select a template set that does not exist.
+	 *
+	 * @param mixed $value Claimed language.
+	 * @return string
+	 */
+	private static function clean_language( $value ) {
+		$value = is_scalar( $value ) ? (string) $value : '';
+
+		return in_array( $value, array( 'en', 'ms', 'zh' ), true ) ? $value : '';
 	}
 
 	/**

@@ -1049,8 +1049,20 @@ class DB_Chat_Lookup_Engine {
 			'handoff_none'       => 'Untuk apa-apa yang saya tidak boleh jawab, sila hubungi kedai secara terus.',
 		);
 
-		$lang = ( 'ms' === $lang ) ? 'ms' : 'en';
-		$set  = ( 'ms' === $lang ) ? array_merge( $en, $ms ) : $en;
+		$lang = in_array( $lang, array( 'ms', 'zh' ), true ) ? $lang : 'en';
+
+		/*
+		 * Each set is MERGED OVER English, so a language only has to translate
+		 * the strings it has. Anything untranslated falls back to English
+		 * rather than to a blank bubble.
+		 */
+		if ( 'ms' === $lang ) {
+			$set = array_merge( $en, $ms );
+		} elseif ( 'zh' === $lang ) {
+			$set = array_merge( $en, self::templates_zh() );
+		} else {
+			$set = $en;
+		}
 
 		/**
 		 * Filter the lookup mode reply templates.
@@ -1105,7 +1117,7 @@ class DB_Chat_Lookup_Engine {
 	private function template_cache( $lang ) {
 		static $cache = array();
 
-		$lang = ( 'ms' === $lang ) ? 'ms' : 'en';
+		$lang = in_array( $lang, array( 'ms', 'zh' ), true ) ? $lang : 'en';
 
 		if ( ! isset( $cache[ $lang ] ) ) {
 			$cache[ $lang ] = self::templates( $lang );
@@ -1618,6 +1630,15 @@ class DB_Chat_Lookup_Engine {
 
 		$normalized = (string) $normalized;
 
+		/*
+		 * Script beats vocabulary. Han characters are unambiguous in a way no
+		 * word list is, so this is checked before the Malay markers — a message
+		 * mixing Chinese with a Latin product name is still Chinese.
+		 */
+		if ( self::is_chinese( $normalized ) ) {
+			return 'zh';
+		}
+
 		// Defensive only: a caller that passed raw text still gets whole-word
 		// matching rather than accidental substring hits.
 		if ( preg_match( '/[^a-z0-9 ]/', $normalized ) ) {
@@ -1889,6 +1910,7 @@ class DB_Chat_Lookup_Engine {
 					array(
 						'quantity' => $quantity,
 						'offered'  => $offered,
+						'language' => $language,
 					)
 				)->to_array();
 
@@ -2716,6 +2738,31 @@ class DB_Chat_Lookup_Engine {
 			}
 		}
 
+		/*
+		 * CHINESE. Substring matching, because there are no spaces to split on.
+		 * Terms are stripped once matched for the same reason the English buy
+		 * words are: they are never part of a product title, and searching for
+		 * them costs results.
+		 */
+		if ( self::is_chinese( $text ) ) {
+			$zh_buy = self::chinese_match( $text, 'purchase' );
+
+			if ( '' !== $zh_buy ) {
+				$filters['purchase'] = true;
+				$text                = str_replace( $zh_buy, ' ', $text );
+			}
+
+			if ( 0 === $filters['quantity'] ) {
+				foreach ( self::chinese_terms()['unit'] as $unit ) {
+					if ( preg_match( '/([0-9]{1,3})\s*' . preg_quote( $unit, '/' ) . '/u', $text, $zh_matches ) ) {
+						$filters['quantity'] = (int) $zh_matches[1];
+						$text                = str_replace( $zh_matches[0], ' ', $text );
+						break;
+					}
+				}
+			}
+		}
+
 		/* CHEAPEST. A sort, not a filter — it never hides anything. */
 		foreach ( self::cheapest_terms() as $term ) {
 			if ( false !== strpos( $text, ' ' . $term . ' ' ) ) {
@@ -3391,7 +3438,15 @@ class DB_Chat_Lookup_Engine {
 			return null;
 		}
 
-		$language = self::detect_language( $this->normalize( $message ) );
+		/*
+		 * The purchase keeps the language it started in. Re-detecting per
+		 * message would flip to English the moment a Chinese customer answers
+		 * "which one?" by pasting an English product title — which is how
+		 * people answer that question.
+		 */
+		$language = '' !== $order->language
+			? $order->language
+			: self::detect_language( $this->normalize( $message ) );
 
 		if ( DB_Chat_Pending_Order::STAGE_PRODUCT === $order->stage ) {
 			$chosen = $this->match_offered_product( $message, (array) $order->offered );
@@ -3459,6 +3514,7 @@ class DB_Chat_Lookup_Engine {
 				'product_id' => $product_id,
 				'quantity'   => $quantity,
 				'offered'    => $sizes,
+				'language'   => $language,
 			)
 		)->to_array();
 
@@ -3492,6 +3548,7 @@ class DB_Chat_Lookup_Engine {
 				'product_id'   => $product_id,
 				'variation_id' => (int) $variation_id,
 				'quantity'     => $qty,
+				'language'     => $language,
 			)
 		)->to_array();
 
@@ -3511,6 +3568,25 @@ class DB_Chat_Lookup_Engine {
 	 */
 	private function handle_confirmation( $message, DB_Chat_Pending_Order $order, $language ) {
 		$normalized = ' ' . $this->normalize( $message ) . ' ';
+
+		/*
+		 * Chinese first, and decline before confirm within it. 不要 contains
+		 * 要 — the same trap as Malay's "tak nak", in a script where the
+		 * space-delimited matching below cannot see word boundaries at all.
+		 */
+		if ( self::is_chinese( $message ) ) {
+			if ( '' !== self::chinese_match( $message, 'decline' ) ) {
+				$this->pending_out = null;
+
+				return $this->compose( $this->text( $language, 'buy_cancelled' ), $language );
+			}
+
+			if ( '' !== self::chinese_match( $message, 'confirm' ) ) {
+				return $this->complete_purchase( $order, $language );
+			}
+
+			return null;
+		}
 
 		/*
 		 * DECLINE IS TESTED FIRST, and the order is not stylistic. Malay
@@ -3545,6 +3621,21 @@ class DB_Chat_Lookup_Engine {
 			return null;
 		}
 
+		return $this->complete_purchase( $order, $language );
+	}
+
+	/**
+	 * Do the buying, once a confirmation has been established.
+	 *
+	 * Shared by every language so there is exactly ONE place that writes to a
+	 * cart from a confirmation — a second copy for Chinese would be a second
+	 * place for the rules to drift.
+	 *
+	 * @param DB_Chat_Pending_Order $order    The pending order.
+	 * @param string                $language Reply language.
+	 * @return array<string,mixed>
+	 */
+	private function complete_purchase( DB_Chat_Pending_Order $order, $language ) {
 		$writer  = new DB_Chat_Cart_Writer();
 		$details = $writer->describe( $order->product_id, $order->variation_id );
 		$result  = $writer->add( $order->product_id, $order->variation_id, $order->quantity );
@@ -3776,6 +3867,114 @@ class DB_Chat_Lookup_Engine {
 		 * @param string[] $terms Lowercase words.
 		 */
 		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_purchase_soft_terms', $terms ) ) ) );
+	}
+
+	/**
+	 * Chinese reply copy.
+	 *
+	 * Only the strings a buying customer meets. Everything else falls back to
+	 * English by the merge in templates(), which is honest: the engine matches
+	 * an English catalogue, and pretending otherwise would promise a Chinese
+	 * experience it cannot deliver.
+	 *
+	 * @return array<string,string>
+	 */
+	public static function templates_zh() {
+		return array(
+			'buy_which_product'  => '您要哪一款？',
+			'buy_which_size'     => '要哪个尺码？现在有货的：',
+			/* translators: 1: product name; 2: option label; 3: quantity; 4: price. */
+			'buy_confirm'        => '%1$s — %2$s，%3$d 件，每件 %4$s。加入购物车吗？',
+			/* translators: 1: product name; 2: quantity; 3: price. */
+			'buy_confirm_simple' => '%1$s，%2$d 件，每件 %3$s。加入购物车吗？',
+			/* translators: %s: the only available option. */
+			'buy_only_option'    => '这款目前只有 %s。',
+			'buy_cancelled'      => '好的，我没有加入任何东西。',
+			/* translators: 1: quantity; 2: product name; 3: cart total. */
+			'buy_added'          => '已将 %1$d × %2$s 加入购物车。购物车金额现在是 %3$s。',
+			/* translators: %s: the reason, already customer-safe. */
+			'buy_failed'         => '无法加入购物车：%s',
+		);
+	}
+
+	/**
+	 * Chinese vocabulary, matched as SUBSTRINGS.
+	 *
+	 * Chinese is written without spaces, so the whole-token matching every
+	 * other language here relies on cannot find a word boundary. These are
+	 * matched with mb_strpos against the message instead.
+	 *
+	 * Each list is ordered LONGEST FIRST, and that ordering is load-bearing:
+	 * 要买 contains 买, and 不要 contains 要. Matching a short term first would
+	 * read "不要" ("don't want") as the confirmation "要" and buy something the
+	 * customer just refused.
+	 *
+	 * @return array<string,string[]>
+	 */
+	public static function chinese_terms() {
+		$terms = array(
+			'purchase' => array( '我要买', '想买', '要买', '下单', '訂購', '订购', '購買', '购买', '买', '購', '购' ),
+			'confirm'  => array( '确认', '確認', '好的', '可以', '没错', '沒錯', '对', '對', '是', '好', '要' ),
+			'decline'  => array( '不要了', '不用了', '先不要', '不要', '不用', '取消', '算了', '等等', '不' ),
+			'unit'     => array( '个', '個', '件', '双', '雙', '套' ),
+		);
+
+		/**
+		 * Filter the Chinese vocabulary.
+		 *
+		 * @param array<string,string[]> $terms Terms by role.
+		 */
+		$terms = (array) apply_filters( 'db_chat_chinese_terms', $terms );
+
+		foreach ( $terms as $role => $list ) {
+			$list = array_values( array_unique( array_map( 'strval', (array) $list ) ) );
+
+			// Re-sort after filtering: a third party adding a short term must
+			// not be able to break the longest-first guarantee above.
+			usort(
+				$list,
+				static function ( $a, $b ) {
+					return mb_strlen( $b ) <=> mb_strlen( $a );
+				}
+			);
+
+			$terms[ $role ] = $list;
+		}
+
+		return $terms;
+	}
+
+	/**
+	 * Does this text contain Han characters?
+	 *
+	 * @param string $text Any text.
+	 * @return bool
+	 */
+	public static function is_chinese( $text ) {
+		return 1 === preg_match( '/\p{Han}/u', (string) $text );
+	}
+
+	/**
+	 * First Chinese term of a role found in the text.
+	 *
+	 * @param string $text Message.
+	 * @param string $role purchase / confirm / decline / unit.
+	 * @return string Matched term, or ''.
+	 */
+	public static function chinese_match( $text, $role ) {
+		$terms = self::chinese_terms();
+
+		if ( empty( $terms[ $role ] ) ) {
+			return '';
+		}
+
+		foreach ( $terms[ $role ] as $term ) {
+			if ( '' !== $term && false !== mb_strpos( (string) $text, $term ) ) {
+				return $term;
+			}
+		}
+
+		return '';
 	}
 
 	/**
