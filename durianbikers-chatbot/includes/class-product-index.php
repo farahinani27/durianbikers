@@ -285,6 +285,20 @@ class DB_Chat_Product_Index {
 			$products = $this->run_query( $query, '', '', $in_stock_only );
 		}
 
+		/*
+		 * Re-rank before anything is trimmed. WordPress 'relevance' ordering
+		 * treats the query as a bag of words, so a wordy customer message like
+		 * "Korea Shinko Tires Tyres Tayar E804 E805 Maxxis" put the product
+		 * with almost exactly that title LAST, under three tyres that merely
+		 * shared the word "Shinko". The customer sees three wrong tyres first.
+		 *
+		 * This runs before enforce_payload_cap() deliberately: the cap used to
+		 * be able to drop the right product entirely.
+		 */
+		if ( '' !== $query ) {
+			$products = $this->rank_by_title_overlap( $products, $query );
+		}
+
 		$include_unavailable = (bool) apply_filters( 'db_chat_include_unavailable', true );
 
 		$results = array();
@@ -435,6 +449,113 @@ class DB_Chat_Product_Index {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Order results by how much of the customer's wording the title accounts for.
+	 *
+	 * Two ratios, because either alone ranks badly:
+	 *
+	 *   - how much of the QUERY the title covers (weighted 0.7) — the main
+	 *     signal, but on its own a sprawling title full of unrelated models
+	 *     scores as well as a precise one;
+	 *   - how much of the TITLE the query accounts for (weighted 0.3) — this
+	 *     favours a title that IS largely the customer's words over a long one
+	 *     that merely contains them.
+	 *
+	 * Ties keep WordPress's original order, so this only ever promotes a
+	 * clearly better match; it never shuffles equally-good results around.
+	 *
+	 * Deliberately not fuzzy: typo correction already happens upstream in the
+	 * lookup engine, and a second layer of approximate matching here would make
+	 * it much harder to explain why a given tyre came first.
+	 *
+	 * @param WC_Product[] $products Products from the query, in WP's order.
+	 * @param string       $query    The customer's search wording.
+	 * @return WC_Product[]
+	 */
+	private function rank_by_title_overlap( array $products, $query ) {
+		$query_tokens = $this->tokenise( $query );
+
+		if ( empty( $query_tokens ) || count( $products ) < 2 ) {
+			return $products;
+		}
+
+		$scored = array();
+
+		foreach ( array_values( $products ) as $position => $product ) {
+			if ( ! $product instanceof WC_Product ) {
+				continue;
+			}
+
+			$scored[] = array(
+				'product'  => $product,
+				'position' => $position,
+				'score'    => $this->overlap_score( $query_tokens, $this->tokenise( $product->get_name() ) ),
+			);
+		}
+
+		usort(
+			$scored,
+			static function ( $a, $b ) {
+				$by_score = $b['score'] <=> $a['score'];
+
+				return 0 !== $by_score ? $by_score : ( $a['position'] <=> $b['position'] );
+			}
+		);
+
+		return array_column( $scored, 'product' );
+	}
+
+	/**
+	 * Lowercase, de-duplicated word tokens.
+	 *
+	 * Single characters are dropped as noise; digits are kept, because tyre
+	 * sizes and model numbers ("705", "E804", "17") are exactly what makes one
+	 * product different from another here.
+	 *
+	 * @param string $text Any text.
+	 * @return string[]
+	 */
+	private function tokenise( $text ) {
+		$tokens = preg_split( '/[^\p{L}\p{N}]+/u', mb_strtolower( (string) $text ), -1, PREG_SPLIT_NO_EMPTY );
+
+		if ( ! is_array( $tokens ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_unique(
+				array_filter(
+					$tokens,
+					static function ( $token ) {
+						return mb_strlen( $token ) > 1;
+					}
+				)
+			)
+		);
+	}
+
+	/**
+	 * Overlap of two token sets, 0.0 to 1.0.
+	 *
+	 * @param string[] $query_tokens Customer's words.
+	 * @param string[] $title_tokens Product title's words.
+	 * @return float
+	 */
+	private function overlap_score( array $query_tokens, array $title_tokens ) {
+		if ( empty( $query_tokens ) || empty( $title_tokens ) ) {
+			return 0.0;
+		}
+
+		$matched = count( array_intersect( $query_tokens, $title_tokens ) );
+
+		if ( 0 === $matched ) {
+			return 0.0;
+		}
+
+		return ( $matched / count( $query_tokens ) ) * 0.7
+			+ ( $matched / count( $title_tokens ) ) * 0.3;
 	}
 
 	/**
