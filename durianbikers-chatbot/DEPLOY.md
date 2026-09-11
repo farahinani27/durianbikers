@@ -31,17 +31,17 @@ This stage is the one that touches your checkout path, so it goes first and alon
 
 ### 1.1 Upload
 
-**⚠️ The live store is NOT in `httpdocs`.** Confirmed 2026-08-17 from
+**⚠️ The live store is NOT in `httpdocs`.** Confirmed 2026-08-17 and re-confirmed 2026-09-11 from
 `wc/v3/system_status` → `log_directory`, which reports the real docroot:
 
 ```
-/home/durianbikers.com/staging.durianbikers.com/wp-content/
+/var/www/vhosts/durianbikers.com/staging.durianbikers.com/wp-content/
 ```
 
 So the plugins directory is:
 
 ```
-/home/durianbikers.com/staging.durianbikers.com/wp-content/plugins/
+/var/www/vhosts/durianbikers.com/staging.durianbikers.com/wp-content/plugins/
 ```
 
 `httpdocs` holds the old, unused "Bloggers Unite" install (the rollback docroot). Uploading there
