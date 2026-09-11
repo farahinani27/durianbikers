@@ -97,6 +97,15 @@ class DB_Chat_Lookup_Engine {
 	const MAX_LISTED = 4;
 
 	/**
+	 * Listing cap for a browse question.
+	 *
+	 * "What models do you have" is a request to see the range, and four of
+	 * thirteen is not an answer to it. Ordinary searches keep the tight cap
+	 * above — a long list is right here and wrong there.
+	 */
+	const MAX_LISTED_BROWSE = 15;
+
+	/**
 	 * How much more a policy or contact word counts than a generic opener.
 	 *
 	 * "ada waranti tak?" is one point of product ("ada") against one point of
@@ -1858,7 +1867,15 @@ class DB_Chat_Lookup_Engine {
 			return $this->product_miss( $intent, $query, $filters, $blind, $language );
 		}
 
-		$listed = array_slice( $records, 0, self::MAX_LISTED );
+		/*
+		 * A browse question earns a longer list, but only when the range is
+		 * actually narrowed to a brand or a category. "What models do you
+		 * have" with no brand is a request for the whole catalogue, and
+		 * answering that with fifteen arbitrary products helps nobody.
+		 */
+		$narrowed = ( '' !== $filters['brand'] || '' !== $filters['category'] );
+		$cap      = ( $filters['browse'] && $narrowed ) ? self::MAX_LISTED_BROWSE : self::MAX_LISTED;
+		$listed   = array_slice( $records, 0, $cap );
 		$lines  = array();
 
 		/*
@@ -2787,6 +2804,20 @@ class DB_Chat_Lookup_Engine {
 			}
 		}
 
+		/*
+		 * BROWSE WORDS. "What models do you have", "ada model apa", "what
+		 * series" — these ask to SEE A RANGE, and none of them is ever part of
+		 * a product title. Left in the query they are searched for literally,
+		 * which is how "mt helmet ada model apa" turned into a hunt for the
+		 * word "model" and returned an interior liner and a pinlock insert.
+		 */
+		foreach ( self::browse_terms() as $term ) {
+			if ( false !== strpos( $text, ' ' . $term . ' ' ) ) {
+				$filters['browse'] = true;
+				$text              = str_replace( ' ' . $term . ' ', ' ', $text );
+			}
+		}
+
 		/* CHEAPEST. A sort, not a filter — it never hides anything. */
 		foreach ( self::cheapest_terms() as $term ) {
 			if ( false !== strpos( $text, ' ' . $term . ' ' ) ) {
@@ -2909,12 +2940,36 @@ class DB_Chat_Lookup_Engine {
 				$name    = (string) $name;
 				$compact = trim( preg_replace( '/[^a-z0-9]+/', ' ', strtolower( $name ) ) );
 
-				if ( mb_strlen( $compact ) < 3 ) {
+				/*
+				 * Two characters, not three. The old floor silently excluded
+				 * exactly one brand — MT — which is a brand this shop actually
+				 * stocks, so "mt helmet ada model apa" found no brand at all
+				 * and fell back to keyword soup. MT is the ONLY term in the
+				 * whole taxonomy shorter than three characters, so this widens
+				 * the net by precisely one real brand. Matching stays
+				 * whole-token, so "mt" inside another word still cannot hit.
+				 */
+				if ( mb_strlen( $compact ) < 2 ) {
 					continue;
 				}
 
-				if ( false !== strpos( $haystack, ' ' . $compact . ' ' ) && strlen( $compact ) > strlen( $best ) ) {
-					$best = $name;
+				/*
+				 * Customers write "helmet", the category is "Helmets". Try the
+				 * singular as well so a plural category name is still found;
+				 * without this, "mt helmet" matched the brand but never the
+				 * category, and the reply mixed helmets with visors.
+				 */
+				$forms = array( $compact );
+
+				if ( 's' === substr( $compact, -1 ) ) {
+					$forms[] = substr( $compact, 0, -1 );
+				}
+
+				foreach ( $forms as $form ) {
+					if ( '' !== $form && false !== strpos( $haystack, ' ' . $form . ' ' ) && strlen( $compact ) > strlen( $best ) ) {
+						$best = $name;
+						break;
+					}
 				}
 			}
 
@@ -3397,6 +3452,7 @@ class DB_Chat_Lookup_Engine {
 			'brand'      => '',
 			'category'   => '',
 			'fitment'    => false,
+			'browse'     => false,
 			'purchase'   => false,
 			'purchase_soft' => false,
 			'quantity'   => 0,
@@ -4042,6 +4098,29 @@ class DB_Chat_Lookup_Engine {
 		 * @param string[] $terms Lowercase words.
 		 */
 		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_decline_terms', $terms ) ) ) );
+	}
+
+	/**
+	 * Words that ask to see a range rather than name a product.
+	 *
+	 * Stripped from the query for the same reason the buying words are: a
+	 * customer asking "what models do you have" is not looking for a product
+	 * with "model" in its title.
+	 *
+	 * @return string[]
+	 */
+	public static function browse_terms() {
+		$terms = array(
+			'model', 'models', 'series', 'range', 'lineup', 'line up', 'variant', 'variants',
+			'selection', 'available', 'jenis', 'model apa', 'ada apa', 'apa saja', 'apa sahaja',
+		);
+
+		/**
+		 * Filter the browse words stripped from a product query.
+		 *
+		 * @param string[] $terms Lowercase words.
+		 */
+		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_browse_terms', $terms ) ) ) );
 	}
 
 	/**
