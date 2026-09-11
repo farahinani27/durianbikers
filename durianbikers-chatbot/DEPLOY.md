@@ -328,9 +328,20 @@ answering modes; the free lookup block after it applies only when you run withou
 - **Roughly 1,450 products (~27%)** are broken Shopify imports with no price and no variations. The
   bot describes these as listed but currently unavailable. Fixing them is catalogue work, not
   chatbot work, and it overlaps your stock-sync reconciliation.
-- **No add-to-cart in the chat.** Deliberately excluded from v1 — your store started taking real
-  payments on 2026-08-14 and a new surface near the cart was the wrong risk that early. Reasonable
-  to revisit once the store has been stable for a few weeks.
+- **It CAN add to the cart now** (added 2026-09-11; this bullet used to say it could not).
+  A customer says what they want, the bot asks for anything missing, shows a summary, and adds it
+  **only after an explicit yes**. What it will never do:
+  - **Choose an option for you.** If a helmet comes in seven sizes it asks which, and it only ever
+    offers sizes that are actually in stock. Guessing a size is the same mistake as guessing
+    fitment, and it ends the same way — a wrong part and a return.
+  - **Trust the browser.** The product, the variation, the stock and the price are all re-read from
+    WooCommerce at the moment of adding, so a tampered payload cannot buy a different product at
+    this product's price. Quantity is capped at 20 regardless of what was asked for.
+  - **Act on anything but a clear yes.** "Maybe", silence, or a new question all add nothing and
+    drop the half-finished order rather than leaving it waiting for a stray "yes" later.
+  - **Check out, apply a coupon, or change what is already in the cart.** Still out of scope, and
+    still deliberately so — it hands the customer to the cart page for all of that.
+  Works in English, Bahasa Malaysia and Chinese, and a purchase keeps the language it started in.
 
 ### Extra limits of free lookup mode
 
