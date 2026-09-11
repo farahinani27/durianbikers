@@ -643,6 +643,30 @@ class DB_Chat_Product_Index {
 	 * @return string
 	 */
 	private function plain_text( $html ) {
+		/*
+		 * Drop screen-reader-only elements CONTENT AND ALL, before the tags go.
+		 *
+		 * WooCommerce appends a hidden accessibility span to a variable
+		 * product's price HTML:
+		 *
+		 *   <span…>RM524.00</span> – <span…>RM845.00</span>
+		 *   <span class="screen-reader-text">Price range: RM524.00 through RM845.00</span>
+		 *
+		 * wp_strip_all_tags() removes the tags but KEEPS every character
+		 * between them, so the reply read
+		 * "RM524.00 – RM845.00Price range: RM524.00 through RM845.00" —
+		 * the same figures twice, run together without even a space. It hit
+		 * every variable product, which is most of the catalogue.
+		 *
+		 * This text exists to be spoken, never read. A chat bubble is not a
+		 * screen reader, so it should never appear at all.
+		 */
+		$html = preg_replace(
+			'#<(span|div|p)[^>]*class=(["\'])[^"\']*(?:screen-reader-text|sr-only|visually-hidden)[^"\']*\2[^>]*>.*?</\1>#is',
+			' ',
+			(string) $html
+		);
+
 		$text = wp_strip_all_tags( (string) $html, true );
 		$text = html_entity_decode( $text, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 		$text = str_replace( array( "\xc2\xa0", '|' ), array( ' ', '/' ), $text );
