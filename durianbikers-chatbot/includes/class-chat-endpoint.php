@@ -186,6 +186,19 @@ class DB_Chat_Chat_Endpoint {
 						'type'     => 'array',
 						'default'  => array(),
 					),
+					/*
+					 * The half-finished purchase, handed back by the widget.
+					 * Untrusted by design — DB_Chat_Pending_Order sanitises its
+					 * shape and DB_Chat_Cart_Writer re-reads every fact from
+					 * WooCommerce before anything reaches a cart.
+					 */
+					'pending' => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_array( $value );
+						},
+					),
 				),
 			)
 		);
@@ -543,7 +556,7 @@ class DB_Chat_Chat_Endpoint {
 		 * which brain answered.
 		 */
 		if ( DB_Chat_Plugin::ENGINE_LOOKUP === db_chat()->get_engine() ) {
-			return $this->handle_with_lookup( $message, $history );
+			return $this->handle_with_lookup( $message, $history, $request->get_param( 'pending' ) );
 		}
 
 		$messages = $this->build_messages( $history, $message );
@@ -612,7 +625,7 @@ class DB_Chat_Chat_Endpoint {
 	 *                        slot; never trusted as a subject in itself.
 	 * @return WP_REST_Response|WP_Error
 	 */
-	private function handle_with_lookup( $message, array $history ) {
+	private function handle_with_lookup( $message, array $history, $pending = null ) {
 		if ( null === $this->lookup_engine ) {
 			/*
 			 * Unreachable in practice: get_engine() only returns 'lookup' when
@@ -665,7 +678,7 @@ class DB_Chat_Chat_Endpoint {
 		}
 
 		try {
-			$result = $this->lookup_engine->answer( $message, $history );
+			$result = $this->lookup_engine->answer( $message, $history, $pending );
 		} catch ( Throwable $e ) {
 			DB_Chat_Plugin::log_error( 'Lookup mode failed: ' . $e->getMessage() );
 
@@ -705,13 +718,27 @@ class DB_Chat_Chat_Endpoint {
 
 		$this->maybe_log( $message, $reply );
 
-		$response = rest_ensure_response(
-			array(
-				'reply'    => $reply,
-				'products' => array_values( $products ),
-				'pages'    => array_values( $pages ),
-			)
+		/*
+		 * `pending` is emitted even when null — that null is what CLEARS a
+		 * finished or cancelled purchase in the widget. Dropping the key when
+		 * empty would leave the browser holding a stale order.
+		 *
+		 * Heed the warning on finder_response() below: these keys are
+		 * hardcoded, so anything the engine adds and this array omits is lost
+		 * silently, with every test still green.
+		 */
+		$payload = array(
+			'reply'    => $reply,
+			'products' => array_values( $products ),
+			'pages'    => array_values( $pages ),
+			'pending'  => isset( $result['pending'] ) && is_array( $result['pending'] ) ? $result['pending'] : null,
 		);
+
+		if ( isset( $result['cart'] ) && is_array( $result['cart'] ) ) {
+			$payload['cart'] = $result['cart'];
+		}
+
+		$response = rest_ensure_response( $payload );
 
 		return $this->apply_no_store( $response );
 	}

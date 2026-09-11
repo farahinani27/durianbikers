@@ -1513,6 +1513,19 @@ products.
 		return fallback;
 	}
 
+	/*
+	 * The half-finished purchase, held between messages.
+	 *
+	 * It lives here rather than on the server for the same reason the
+	 * conversation history does. Nothing here is trusted: the server re-reads
+	 * the product, the variation, the stock and the price from WooCommerce
+	 * before anything is added to a cart.
+	 *
+	 * Dies with the tab, deliberately. A purchase half-finished yesterday
+	 * should not be waiting to be confirmed today.
+	 */
+	var pendingOrder = null;
+
 	function postChat(message, nonce) {
 		var headers = {
 			'Content-Type': 'application/json',
@@ -1529,7 +1542,8 @@ products.
 			headers: headers,
 			body: JSON.stringify({
 				message: message,
-				history: history.slice(-MAX_HISTORY_SENT)
+				history: history.slice(-MAX_HISTORY_SENT),
+				pending: pendingOrder
 			})
 		}, REQUEST_TIMEOUT).then(function (response) {
 			return response.json().catch(function () {
@@ -1672,6 +1686,25 @@ products.
 		refreshHandoffHref();
 
 		addBotMessage(reply);
+		/*
+		 * Always reassign, including to null. A reply with no pending order is
+		 * how a finished or cancelled purchase is CLEARED — keeping the old
+		 * one would leave the widget acting on an order that is over.
+		 */
+		pendingOrder = (data && data.pending) ? data.pending : null;
+
+		if (data && data.cart && data.cart.added) {
+			// The theme supplies the header cart fragment; ask WooCommerce to
+			// refresh it so the icon count matches what just happened.
+			if (window.jQuery) {
+				try {
+					window.jQuery(document.body).trigger('wc_fragment_refresh');
+				} catch (e) {
+					// A stale icon is not worth breaking the reply over.
+				}
+			}
+		}
+
 		addProducts(data ? data.products : null);
 		// Page links before chips: products are the buying path, these are the
 		// "read the policy in full" follow-up. A reply can carry both.
