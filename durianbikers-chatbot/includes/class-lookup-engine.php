@@ -934,6 +934,10 @@ class DB_Chat_Lookup_Engine {
 			/* translators: %s: the only available option. */
 			'buy_only_option'    => __( 'That one is only available in %s right now.', 'durianbikers-chatbot' ),
 			'buy_cancelled'      => __( 'No problem, I have not added anything.', 'durianbikers-chatbot' ),
+			/* translators: 1: quantity; 2: product name; 3: cart total. */
+			'buy_added'          => __( 'Added %1$d × %2$s to your cart. Your cart is now %3$s.', 'durianbikers-chatbot' ),
+			/* translators: %s: the reason, already customer-safe. */
+			'buy_failed'         => __( 'I could not add that to your cart: %s', 'durianbikers-chatbot' ),
 			'note_purchase'      => __( 'I cannot place an order here — open the product page to choose your options and add it to your cart.', 'durianbikers-chatbot' ),
 			/* translators: %d: number of items the customer asked for. */
 			'note_purchase_qty'  => __( 'I cannot place an order here. You mentioned %d — open the product page to choose your options and add them to your cart.', 'durianbikers-chatbot' ),
@@ -1028,6 +1032,10 @@ class DB_Chat_Lookup_Engine {
 			/* translators: %s: the only available option. */
 			'buy_only_option'    => 'Yang itu hanya ada dalam saiz %s buat masa ini.',
 			'buy_cancelled'      => 'Baik, saya tidak masukkan apa-apa.',
+			/* translators: 1: quantity; 2: product name; 3: cart total. */
+			'buy_added'          => 'Sudah masukkan %1$d × %2$s ke dalam troli anda. Jumlah troli sekarang %3$s.',
+			/* translators: %s: the reason, already customer-safe. */
+			'buy_failed'         => 'Saya tidak dapat masukkan ke dalam troli: %s',
 			'note_purchase'      => 'Saya tidak boleh membuat pesanan di sini — sila buka halaman produk untuk pilih pilihan anda dan masukkan ke dalam troli.',
 			/* translators: %d: number of items the customer asked for. */
 			'note_purchase_qty'  => 'Saya tidak boleh membuat pesanan di sini. Anda sebut %d — sila buka halaman produk untuk pilih pilihan anda dan masukkan ke dalam troli.',
@@ -3502,9 +3510,84 @@ class DB_Chat_Lookup_Engine {
 	 * @return array<string,mixed>|null
 	 */
 	private function handle_confirmation( $message, DB_Chat_Pending_Order $order, $language ) {
-		unset( $message, $order, $language );
+		$normalized = ' ' . $this->normalize( $message ) . ' ';
 
-		return null;
+		/*
+		 * DECLINE IS TESTED FIRST, and the order is not stylistic. Malay
+		 * negates with a particle rather than a different word: "tak nak"
+		 * contains "nak", which is a confirmation word. Checking confirmation
+		 * first would read a refusal as a yes and put a helmet in a real cart.
+		 */
+		foreach ( self::decline_terms() as $term ) {
+			if ( false !== strpos( $normalized, ' ' . $term . ' ' ) ) {
+				$this->pending_out = null;
+
+				return $this->compose( $this->text( $language, 'buy_cancelled' ), $language );
+			}
+		}
+
+		$confirmed = false;
+
+		foreach ( self::confirm_terms() as $term ) {
+			if ( false !== strpos( $normalized, ' ' . $term . ' ' ) ) {
+				$confirmed = true;
+				break;
+			}
+		}
+
+		/*
+		 * Neither yes nor no. Answer whatever they actually asked instead of
+		 * pressing the sale — and the pending order is dropped rather than
+		 * held, because a stale confirmation waiting in the background is how
+		 * a later stray "yes" buys something nobody meant to buy.
+		 */
+		if ( ! $confirmed ) {
+			return null;
+		}
+
+		$writer  = new DB_Chat_Cart_Writer();
+		$details = $writer->describe( $order->product_id, $order->variation_id );
+		$result  = $writer->add( $order->product_id, $order->variation_id, $order->quantity );
+
+		// Either way the purchase is over: succeeded, or failed and not retried silently.
+		$this->pending_out = null;
+
+		if ( empty( $result['ok'] ) ) {
+			$reply = $this->text( $language, 'buy_failed', $result['message'] );
+
+			return $this->with_cart(
+				$this->compose( $reply, $language ),
+				array( 'added' => false, 'url' => '', 'total' => '', 'count' => 0 )
+			);
+		}
+
+		$reply = $this->text( $language, 'buy_added', $order->quantity, $details['name'], $result['cart_total'] );
+
+		return $this->with_cart(
+			$this->compose( $reply, $language, $this->resolve_cards( array( $details['name'] ) ) ),
+			array(
+				'added' => true,
+				'url'   => $result['cart_url'],
+				'total' => $result['cart_total'],
+				'count' => $result['item_count'],
+			)
+		);
+	}
+
+	/**
+	 * Attach cart state to a composed reply.
+	 *
+	 * Kept separate so compose() stays the one shape every reply has, and only
+	 * the two cart outcomes carry this extra key.
+	 *
+	 * @param array $reply Composed reply.
+	 * @param array $cart  Cart outcome.
+	 * @return array<string,mixed>
+	 */
+	private function with_cart( array $reply, array $cart ) {
+		$reply['cart'] = $cart;
+
+		return $reply;
 	}
 
 	/**
