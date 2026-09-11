@@ -3293,6 +3293,169 @@ class DB_Chat_Lookup_Engine {
 	}
 
 	/**
+	 * Which of the products we just offered is the customer naming?
+	 *
+	 * Scored against the OFFERED products only, never the whole catalogue.
+	 * This is the difference between a conversation and four disconnected
+	 * searches: when the bot has just asked "which one?", the reply is an
+	 * ANSWER, and answering with a product title used to simply re-run the
+	 * search and list the same products again.
+	 *
+	 * @param string $message Customer's reply.
+	 * @param int[]  $offered Product ids previously offered, in the order shown.
+	 * @return int Product id, or 0 when nothing matched clearly.
+	 */
+	public function match_offered_product( $message, array $offered ) {
+		$offered = array_values( array_filter( array_map( 'absint', $offered ) ) );
+
+		if ( empty( $offered ) ) {
+			return 0;
+		}
+
+		$normalized = $this->normalize( $message );
+		$ordinal    = $this->match_ordinal( $normalized, $offered );
+
+		if ( $ordinal > 0 ) {
+			return $ordinal;
+		}
+
+		$message_tokens = $this->answer_tokens( $normalized );
+
+		if ( empty( $message_tokens ) ) {
+			return 0;
+		}
+
+		$best       = 0;
+		$best_score = 0.0;
+		$runner_up  = 0.0;
+
+		foreach ( $offered as $product_id ) {
+			$product = wc_get_product( $product_id );
+
+			if ( ! $product instanceof WC_Product ) {
+				continue;
+			}
+
+			$title_tokens = $this->answer_tokens( $this->normalize( $product->get_name() ) );
+
+			if ( empty( $title_tokens ) ) {
+				continue;
+			}
+
+			$matched = count( array_intersect( $message_tokens, $title_tokens ) );
+			$score   = $matched / count( $message_tokens );
+
+			if ( $score > $best_score ) {
+				$runner_up  = $best_score;
+				$best_score = $score;
+				$best       = $product_id;
+			} elseif ( $score > $runner_up ) {
+				$runner_up = $score;
+			}
+		}
+
+		/*
+		 * Two ways to refuse, and both matter on a store that will put the
+		 * answer in a cart.
+		 *
+		 * A weak best match means they probably changed the subject — the
+		 * caller then answers their actual question instead of pressing on.
+		 *
+		 * A best that barely beats the runner-up means the reply did not
+		 * DISTINGUISH between the options: "mt helmet" is true of both
+		 * Yamanakas. Picking the higher score there is guessing, and guessing
+		 * is how a customer ends up with the wrong RM699 helmet.
+		 */
+		if ( $best_score < 0.34 || ( $best_score - $runner_up ) < 0.10 ) {
+			return 0;
+		}
+
+		return (int) $best;
+	}
+
+	/**
+	 * "the first one" / "yang kedua" — position, not description.
+	 *
+	 * @param string $normalized Normalised message.
+	 * @param int[]  $offered    Offered ids, in the order shown.
+	 * @return int
+	 */
+	private function match_ordinal( $normalized, array $offered ) {
+		$ordinals = array(
+			1 => array( 'first', '1st', 'pertama', 'satu' ),
+			2 => array( 'second', '2nd', 'kedua' ),
+			3 => array( 'third', '3rd', 'ketiga' ),
+		);
+
+		$padded = ' ' . $normalized . ' ';
+
+		foreach ( $ordinals as $nth => $words ) {
+			foreach ( $words as $word ) {
+				if ( false !== strpos( $padded, ' ' . $word . ' ' ) && isset( $offered[ $nth - 1 ] ) ) {
+					return (int) $offered[ $nth - 1 ];
+				}
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Which offered variation is the customer naming?
+	 *
+	 * Every word of a label must appear as a WHOLE token, which is what stops
+	 * "L" matching "XL" — a substring check here would sell someone the wrong
+	 * size of helmet.
+	 *
+	 * @param string $message Customer's reply.
+	 * @param array  $offered Rows of variation_id + label, from
+	 *                        DB_Chat_Cart_Writer::in_stock_variations().
+	 * @return int Variation id, or 0.
+	 */
+	public function match_offered_variation( $message, array $offered ) {
+		$tokens = $this->answer_tokens( $this->normalize( $message ) );
+
+		if ( empty( $tokens ) ) {
+			return 0;
+		}
+
+		foreach ( $offered as $row ) {
+			if ( ! is_array( $row ) || ! isset( $row['variation_id'], $row['label'] ) ) {
+				continue;
+			}
+
+			$label_tokens = $this->answer_tokens( $this->normalize( (string) $row['label'] ) );
+
+			if ( empty( $label_tokens ) ) {
+				continue;
+			}
+
+			if ( count( array_intersect( $label_tokens, $tokens ) ) === count( $label_tokens ) ) {
+				return (int) $row['variation_id'];
+			}
+		}
+
+		return 0;
+	}
+
+	/**
+	 * Tokens for answer matching.
+	 *
+	 * Unlike the product index's tokeniser, single characters are KEPT: "L",
+	 * "S" and "M" are sizes, and dropping them would make it impossible to
+	 * answer a size question with one letter — which is exactly how people
+	 * answer a size question.
+	 *
+	 * @param string $normalized Already normalised text.
+	 * @return string[]
+	 */
+	private function answer_tokens( $normalized ) {
+		$tokens = preg_split( '/[^\p{L}\p{N}]+/u', (string) $normalized, -1, PREG_SPLIT_NO_EMPTY );
+
+		return is_array( $tokens ) ? array_values( array_unique( $tokens ) ) : array();
+	}
+
+	/**
 	 * Words that mean buying ONLY when a product was actually found.
 	 *
 	 * "want" and "nak" are stopwords for good reason — "I want to know your
