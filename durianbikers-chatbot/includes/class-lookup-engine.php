@@ -1825,7 +1825,9 @@ class DB_Chat_Lookup_Engine {
 		 * silently returning a product list answers a question they did not
 		 * ask and leaves them waiting for a cart that is never coming.
 		 */
-		if ( $filters['purchase'] ) {
+		$is_purchase = $filters['purchase'] || ( $filters['purchase_soft'] && ! empty( $records ) );
+
+		if ( $is_purchase ) {
 			$notes[] = $filters['quantity'] > 0
 				? $this->text( $language, 'note_purchase_qty', $filters['quantity'] )
 				: $this->text( $language, 'note_purchase' );
@@ -2632,6 +2634,20 @@ class DB_Chat_Lookup_Engine {
 			$text = str_replace( ' ' . $term . ' ', ' ', $text );
 		}
 
+		/*
+		 * SOFT PURCHASE. Flagged, NOT stripped — these are already stopwords,
+		 * and whether they mean "buy" is not knowable yet. The decision waits
+		 * until the search has run and we know whether a product was found.
+		 */
+		if ( ! $filters['purchase'] ) {
+			foreach ( self::purchase_soft_terms() as $term ) {
+				if ( false !== strpos( $text, ' ' . $term . ' ' ) ) {
+					$filters['purchase_soft'] = true;
+					break;
+				}
+			}
+		}
+
 		/* CHEAPEST. A sort, not a filter — it never hides anything. */
 		foreach ( self::cheapest_terms() as $term ) {
 			if ( false !== strpos( $text, ' ' . $term . ' ' ) ) {
@@ -3243,6 +3259,7 @@ class DB_Chat_Lookup_Engine {
 			'category'   => '',
 			'fitment'    => false,
 			'purchase'   => false,
+			'purchase_soft' => false,
 			'quantity'   => 0,
 		);
 	}
@@ -3273,6 +3290,74 @@ class DB_Chat_Lookup_Engine {
 		 * @param string[] $terms Lowercase words.
 		 */
 		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_purchase_terms', $terms ) ) ) );
+	}
+
+	/**
+	 * Words that mean buying ONLY when a product was actually found.
+	 *
+	 * "want" and "nak" are stopwords for good reason — "I want to know your
+	 * delivery time", "nak tanya pasal penghantaran". Promoting them to plain
+	 * purchase terms would stamp a buying note on half of all conversations.
+	 *
+	 * They count only when the same message also matched a product, which is
+	 * exactly what separates "i want yamanaka" from "i want to know". This is
+	 * why the flag is resolved late, after the search has run, rather than in
+	 * the query builder where every other signal is decided.
+	 *
+	 * @return string[]
+	 */
+	public static function purchase_soft_terms() {
+		$terms = array( 'want', 'wants', 'need', 'needs', 'get', 'take', 'nak', 'mahu', 'hendak', 'ambil', 'amik' );
+
+		/**
+		 * Filter the weak purchase words.
+		 *
+		 * @param string[] $terms Lowercase words.
+		 */
+		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_purchase_soft_terms', $terms ) ) ) );
+	}
+
+	/**
+	 * Words that accept a confirmation summary.
+	 *
+	 * @return string[]
+	 */
+	public static function confirm_terms() {
+		$terms = array(
+			'yes', 'yeah', 'yep', 'yup', 'ok', 'okay', 'confirm', 'confirmed', 'sure', 'add',
+			'ya', 'yer', 'betul', 'boleh', 'setuju', 'sah', 'teruskan', 'nak',
+		);
+
+		/**
+		 * Filter the confirmation words.
+		 *
+		 * @param string[] $terms Lowercase words.
+		 */
+		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_confirm_terms', $terms ) ) ) );
+	}
+
+	/**
+	 * Words that reject a confirmation summary.
+	 *
+	 * Tested BEFORE the confirm list by every caller. Malay negates with a
+	 * particle rather than a different word — "tak nak" contains "nak" — so
+	 * checking confirmation first would read a refusal as a yes and put
+	 * something in a customer's cart.
+	 *
+	 * @return string[]
+	 */
+	public static function decline_terms() {
+		$terms = array(
+			'no', 'nope', 'cancel', 'stop', 'nevermind', 'dont', 'wait',
+			'tidak', 'tak', 'jangan', 'batal', 'belum',
+		);
+
+		/**
+		 * Filter the decline words.
+		 *
+		 * @param string[] $terms Lowercase words.
+		 */
+		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_decline_terms', $terms ) ) ) );
 	}
 
 	/**
