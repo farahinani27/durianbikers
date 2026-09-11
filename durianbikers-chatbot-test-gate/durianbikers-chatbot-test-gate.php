@@ -78,6 +78,33 @@ add_filter(
 );
 
 /**
+ * Take the Chatway bubble off the test page only.
+ *
+ * Two chat buttons in the same corner makes a test worthless — you cannot tell
+ * which widget answered. Chatway stays completely untouched everywhere else:
+ * this dequeues its one handle (`chatway-script`, registered in
+ * chatway-live-chat/app/Assets.php) on this single page, at priority 100 so it
+ * runs after Chatway's own enqueue at the default 10.
+ *
+ * The vendor plugin's own files are never modified — deactivating this gate
+ * restores Chatway on this page with no trace left behind.
+ *
+ * @return void
+ */
+add_action(
+	'wp_enqueue_scripts',
+	static function () {
+		if ( ! is_page( DB_CHAT_TEST_PAGE ) ) {
+			return;
+		}
+
+		wp_dequeue_script( 'chatway-script' );
+		wp_deregister_script( 'chatway-script' );
+	},
+	100
+);
+
+/**
  * Say plainly, on the test page itself, that this gate is active.
  *
  * Testing on a live store goes wrong when someone forgets which of the two
