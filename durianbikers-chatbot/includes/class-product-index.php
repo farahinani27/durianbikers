@@ -598,6 +598,17 @@ class DB_Chat_Product_Index {
 	 */
 	private function format_for_model( WC_Product $product ) {
 		$record = array(
+			/*
+			 * The post id. Not sensitive — it is in every product URL and in
+			 * the public REST API — and the buying flow needs it: a customer
+			 * answering "which one?" has to be resolved back to a product, and
+			 * url_to_postid() is unreliable on this site because the theme
+			 * rewrites every URL under /my and /gb.
+			 *
+			 * The rest of the note below still stands: stock_quantity, SKU,
+			 * cost, supplier and meta stay out.
+			 */
+			'id'         => (int) $product->get_id(),
 			'name'       => wp_strip_all_tags( $product->get_name() ),
 			'permalink'  => esc_url_raw( (string) $product->get_permalink() ),
 			'categories' => $this->get_term_list( $product, 'product_cat' ),

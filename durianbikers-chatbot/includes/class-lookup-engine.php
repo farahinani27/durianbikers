@@ -925,6 +925,15 @@ class DB_Chat_Lookup_Engine {
 			'note_colour'        => __( 'I cannot confirm colour options; I only matched the colour word against the product name.', 'durianbikers-chatbot' ),
 			'note_fitment'       => __( 'I cannot confirm what fits your bike. Our listings carry no fitment data, and the wrong part is a safety problem — please check with a person before ordering.', 'durianbikers-chatbot' ),
 			'note_more'          => __( 'There are more matches than I can show here — the shop search will list them all.', 'durianbikers-chatbot' ),
+			'buy_which_product'  => __( 'Which one would you like?', 'durianbikers-chatbot' ),
+			'buy_which_size'     => __( 'Which size? These are in stock now:', 'durianbikers-chatbot' ),
+			/* translators: 1: product name; 2: option label; 3: quantity; 4: price. */
+			'buy_confirm'        => __( '%1$s — %2$s, %3$d of them, %4$s each. Add that to your cart?', 'durianbikers-chatbot' ),
+			/* translators: 1: product name; 2: quantity; 3: price. */
+			'buy_confirm_simple' => __( '%1$s, %2$d of them, %3$s each. Add that to your cart?', 'durianbikers-chatbot' ),
+			/* translators: %s: the only available option. */
+			'buy_only_option'    => __( 'That one is only available in %s right now.', 'durianbikers-chatbot' ),
+			'buy_cancelled'      => __( 'No problem, I have not added anything.', 'durianbikers-chatbot' ),
 			'note_purchase'      => __( 'I cannot place an order here — open the product page to choose your options and add it to your cart.', 'durianbikers-chatbot' ),
 			/* translators: %d: number of items the customer asked for. */
 			'note_purchase_qty'  => __( 'I cannot place an order here. You mentioned %d — open the product page to choose your options and add them to your cart.', 'durianbikers-chatbot' ),
@@ -1010,6 +1019,15 @@ class DB_Chat_Lookup_Engine {
 			'note_colour'        => 'Saya tidak boleh sahkan pilihan warna; saya cuma padankan perkataan warna dengan nama produk.',
 			'note_fitment'       => 'Saya tidak boleh sahkan apa yang muat pada motosikal anda. Senarai kami tiada data kesesuaian, dan bahagian yang salah adalah masalah keselamatan — sila semak dengan seseorang sebelum membeli.',
 			'note_more'          => 'Ada lebih banyak padanan daripada yang boleh saya papar di sini — carian kedai akan menyenaraikan semuanya.',
+			'buy_which_product'  => 'Yang mana satu anda mahu?',
+			'buy_which_size'     => 'Saiz apa? Yang ada stok sekarang:',
+			/* translators: 1: product name; 2: option label; 3: quantity; 4: price. */
+			'buy_confirm'        => '%1$s — %2$s, %3$d unit, %4$s seunit. Masukkan ke dalam troli?',
+			/* translators: 1: product name; 2: quantity; 3: price. */
+			'buy_confirm_simple' => '%1$s, %2$d unit, %3$s seunit. Masukkan ke dalam troli?',
+			/* translators: %s: the only available option. */
+			'buy_only_option'    => 'Yang itu hanya ada dalam saiz %s buat masa ini.',
+			'buy_cancelled'      => 'Baik, saya tidak masukkan apa-apa.',
 			'note_purchase'      => 'Saya tidak boleh membuat pesanan di sini — sila buka halaman produk untuk pilih pilihan anda dan masukkan ke dalam troli.',
 			/* translators: %d: number of items the customer asked for. */
 			'note_purchase_qty'  => 'Saya tidak boleh membuat pesanan di sini. Anda sebut %d — sila buka halaman produk untuk pilih pilihan anda dan masukkan ke dalam troli.',
@@ -1142,9 +1160,22 @@ class DB_Chat_Lookup_Engine {
 	 * @param array  $history Prior turns, {role, content}. Untrusted.
 	 * @return array{reply:string,products:array,pages:array}
 	 */
-	public function answer( $message, array $history = array() ) {
+	public function answer( $message, array $history = array(), $pending = null ) {
 		// Reset per call: this object is reused across the request.
-		$this->order_turn = false;
+		$this->order_turn  = false;
+		$this->pending_out = null;
+
+		/*
+		 * A buying conversation in progress takes precedence — but only if the
+		 * customer is actually answering. resume_pending() returns null when
+		 * they have moved on, and we fall through to a normal reply rather
+		 * than trapping them in the sale.
+		 */
+		$resumed = $this->resume_pending( $message, $pending );
+
+		if ( null !== $resumed ) {
+			return $resumed;
+		}
 
 		$normalized = $this->normalize( $message );
 
@@ -1828,9 +1859,38 @@ class DB_Chat_Lookup_Engine {
 		$is_purchase = $filters['purchase'] || ( $filters['purchase_soft'] && ! empty( $records ) );
 
 		if ( $is_purchase ) {
-			$notes[] = $filters['quantity'] > 0
-				? $this->text( $language, 'note_purchase_qty', $filters['quantity'] )
-				: $this->text( $language, 'note_purchase' );
+			$quantity = max( 1, (int) $filters['quantity'] );
+			$offered  = array();
+
+			foreach ( $listed as $record ) {
+				$id = isset( $record['id'] ) ? absint( $record['id'] ) : 0;
+
+				if ( $id > 0 ) {
+					$offered[] = $id;
+				}
+			}
+
+			if ( 1 === count( $offered ) ) {
+				// Nothing to disambiguate — go straight to the size question.
+				return $this->ask_for_variation( $offered[0], $quantity, $language );
+			}
+
+			if ( count( $offered ) > 1 ) {
+				$this->pending_out = DB_Chat_Pending_Order::create(
+					DB_Chat_Pending_Order::STAGE_PRODUCT,
+					array(
+						'quantity' => $quantity,
+						'offered'  => $offered,
+					)
+				)->to_array();
+
+				$notes[] = $this->text( $language, 'buy_which_product' );
+			} else {
+				// Found nothing buyable; fall back to the old plain note.
+				$notes[] = $quantity > 1
+					? $this->text( $language, 'note_purchase_qty', $quantity )
+					: $this->text( $language, 'note_purchase' );
+			}
 		}
 
 		if ( $filters['fitment'] ) {
@@ -3293,6 +3353,161 @@ class DB_Chat_Lookup_Engine {
 	}
 
 	/**
+	 * Buying state handed back to the browser with this reply.
+	 *
+	 * Null means "no purchase in progress", and that null is sent just as
+	 * deliberately as a populated state — it is what clears a cancelled or
+	 * completed order.
+	 *
+	 * @var array<string,mixed>|null
+	 */
+	private $pending_out = null;
+
+	/**
+	 * Continue a buying conversation, if one is genuinely in progress.
+	 *
+	 * Returns null when there is nothing to resume, OR when the customer has
+	 * clearly moved on. That second case matters: someone who asks about
+	 * delivery halfway through choosing a helmet must get an answer about
+	 * delivery, not be asked about sizes again. A chat that will not let you
+	 * change the subject is worse than one that cannot sell you anything.
+	 *
+	 * @param string $message Customer's message.
+	 * @param mixed  $pending Raw pending order from the browser.
+	 * @return array<string,mixed>|null
+	 */
+	private function resume_pending( $message, $pending ) {
+		$order = DB_Chat_Pending_Order::from_request( $pending );
+
+		if ( null === $order || $order->is_expired() ) {
+			return null;
+		}
+
+		$language = self::detect_language( $this->normalize( $message ) );
+
+		if ( DB_Chat_Pending_Order::STAGE_PRODUCT === $order->stage ) {
+			$chosen = $this->match_offered_product( $message, (array) $order->offered );
+
+			if ( $chosen < 1 ) {
+				return null;
+			}
+
+			return $this->ask_for_variation( $chosen, $order->quantity, $language );
+		}
+
+		if ( DB_Chat_Pending_Order::STAGE_VARIATION === $order->stage ) {
+			$variation = $this->match_offered_variation( $message, (array) $order->offered );
+
+			if ( $variation < 1 ) {
+				return null;
+			}
+
+			return $this->ask_for_confirmation( $order->product_id, $variation, $order->quantity, $language );
+		}
+
+		return $this->handle_confirmation( $message, $order, $language );
+	}
+
+	/**
+	 * Ask which size, offering only what is in stock.
+	 *
+	 * @param int    $product_id Product.
+	 * @param int    $quantity   Quantity carried from earlier in the conversation.
+	 * @param string $language   Reply language.
+	 * @return array<string,mixed>
+	 */
+	private function ask_for_variation( $product_id, $quantity, $language ) {
+		$writer  = new DB_Chat_Cart_Writer();
+		$sizes   = $writer->in_stock_variations( $product_id );
+		$details = $writer->describe( $product_id, 0 );
+
+		if ( empty( $sizes ) ) {
+			/*
+			 * A simple product, or a variable one with nothing in stock.
+			 * Either way go to the confirmation, where the cart writer refuses
+			 * anything that cannot actually be bought — one place decides what
+			 * is purchasable, and it is not this one.
+			 */
+			return $this->ask_for_confirmation( $product_id, 0, $quantity, $language );
+		}
+
+		if ( 1 === count( $sizes ) ) {
+			/*
+			 * One size left. NOT silently chosen: it is named in the
+			 * confirmation, which the customer still has to accept.
+			 */
+			return $this->ask_for_confirmation( $product_id, (int) $sizes[0]['variation_id'], $quantity, $language );
+		}
+
+		$lines = array( $details['name'], '', $this->text( $language, 'buy_which_size' ) );
+
+		foreach ( $sizes as $row ) {
+			$lines[] = "\xE2\x80\xA2 " . $row['label'];
+		}
+
+		$this->pending_out = DB_Chat_Pending_Order::create(
+			DB_Chat_Pending_Order::STAGE_VARIATION,
+			array(
+				'product_id' => $product_id,
+				'quantity'   => $quantity,
+				'offered'    => $sizes,
+			)
+		)->to_array();
+
+		return $this->compose( implode( "\n", $lines ), $language, $this->resolve_cards( array( $details['name'] ) ) );
+	}
+
+	/**
+	 * Show the summary and wait for a yes.
+	 *
+	 * The quantity is always stated, including the default of 1, so a number
+	 * the customer never gave is visible rather than assumed in silence.
+	 *
+	 * @param int    $product_id   Product.
+	 * @param int    $variation_id Variation, 0 for simple products.
+	 * @param int    $quantity     Quantity.
+	 * @param string $language     Reply language.
+	 * @return array<string,mixed>
+	 */
+	private function ask_for_confirmation( $product_id, $variation_id, $quantity, $language ) {
+		$writer  = new DB_Chat_Cart_Writer();
+		$details = $writer->describe( $product_id, (int) $variation_id );
+		$qty     = max( 1, (int) $quantity );
+
+		$reply = '' !== $details['label']
+			? $this->text( $language, 'buy_confirm', $details['name'], $details['label'], $qty, $details['price'] )
+			: $this->text( $language, 'buy_confirm_simple', $details['name'], $qty, $details['price'] );
+
+		$this->pending_out = DB_Chat_Pending_Order::create(
+			DB_Chat_Pending_Order::STAGE_CONFIRM,
+			array(
+				'product_id'   => $product_id,
+				'variation_id' => (int) $variation_id,
+				'quantity'     => $qty,
+			)
+		)->to_array();
+
+		return $this->compose( $reply, $language, $this->resolve_cards( array( $details['name'] ) ) );
+	}
+
+	/**
+	 * The customer answered the confirmation.
+	 *
+	 * Filled in by Task 6. Until then an outstanding confirmation simply falls
+	 * through to a normal reply rather than pretending to buy anything.
+	 *
+	 * @param string                $message  Customer's reply.
+	 * @param DB_Chat_Pending_Order $order    The pending order.
+	 * @param string                $language Reply language.
+	 * @return array<string,mixed>|null
+	 */
+	private function handle_confirmation( $message, DB_Chat_Pending_Order $order, $language ) {
+		unset( $message, $order, $language );
+
+		return null;
+	}
+
+	/**
 	 * Which of the products we just offered is the customer naming?
 	 *
 	 * Scored against the OFFERED products only, never the whole catalogue.
@@ -4529,6 +4744,13 @@ class DB_Chat_Lookup_Engine {
 			'reply'    => $reply,
 			'products' => array_values( $products ),
 			'pages'    => array_values( $pages ),
+			/*
+			 * Every reply carries the buying state, including the null that
+			 * clears it. compose() is the single place every reply passes
+			 * through, so a new reply path cannot forget to include it and
+			 * strand a customer mid-purchase.
+			 */
+			'pending'  => $this->pending_out,
 		);
 	}
 
