@@ -925,6 +925,9 @@ class DB_Chat_Lookup_Engine {
 			'note_colour'        => __( 'I cannot confirm colour options; I only matched the colour word against the product name.', 'durianbikers-chatbot' ),
 			'note_fitment'       => __( 'I cannot confirm what fits your bike. Our listings carry no fitment data, and the wrong part is a safety problem — please check with a person before ordering.', 'durianbikers-chatbot' ),
 			'note_more'          => __( 'There are more matches than I can show here — the shop search will list them all.', 'durianbikers-chatbot' ),
+			'note_purchase'      => __( 'I cannot place an order here — open the product page to choose your options and add it to your cart.', 'durianbikers-chatbot' ),
+			/* translators: %d: number of items the customer asked for. */
+			'note_purchase_qty'  => __( 'I cannot place an order here. You mentioned %d — open the product page to choose your options and add them to your cart.', 'durianbikers-chatbot' ),
 
 			/* translators: %s: page title. */
 			'policy_source'      => __( 'From our %s page.', 'durianbikers-chatbot' ),
@@ -1007,6 +1010,9 @@ class DB_Chat_Lookup_Engine {
 			'note_colour'        => 'Saya tidak boleh sahkan pilihan warna; saya cuma padankan perkataan warna dengan nama produk.',
 			'note_fitment'       => 'Saya tidak boleh sahkan apa yang muat pada motosikal anda. Senarai kami tiada data kesesuaian, dan bahagian yang salah adalah masalah keselamatan — sila semak dengan seseorang sebelum membeli.',
 			'note_more'          => 'Ada lebih banyak padanan daripada yang boleh saya papar di sini — carian kedai akan menyenaraikan semuanya.',
+			'note_purchase'      => 'Saya tidak boleh membuat pesanan di sini — sila buka halaman produk untuk pilih pilihan anda dan masukkan ke dalam troli.',
+			/* translators: %d: number of items the customer asked for. */
+			'note_purchase_qty'  => 'Saya tidak boleh membuat pesanan di sini. Anda sebut %d — sila buka halaman produk untuk pilih pilihan anda dan masukkan ke dalam troli.',
 
 			'policy_source'      => 'Daripada halaman %s kami.',
 			'policy_no_match'    => 'Saya tidak jumpa perkara itu dalam halaman bantuan kami, dan saya tidak mahu meneka. Halaman yang perlu dibaca ialah %s.',
@@ -1814,6 +1820,17 @@ class DB_Chat_Lookup_Engine {
 			$notes[] = $this->text( $language, 'note_more' );
 		}
 
+		/*
+		 * Say the thing the customer actually asked for. They said "nak beli";
+		 * silently returning a product list answers a question they did not
+		 * ask and leaves them waiting for a cart that is never coming.
+		 */
+		if ( $filters['purchase'] ) {
+			$notes[] = $filters['quantity'] > 0
+				? $this->text( $language, 'note_purchase_qty', $filters['quantity'] )
+				: $this->text( $language, 'note_purchase' );
+		}
+
 		if ( $filters['fitment'] ) {
 			// Safety, not politeness: a wrong part on a motorcycle is a crash
 			// and a return. This mode has no fitment data at all.
@@ -2558,6 +2575,63 @@ class DB_Chat_Lookup_Engine {
 			$text = (string) preg_replace( '/\brm\s+[0-9]+\b/u', ' ', $text );
 		}
 
+		/*
+		 * QUANTITY. Read before the counting word is removed, and ONLY when a
+		 * number is glued to one ("2 pcs", "4 biji", "x2").
+		 *
+		 * The number must never be taken on its own. Normalisation turns a tyre
+		 * size into bare numbers — "shinko 705 120/70R17" becomes
+		 * "shinko 705 120 70r17" — so a rule like "the first number is the
+		 * quantity" would order 120 tyres. A counting word is the only thing
+		 * that distinguishes a quantity from a model or a size.
+		 */
+		foreach ( self::quantity_units() as $unit ) {
+			if ( preg_match( '/\b([0-9]{1,3})\s*' . preg_quote( $unit, '/' ) . '\b/u', $text, $matches ) ) {
+				$filters['quantity'] = (int) $matches[1];
+				$text                = str_replace( $matches[0], ' ', $text );
+				break;
+			}
+		}
+
+		if ( 0 === $filters['quantity'] && preg_match( '/\b(?:x\s*([0-9]{1,3})|([0-9]{1,3})\s*x)\b/u', $text, $matches ) ) {
+			$quantity = (int) ( '' !== $matches[1] ? $matches[1] : $matches[2] );
+
+			if ( $quantity > 0 ) {
+				$filters['quantity'] = $quantity;
+				$text                = str_replace( $matches[0], ' ', $text );
+			}
+		}
+
+		/*
+		 * PURCHASE INTENT. Removed from the query as well as flagged — these
+		 * words are never in a product title, and searching for them costs
+		 * results. The reply says plainly that the chat cannot take an order.
+		 */
+		foreach ( self::purchase_terms() as $term ) {
+			if ( false === strpos( $text, ' ' . $term . ' ' ) ) {
+				continue;
+			}
+
+			$filters['purchase'] = true;
+
+			/*
+			 * "buy 2 handguards" — a bare number straight after the verb, with
+			 * no counting word to confirm it.
+			 *
+			 * TWO DIGITS MAXIMUM, and only here. Customers name tyres by model
+			 * number ("nak beli 705", "beli 804"), and reading that as a
+			 * quantity would both order 705 of something and strip the only
+			 * term that finds the product. Three digits are a model; one or two
+			 * after a buy verb are a count.
+			 */
+			if ( 0 === $filters['quantity'] && preg_match( '/\b' . preg_quote( $term, '/' ) . '\s+([0-9]{1,2})\b/u', $text, $matches ) ) {
+				$filters['quantity'] = (int) $matches[1];
+				$text                = str_replace( $matches[0], ' ' . $term . ' ', $text );
+			}
+
+			$text = str_replace( ' ' . $term . ' ', ' ', $text );
+		}
+
 		/* CHEAPEST. A sort, not a filter — it never hides anything. */
 		foreach ( self::cheapest_terms() as $term ) {
 			if ( false !== strpos( $text, ' ' . $term . ' ' ) ) {
@@ -3168,7 +3242,60 @@ class DB_Chat_Lookup_Engine {
 			'brand'      => '',
 			'category'   => '',
 			'fitment'    => false,
+			'purchase'   => false,
+			'quantity'   => 0,
 		);
+	}
+
+	/**
+	 * Words that mean "I want to buy this", not "show me this".
+	 *
+	 * Stripped from the search query: none of them appears in a product title,
+	 * and left in they actively hurt. "nak tempah 4 biji tayar" returned ZERO
+	 * products before this existed, because "tempah" and "biji" were searched
+	 * for as if they were part of a product name.
+	 *
+	 * "order" is safe to list here even though it is also the order-status
+	 * word. Order-status intent is decided before this runs, so by the time a
+	 * message reaches the product query builder, "order" can only be the verb.
+	 *
+	 * @return string[]
+	 */
+	public static function purchase_terms() {
+		$terms = array(
+			'buy', 'buying', 'purchase', 'purchasing', 'order', 'ordering', 'checkout',
+			'beli', 'membeli', 'belikan', 'tempah', 'menempah', 'tempahan', 'pesan',
+		);
+
+		/**
+		 * Filter the words that mark a message as a purchase request.
+		 *
+		 * @param string[] $terms Lowercase words.
+		 */
+		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_purchase_terms', $terms ) ) ) );
+	}
+
+	/**
+	 * Counting words that can follow a quantity.
+	 *
+	 * Only ever matched WITH a leading number. "set" and "pasang" appear in
+	 * real product titles ("Wind Deflector Set"), so a bare one must survive
+	 * into the query untouched — it is only noise in "2 set".
+	 *
+	 * @return string[]
+	 */
+	public static function quantity_units() {
+		$units = array(
+			'pcs', 'pc', 'pieces', 'piece', 'unit', 'units',
+			'biji', 'keping', 'set', 'sets', 'pasang', 'batang', 'helai',
+		);
+
+		/**
+		 * Filter the unit words recognised after a quantity.
+		 *
+		 * @param string[] $units Lowercase words.
+		 */
+		return array_values( array_unique( array_map( 'strval', (array) apply_filters( 'db_chat_quantity_units', $units ) ) ) );
 	}
 
 	/*
