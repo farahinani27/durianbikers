@@ -1985,7 +1985,12 @@ class DB_Chat_Lookup_Engine {
 			}
 		}
 
-		return $this->compose( $reply, $language, $this->resolve_cards( $names ) );
+		/*
+		 * Cards get the SAME cap as the text list. Twelve products written out
+		 * above four picture cards reads as a broken widget rather than as a
+		 * deliberate limit.
+		 */
+		return $this->compose( $reply, $language, $this->resolve_cards( $names, $cap ) );
 	}
 
 	/**
@@ -3236,13 +3241,13 @@ class DB_Chat_Lookup_Engine {
 	 * @param string[] $names Product names.
 	 * @return array<int,array<string,mixed>>
 	 */
-	private function resolve_cards( array $names ) {
+	private function resolve_cards( array $names, $limit = 0 ) {
 		if ( empty( $names ) ) {
 			return array();
 		}
 
 		try {
-			$cards = $this->product_index->resolve_products( $names );
+			$cards = $this->product_index->resolve_products( $names, $limit );
 		} catch ( Throwable $e ) {
 			DB_Chat_Plugin::log_error( 'Lookup mode could not build product cards: ' . $e->getMessage() );
 

@@ -900,14 +900,19 @@ class DB_Chat_Product_Index {
 	 * is rebuilt from the WC_Product object.
 	 *
 	 * @param string[] $names Product names.
+	 * @param int      $limit Maximum cards; 0 uses MAX_CARDS. A browse answer
+	 *                        ("what models do you have") lists more than four
+	 *                        products, and cards that stop at four while the
+	 *                        text keeps going reads as a bug rather than a cap.
 	 * @return array<int,array{name:string,url:string,price:string,image:string,in_stock:bool}>
 	 */
-	public function resolve_products( array $names ) {
+	public function resolve_products( array $names, $limit = 0 ) {
+		$limit = (int) $limit > 0 ? (int) $limit : self::MAX_CARDS;
 		$cards = array();
 		$used  = array();
 
 		foreach ( $names as $name ) {
-			if ( count( $cards ) >= self::MAX_CARDS ) {
+			if ( count( $cards ) >= $limit ) {
 				break;
 			}
 
