@@ -1686,6 +1686,30 @@ class DB_Chat_Lookup_Engine {
 		$filters            = $this->blank_filters();
 		$filters['fitment'] = ! empty( $signals['scores']['fitment'] );
 
+		/*
+		 * FITMENT ANSWERS CARRY NO PRODUCT LIST.
+		 *
+		 * "Will this fit my Yamaha R15?" used to run as an ordinary search and
+		 * return whatever mentioned an R15 — a headlight surround, a meter
+		 * cover, an air filter — with the fitment caveat underneath. The
+		 * caveat was correct and the list undermined it: putting four products
+		 * in front of someone who asked what fits implies these might, which
+		 * is the one thing this mode cannot know. The customer reads the list,
+		 * not the small print.
+		 *
+		 * So a fitment question gets the decline and a route to a human, and
+		 * nothing else. This applies even when the question names a product —
+		 * "does the Shinko 705 fit my R15" is still a fitment question, and a
+		 * confident-looking listing beside "I cannot confirm this" is exactly
+		 * the mixed message that sells someone the wrong brake pad.
+		 */
+		if ( $filters['fitment'] ) {
+			return $this->compose(
+				$this->text( $language, 'note_fitment' ) . ' ' . $this->handoff_hint( $language ),
+				$language
+			);
+		}
+
 		$query = $this->build_query( $normalized, $signals, $filters );
 
 		// Nothing recognised at all: the intent was inferred, not detected.
