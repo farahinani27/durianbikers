@@ -251,6 +251,13 @@ class DB_Chat_Chat_Endpoint {
 		// First thing, before any output and before the response is built.
 		$this->prevent_caching( 'durianbikers chatbot: per-visitor nonce, must never be cached' );
 
+		/*
+		 * MUST come before wp_create_nonce(). See restore_cookie_user(): without
+		 * it this route hands a logged-in customer a nonce minted for user 0,
+		 * and their very next message dies with "Cookie check failed".
+		 */
+		$this->restore_cookie_user();
+
 		$payload = array( 'nonce' => wp_create_nonce( 'wp_rest' ) );
 
 		/*
@@ -278,6 +285,66 @@ class DB_Chat_Chat_Endpoint {
 		$response->header( 'X-LiteSpeed-Cache-Control', 'no-cache' );
 
 		return $response;
+	}
+
+	/**
+	 * Re-establish the cookie-authenticated user for this request.
+	 *
+	 * WHY THIS EXISTS — the "Cookie check failed" bug, found on live 2026-09-11.
+	 *
+	 * WordPress core, in rest_cookie_check_errors():
+	 *
+	 *     if ( null === $nonce ) {
+	 *         // No nonce at all, so act as if it's an unauthenticated request.
+	 *         wp_set_current_user( 0 );
+	 *         return true;
+	 *     }
+	 *
+	 * This route is the one place that CANNOT send a nonce — it is the route
+	 * that issues them. So core forces the current user to 0 here even when the
+	 * caller's login cookies are present and valid, and wp_create_nonce() then
+	 * mints a nonce bound to user 0. The chat POST that follows DOES carry a
+	 * nonce, so cookie auth runs normally there and the caller is themselves
+	 * again — and verification of a user-0 nonce against a real user fails with
+	 * rest_cookie_invalid_nonce, "Cookie check failed".
+	 *
+	 * It is deterministic, not flaky: the widget's one silent retry calls this
+	 * same route, receives another user-0 nonce, and fails identically. It
+	 * affects every logged-in user, which is why it stayed invisible until the
+	 * widget was first opened by a signed-in person — and it would have made
+	 * get_my_orders permanently unreachable for signed-in customers, the only
+	 * reason a customer signs in at all.
+	 *
+	 * Reading the cookie is not trusting user input: wp_validate_auth_cookie()
+	 * verifies the signature, the expiry and the session token, exactly as a
+	 * normal page load does. A forged or stale cookie returns false and the
+	 * caller stays anonymous.
+	 *
+	 * Consequence to respect: with this in place the nonce is user-specific, so
+	 * this response must never be stored by a shared cache. prevent_caching()
+	 * above is now load-bearing for correctness, not just freshness.
+	 *
+	 * @return void
+	 */
+	private function restore_cookie_user() {
+		/*
+		 * Already authenticated by some other means — an application password,
+		 * say. Core returned early and never reset the user, so there is
+		 * nothing to restore and nothing to second-guess.
+		 */
+		if ( is_user_logged_in() ) {
+			return;
+		}
+
+		if ( ! function_exists( 'wp_validate_auth_cookie' ) ) {
+			return;
+		}
+
+		$user_id = wp_validate_auth_cookie( '', 'logged_in' );
+
+		if ( $user_id ) {
+			wp_set_current_user( $user_id );
+		}
 	}
 
 	/**
