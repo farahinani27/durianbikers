@@ -79,6 +79,7 @@ define( 'DB_CHAT_OPT_MODE', 'db_chat_mode' );
 require_once DB_CHAT_PATH . 'includes/class-product-index.php';
 require_once DB_CHAT_PATH . 'includes/class-content-index.php';
 require_once DB_CHAT_PATH . 'includes/class-order-lookup.php';
+require_once DB_CHAT_PATH . 'includes/class-cart-writer.php';
 require_once DB_CHAT_PATH . 'includes/class-claude-client.php';
 require_once DB_CHAT_PATH . 'includes/class-chat-endpoint.php';
 
