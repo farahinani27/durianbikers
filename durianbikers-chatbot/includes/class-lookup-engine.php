@@ -1193,6 +1193,7 @@ class DB_Chat_Lookup_Engine {
 		// Reset per call: this object is reused across the request.
 		$this->order_turn  = false;
 		$this->pending_out = null;
+		$this->ai_fallback = false;
 
 		/*
 		 * A buying conversation in progress takes precedence — but only if the
@@ -1237,6 +1238,7 @@ class DB_Chat_Lookup_Engine {
 				return $this->answer_contact( $normalized, $language );
 
 			case 'fallback':
+				$this->ai_fallback = true;
 				$this->log_unmatched( $message, $signals, $language );
 
 				return $this->compose( $this->text( $language, 'fallback' ), $language );
@@ -1263,6 +1265,15 @@ class DB_Chat_Lookup_Engine {
 	 */
 	public function used_order_lookup() {
 		return (bool) $this->order_turn;
+	}
+
+	/**
+	 * Should the hybrid endpoint ask Claude instead?
+	 *
+	 * @return bool
+	 */
+	public function needs_ai_fallback() {
+		return (bool) $this->ai_fallback;
 	}
 
 	/**
@@ -1860,7 +1871,8 @@ class DB_Chat_Lookup_Engine {
 			if ( $blind ) {
 				// No keyword recognised AND no product found: we genuinely did
 				// not understand it, which is exactly the worklist entry the
-				// owner wants.
+				// owner wants — and exactly the question hybrid mode hands on.
+				$this->ai_fallback = true;
 				$this->log_unmatched( $raw, $signals, $language );
 			}
 
@@ -2215,6 +2227,7 @@ class DB_Chat_Lookup_Engine {
 			 * keyword gap the owner can close by adding a word. Every privacy
 			 * guard still applies, because this calls the same logger.
 			 */
+			$this->ai_fallback = true;
 			$this->log_unmatched( $raw, $signals, $language );
 
 			$lines[] = $this->text( $language, 'compare_none', $parsed['sides'][0], $parsed['sides'][1] );
@@ -3502,6 +3515,20 @@ class DB_Chat_Lookup_Engine {
 	 * @var array<string,mixed>|null
 	 */
 	private $pending_out = null;
+
+	/**
+	 * Did THIS answer() genuinely fail to understand the message?
+	 *
+	 * Set at exactly three points — the 'fallback' intent, a blind product miss
+	 * (no keyword AND no product), and a comparison where neither side
+	 * resolved. Deliberately NOT inside log_unmatched(): that function skips
+	 * order questions, emails, long digit runs, and everything when logging is
+	 * off, so using it would make whether a customer gets an AI answer depend
+	 * on a logging setting.
+	 *
+	 * @var bool
+	 */
+	private $ai_fallback = false;
 
 	/**
 	 * Continue a buying conversation, if one is genuinely in progress.
