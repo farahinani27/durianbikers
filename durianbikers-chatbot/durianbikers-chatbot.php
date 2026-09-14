@@ -782,7 +782,13 @@ final class DB_Chat_Plugin {
 		 * owner's copy is merged in below, so an explicitly configured footnote
 		 * still wins.
 		 */
-		if ( self::ENGINE_LOOKUP === $this->get_engine() ) {
+		/*
+		 * Checked by MODE, not engine: hybrid also runs on the lookup engine,
+		 * and would otherwise inherit a footnote promising there is no AI.
+		 */
+		if ( self::MODE_HYBRID === $this->get_mode() ) {
+			$data['footnote'] = __( 'Automated assistant — some answers are written by AI and can be wrong. Please confirm fitment before you buy.', 'durianbikers-chatbot' );
+		} elseif ( self::ENGINE_LOOKUP === $this->get_engine() ) {
 			$data['footnote'] = __( 'Automated lookup — it matches keywords, not meaning, so it can miss things. Please confirm fitment before you buy.', 'durianbikers-chatbot' );
 		}
 

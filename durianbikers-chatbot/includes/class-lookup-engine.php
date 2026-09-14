@@ -1073,6 +1073,17 @@ class DB_Chat_Lookup_Engine {
 			$set = $en;
 		}
 
+		/*
+		 * HYBRID MODE. The greeting and identity replies say this assistant is
+		 * not an AI — true in lookup mode, false once genuine misses go to
+		 * Claude. Overlaid here, before the owner's filter, so a configured
+		 * override still wins. Chinese keeps the English wording, as it
+		 * already does for every string it has not translated.
+		 */
+		if ( self::hybrid_active() ) {
+			$set = array_merge( $set, self::templates_hybrid( $lang ) );
+		}
+
 		/**
 		 * Filter the lookup mode reply templates.
 		 *
@@ -1085,6 +1096,38 @@ class DB_Chat_Lookup_Engine {
 		$set = (array) apply_filters( 'db_chat_lookup_templates', $set, $lang );
 
 		return $set;
+	}
+
+	/**
+	 * Is the plugin running in hybrid mode?
+	 *
+	 * @return bool
+	 */
+	public static function hybrid_active() {
+		return function_exists( 'db_chat' )
+			&& defined( 'DB_Chat_Plugin::MODE_HYBRID' )
+			&& is_callable( array( db_chat(), 'get_mode' ) )
+			&& DB_Chat_Plugin::MODE_HYBRID === db_chat()->get_mode();
+	}
+
+	/**
+	 * Replacement copy for hybrid mode.
+	 *
+	 * @param string $lang 'en', 'ms' or 'zh'.
+	 * @return array<string,string>
+	 */
+	public static function templates_hybrid( $lang ) {
+		if ( 'ms' === $lang ) {
+			return array(
+				'greeting' => 'Hai! Saya pembantu kedai Durian Bikers. Saya automatik, bukan manusia. Saya boleh semak produk, harga, stok, dan halaman penghantaran, pemulangan, jaminan dan bayaran kami. Jika saya tidak dapat padankan soalan anda, pembantu AI akan menjawabnya — ia boleh tersilap, jadi sila semak perkara yang penting. Apa yang anda cari?',
+				'identity' => 'Saya bukan manusia — saya pembantu automatik di laman web kedai. Saya semak produk dan halaman bantuan kami sendiri, dan jika saya tidak dapat padankan soalan, pembantu AI akan menjawabnya. Ia boleh tersilap, jadi sila semak perkara yang penting.',
+			);
+		}
+
+		return array(
+			'greeting' => __( "Hi! I'm the Durian Bikers shop assistant. I'm automated, not a person. I can look up products, prices, stock, and our shipping, returns, warranty and payment pages. If I can't match your question myself, an AI assistant answers it — it can make mistakes, so please check anything important. What are you after?", 'durianbikers-chatbot' ),
+			'identity' => __( "I'm not a person — I'm an automated assistant on the shop's website. I look up our products and help pages myself, and when I can't match a question, an AI assistant answers it. It can make mistakes, so please check anything important.", 'durianbikers-chatbot' ),
+		);
 	}
 
 	/**
