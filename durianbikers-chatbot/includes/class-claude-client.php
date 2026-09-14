@@ -43,6 +43,16 @@ class DB_Chat_Claude_Client {
 	 */
 	const MAX_TOOL_ROUNDS = 4;
 
+	/**
+	 * Token usage of the most recent chat() call, summed across every round.
+	 *
+	 * Kept when a later round fails: those earlier rounds were billed, and the
+	 * hybrid budget must never undercount what was actually spent.
+	 *
+	 * @var array<string,int>
+	 */
+	private $last_usage = array();
+
 	/** Catalogue search tool. */
 	const TOOL_PRODUCTS = 'search_products';
 
@@ -148,6 +158,8 @@ class DB_Chat_Claude_Client {
 	 * @return string|WP_Error Assistant reply text, or WP_Error.
 	 */
 	public function chat( array $messages, $static_context, callable $tool_executor, $page_context = '' ) {
+		$this->last_usage = self::empty_usage();
+
 		if ( ! $this->has_api_key() ) {
 			return new WP_Error(
 				'db_chat_offline',
@@ -157,7 +169,19 @@ class DB_Chat_Claude_Client {
 		}
 
 		$system = $this->build_system_prompt( (string) $static_context, (string) $page_context );
-		$tools  = $this->get_tools();
+		$tools = $this->get_tools();
+
+		/*
+		 * Cache breakpoints. Render order is tools → system → messages, so a
+		 * marker on the last tool caches the tool definitions and a marker on
+		 * the system block caches tools plus prompt. Haiku 4.5 only caches a
+		 * prefix of 4,096+ tokens; below that these are silently ignored, which
+		 * costs nothing.
+		 */
+		if ( ! empty( $tools ) ) {
+			$last_tool                            = count( $tools ) - 1;
+			$tools[ $last_tool ]['cache_control'] = array( 'type' => 'ephemeral' );
+		}
 
 		/*
 		 * The for-loop bound is itself the infinite-loop guard: at most
@@ -168,7 +192,7 @@ class DB_Chat_Claude_Client {
 				array(
 					'model'      => $this->get_model(),
 					'max_tokens' => self::MAX_TOKENS,
-					'system'     => $system,
+					'system'     => $this->cacheable_system( $system ),
 					'messages'   => $messages,
 					'tools'      => $tools,
 				)
@@ -177,6 +201,8 @@ class DB_Chat_Claude_Client {
 			if ( is_wp_error( $response ) ) {
 				return $response;
 			}
+
+			$this->add_usage( $response );
 
 			$content     = isset( $response['content'] ) && is_array( $response['content'] ) ? $response['content'] : array();
 			$stop_reason = isset( $response['stop_reason'] ) ? (string) $response['stop_reason'] : '';
@@ -228,6 +254,67 @@ class DB_Chat_Claude_Client {
 			'db_chat_no_reply',
 			__( 'Sorry, I could not put an answer together just now. Please try rephrasing, or contact us and a human will help.', 'durianbikers-chatbot' ),
 			array( 'status' => 500 )
+		);
+	}
+
+	/**
+	 * Usage of the most recent chat() call.
+	 *
+	 * @return array<string,int>
+	 */
+	public function get_last_usage() {
+		return array_merge( self::empty_usage(), $this->last_usage );
+	}
+
+	/**
+	 * Zeroed usage record.
+	 *
+	 * @return array<string,int>
+	 */
+	private static function empty_usage() {
+		return array(
+			'input_tokens'                => 0,
+			'output_tokens'               => 0,
+			'cache_creation_input_tokens' => 0,
+			'cache_read_input_tokens'     => 0,
+		);
+	}
+
+	/**
+	 * Add one response's usage to the running total.
+	 *
+	 * @param array $response Decoded API response.
+	 * @return void
+	 */
+	private function add_usage( array $response ) {
+		if ( empty( $response['usage'] ) || ! is_array( $response['usage'] ) ) {
+			return;
+		}
+
+		foreach ( array_keys( self::empty_usage() ) as $key ) {
+			if ( isset( $response['usage'][ $key ] ) && is_numeric( $response['usage'][ $key ] ) ) {
+				$current                  = isset( $this->last_usage[ $key ] ) ? (int) $this->last_usage[ $key ] : 0;
+				$this->last_usage[ $key ] = $current + max( 0, (int) $response['usage'][ $key ] );
+			}
+		}
+	}
+
+	/**
+	 * The system prompt as a cacheable text block.
+	 *
+	 * build_system_prompt() and its db_chat_system_prompt filter keep returning
+	 * a plain string; the wrapping happens only here, at the wire.
+	 *
+	 * @param string $system Prompt text.
+	 * @return array[]
+	 */
+	private function cacheable_system( $system ) {
+		return array(
+			array(
+				'type'          => 'text',
+				'text'          => (string) $system,
+				'cache_control' => array( 'type' => 'ephemeral' ),
+			),
 		);
 	}
 
@@ -517,6 +604,7 @@ HOW YOU SEE PRODUCTS
 - You have NO product catalogue in memory. The only way to see any product is the search_products tool.
 - Never state that something is stocked, its price, or whether it is in stock, without having seen it in a search result in THIS conversation.
 - If a search returns nothing relevant, say we do not appear to stock it and offer to pass the question to a human. Never invent a product, a price, a stock level, a URL or a specification.
+- Never tell a customer which product is better, best, or right for them. You may set out the facts from the search results side by side — name, price, stock, brand — but the choice is theirs. For anything that depends on their bike, their riding or their size, point them to a person.
 - Recommend at most 4 products in a reply. Refer to each by its exact `name` from the search results, written out in full, so the shop can attach a product card. Do not write out URLs — not for products and not for pages. The shop attaches those links itself, from its own records. The ONLY link you may ever put in a reply is a `tracking_url` returned by get_my_orders, copied character for character. Never type any other URL, and never build, shorten, guess or \"correct\" one.
 - Do not paste raw search results, JSON, field names or internal IDs into your reply. Describe products in normal prose.
 
