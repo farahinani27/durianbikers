@@ -10,12 +10,14 @@
  * and the free keyword lookup engine.
  *
  * TWO BRAINS, ONE CONTRACT. Which one answers is decided by
- * DB_Chat_Plugin::get_engine() (option db_chat_mode: auto / lookup / ai) and by
- * nothing else, so the enqueue gate and this handler can never disagree. Both
- * produce the SAME response shape — { reply, products[], pages[] } — so nonce
- * handling, rate limiting, the session route, the WhatsApp handoff and the
+ * DB_Chat_Plugin::get_engine() (option db_chat_mode: auto / lookup / ai / hybrid)
+ * and by nothing else, so the enqueue gate and this handler can never disagree.
+ * Both produce the SAME response shape — { reply, products[], pages[] } — so
+ * nonce handling, rate limiting, the session route, the WhatsApp handoff and the
  * widget itself are identical either way. Lookup mode needs no API key and
  * makes no network call; it is NOT a model and does not understand language.
+ * Hybrid mode runs lookup first and sends only its genuine misses to Claude,
+ * within the monthly AI budget — see maybe_answer_with_ai().
  *
  * PERSONAL DATA BOUNDARY. The order lookup is the only path from here to
  * personal data, and it is narrow by construction:
@@ -132,6 +134,13 @@ class DB_Chat_Chat_Endpoint {
 	private $lookup_engine;
 
 	/**
+	 * Monthly AI spend guard for hybrid mode, or null when unavailable.
+	 *
+	 * @var DB_Chat_Ai_Budget|null
+	 */
+	private $ai_budget;
+
+	/**
 	 * Did the order tool run during THIS request?
 	 *
 	 * Request-scoped, reset at the top of every handle_request(). Drives two
@@ -150,13 +159,20 @@ class DB_Chat_Chat_Endpoint {
 	 * @param DB_Chat_Content_Index|null $content_index Help page retrieval service.
 	 * @param DB_Chat_Order_Lookup|null  $order_lookup  Own-order lookup service.
 	 * @param DB_Chat_Lookup_Engine|null $lookup_engine Free keyword lookup engine.
+	 * @param DB_Chat_Ai_Budget|null     $ai_budget     Monthly AI spend guard.
 	 */
-	public function __construct( DB_Chat_Product_Index $product_index, DB_Chat_Claude_Client $client, $content_index = null, $order_lookup = null, $lookup_engine = null ) {
+	public function __construct( DB_Chat_Product_Index $product_index, DB_Chat_Claude_Client $client, $content_index = null, $order_lookup = null, $lookup_engine = null, $ai_budget = null ) {
 		$this->product_index = $product_index;
 		$this->client        = $client;
 		$this->content_index = $content_index instanceof DB_Chat_Content_Index ? $content_index : null;
 		$this->order_lookup  = $order_lookup instanceof DB_Chat_Order_Lookup ? $order_lookup : null;
 		$this->lookup_engine = $lookup_engine instanceof DB_Chat_Lookup_Engine ? $lookup_engine : null;
+
+		if ( $ai_budget instanceof DB_Chat_Ai_Budget ) {
+			$this->ai_budget = $ai_budget;
+		} else {
+			$this->ai_budget = class_exists( 'DB_Chat_Ai_Budget' ) ? new DB_Chat_Ai_Budget() : null;
+		}
 
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
@@ -716,6 +732,18 @@ class DB_Chat_Chat_Endpoint {
 			);
 		}
 
+		/*
+		 * HYBRID. The free engine has answered; if it genuinely did not
+		 * understand the question, Claude gets one chance at the same message.
+		 * Any reason not to — wrong mode, no key, no budget, an error, an empty
+		 * reply — returns null and the free answer below goes out untouched.
+		 */
+		$ai = $this->maybe_answer_with_ai( $message, $history );
+
+		if ( null !== $ai ) {
+			return $ai;
+		}
+
 		$this->maybe_log( $message, $reply );
 
 		/*
@@ -739,6 +767,81 @@ class DB_Chat_Chat_Endpoint {
 		}
 
 		$response = rest_ensure_response( $payload );
+
+		return $this->apply_no_store( $response );
+	}
+
+	/**
+	 * Hybrid mode: re-answer a genuine miss with Claude.
+	 *
+	 * Only ever reached after the free engine has answered, and only acts when
+	 * the engine raised its miss flag. The flag is never raised inside a
+	 * purchase: resume_pending() handles any turn that answers one, and a turn
+	 * that does not has already dropped the pending order in the free answer
+	 * too, so returning `pending: null` here changes nothing a customer had.
+	 *
+	 * @param string $message Sanitized customer message.
+	 * @param array  $history Sanitized history.
+	 * @return WP_REST_Response|null Null means "send the free answer".
+	 */
+	private function maybe_answer_with_ai( $message, array $history ) {
+		if ( DB_Chat_Plugin::MODE_HYBRID !== db_chat()->get_mode() ) {
+			return null;
+		}
+
+		if ( ! is_callable( array( $this->lookup_engine, 'needs_ai_fallback' ) ) || ! $this->lookup_engine->needs_ai_fallback() ) {
+			return null;
+		}
+
+		if ( null === $this->ai_budget || ! $this->client->has_api_key() || ! $this->ai_budget->can_spend() ) {
+			return null;
+		}
+
+		$messages     = $this->build_messages( $history, $message );
+		$context      = $this->product_index->get_context();
+		$page_context = null !== $this->content_index ? $this->content_index->get_context() : '';
+
+		try {
+			$reply = $this->client->chat( $messages, $context, $this->get_tool_executor(), $page_context );
+		} catch ( Throwable $e ) {
+			DB_Chat_Plugin::log_error( 'Hybrid AI fallback threw ' . get_class( $e ) . '.' );
+			$reply = new WP_Error( 'db_chat_ai_exception', '' );
+		}
+
+		/*
+		 * Charged whether or not it worked: earlier tool rounds of a call that
+		 * later failed were still billed, and undercounting is the one mistake a
+		 * budget must not make.
+		 */
+		$this->ai_budget->record( $this->client->get_last_usage() );
+
+		if ( is_wp_error( $reply ) ) {
+			// The code only. Never the customer's message, never upstream detail.
+			DB_Chat_Plugin::log_error( 'Hybrid AI fallback unavailable: ' . $reply->get_error_code() . '.' );
+
+			return null;
+		}
+
+		$reply = (string) $reply;
+
+		if ( '' === trim( $reply ) ) {
+			return null;
+		}
+
+		$products = $this->product_index->match_in_text( $reply );
+		$pages    = null !== $this->content_index ? $this->content_index->match_in_text( $reply ) : array();
+
+		$this->maybe_log( $message, $reply );
+
+		$response = rest_ensure_response(
+			array(
+				'reply'    => $reply,
+				'products' => array_values( $products ),
+				'pages'    => array_values( $pages ),
+				// An AI answer ends any purchase in progress, as an off-topic message does.
+				'pending'  => null,
+			)
+		);
 
 		return $this->apply_no_store( $response );
 	}
