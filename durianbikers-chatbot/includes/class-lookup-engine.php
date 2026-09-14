@@ -977,6 +977,12 @@ class DB_Chat_Lookup_Engine {
 			'human_handoff'      => __( 'A person can help with that. Tap the WhatsApp button below and our team will reply.', 'durianbikers-chatbot' ),
 			'human_closed'       => __( "We're closed right now, so we'll reply when we open.", 'durianbikers-chatbot' ),
 			'human_none'         => __( 'A person can help with that. Please contact us — the details are on our Contact Us page.', 'durianbikers-chatbot' ),
+			'pick_not_found'     => __( "I couldn't find that product — can you tell me which one?", 'durianbikers-chatbot' ),
+			'pick_info'          => __( '%1$s — %2$s.', 'durianbikers-chatbot' ),
+			'pick_sizes'         => __( 'In stock: %s.', 'durianbikers-chatbot' ),
+			'pick_in'            => __( 'In stock.', 'durianbikers-chatbot' ),
+			'pick_out'           => __( 'Out of stock right now.', 'durianbikers-chatbot' ),
+			'pick_buy'           => __( 'Say "buy" to add it to your cart.', 'durianbikers-chatbot' ),
 		);
 
 		$ms = array(
@@ -1075,6 +1081,11 @@ class DB_Chat_Lookup_Engine {
 			'human_handoff'      => 'Staf kami boleh bantu. Tekan butang WhatsApp di bawah dan pasukan kami akan membalas.',
 			'human_closed'       => 'Kami tutup sekarang, jadi kami akan membalas bila kami buka.',
 			'human_none'         => 'Staf kami boleh bantu. Sila hubungi kami — butirannya ada di halaman Contact Us kami.',
+			'pick_not_found'     => 'Saya tidak jumpa produk itu — boleh beritahu yang mana satu?',
+			'pick_sizes'         => 'Ada stok: %s.',
+			'pick_in'            => 'Ada stok.',
+			'pick_out'           => 'Stok habis buat masa ini.',
+			'pick_buy'           => 'Taip "beli" untuk masukkan ke dalam troli.',
 		);
 
 		$lang = in_array( $lang, array( 'ms', 'zh' ), true ) ? $lang : 'en';
@@ -1311,6 +1322,92 @@ class DB_Chat_Lookup_Engine {
 			default:
 				return $this->answer_products( $intent, $normalized, $signals, $language, $history, $message );
 		}
+	}
+
+	/**
+	 * The customer tapped "This one" on a card.
+	 *
+	 * The id is a claim, re-read from WooCommerce every time. While the bot is
+	 * waiting for "which one?" and the tap is one of the offered products, it
+	 * answers that question. Otherwise it is an information pick: price, stock
+	 * and sizes, and a `chosen` stage so "buy" can continue with it. A pick
+	 * never writes to a cart and is never an AI miss.
+	 *
+	 * @param int   $product_id Claimed product id.
+	 * @param array $history    Prior turns, untrusted. Language only.
+	 * @param mixed $pending    Raw pending order from the browser.
+	 * @return array
+	 */
+	public function answer_pick( $product_id, array $history = array(), $pending = null ) {
+		$this->order_turn  = false;
+		$this->pending_out = null;
+		$this->ai_fallback = false;
+
+		$product_id = (int) $product_id;
+		$order      = DB_Chat_Pending_Order::from_request( $pending );
+
+		if ( null !== $order && $order->is_expired() ) {
+			$order = null;
+		}
+
+		$language = ( null !== $order && '' !== $order->language ) ? $order->language : $this->pick_language( $history );
+		$product  = $product_id > 0 ? wc_get_product( $product_id ) : null;
+
+		if (
+			! $product instanceof WC_Product
+			|| $product instanceof WC_Product_Variation
+			|| 'publish' !== $product->get_status()
+			|| '' !== (string) $product->get_post_password()
+			|| 'hidden' === $product->get_catalog_visibility()
+		) {
+			return $this->compose( $this->text( $language, 'pick_not_found' ), $language );
+		}
+
+		if ( null !== $order && DB_Chat_Pending_Order::STAGE_PRODUCT === $order->stage
+			&& in_array( $product_id, array_map( 'absint', (array) $order->offered ), true ) ) {
+			return $this->ask_for_variation( $product_id, $order->quantity, $language );
+		}
+
+		$writer  = new DB_Chat_Cart_Writer();
+		$details = $writer->describe( $product_id, 0 );
+		$lines   = array(
+			'' !== $details['price']
+				? $this->text( $language, 'pick_info', $details['name'], $details['price'] )
+				: $details['name'] . '.',
+		);
+
+		if ( $product->is_type( 'variable' ) ) {
+			$labels  = array_values( array_filter( array_map( 'strval', array_column( $writer->in_stock_variations( $product_id ), 'label' ) ) ) );
+			$lines[] = empty( $labels ) ? $this->text( $language, 'pick_out' ) : $this->text( $language, 'pick_sizes', implode( ', ', $labels ) );
+		} else {
+			$lines[] = $product->is_in_stock() ? $this->text( $language, 'pick_in' ) : $this->text( $language, 'pick_out' );
+		}
+
+		$lines[] = $this->text( $language, 'pick_buy' );
+
+		$this->pending_out = DB_Chat_Pending_Order::create(
+			DB_Chat_Pending_Order::STAGE_CHOSEN,
+			array(
+				'product_id' => $product_id,
+				'language'   => $language,
+			)
+		)->to_array();
+
+		$card = $this->product_index->card_for( $product_id );
+
+		return $this->compose( implode( "\n", $lines ), $language, null !== $card ? array( $card ) : array() );
+	}
+
+	/**
+	 * Language for a pick: the customer's most recent own words.
+	 *
+	 * @param array $history Untrusted history.
+	 * @return string
+	 */
+	private function pick_language( array $history ) {
+		$turns = $this->history_user_turns( $history );
+
+		return empty( $turns ) ? 'en' : self::detect_language( $turns[0] );
 	}
 
 	/**
@@ -3727,7 +3824,63 @@ class DB_Chat_Lookup_Engine {
 			return $this->ask_for_confirmation( $order->product_id, $variation, $order->quantity, $language );
 		}
 
+		if ( DB_Chat_Pending_Order::STAGE_CHOSEN === $order->stage ) {
+			return $this->resume_chosen( $message, $order, $language );
+		}
+
+		/*
+		 * Only a real confirmation question may reach the handler that writes
+		 * to a cart. A stage this method does not recognise must never be read
+		 * as "waiting for a yes" — a stray "yes" would buy a product with no size.
+		 */
+		if ( DB_Chat_Pending_Order::STAGE_CONFIRM !== $order->stage ) {
+			return null;
+		}
+
 		return $this->handle_confirmation( $message, $order, $language );
+	}
+
+	/**
+	 * After "This one": continue only on an explicit purchase message that
+	 * names no other product. Anything else drops the stage and is answered
+	 * normally, the same "moving on" rule the other stages follow.
+	 *
+	 * @param string                $message  Customer's message.
+	 * @param DB_Chat_Pending_Order $order    The chosen stage.
+	 * @param string                $language Reply language.
+	 * @return array|null
+	 */
+	private function resume_chosen( $message, DB_Chat_Pending_Order $order, $language ) {
+		if ( $order->product_id < 1 ) {
+			return null;
+		}
+
+		$normalized = $this->normalize( $message );
+
+		if ( '' === $normalized ) {
+			return null;
+		}
+
+		$filters = $this->blank_filters();
+		$query   = trim( (string) $this->build_query( $normalized, $this->signals( $normalized ), $filters ) );
+
+		if ( ! $filters['purchase'] && ! $filters['purchase_soft'] ) {
+			return null;
+		}
+
+		// "i want 2" — a bare one- or two-digit count after a soft buy word.
+		if ( 1 === preg_match( '/^[0-9]{1,2}$/', $query ) ) {
+			$filters['quantity'] = (int) $query;
+			$query               = '';
+		}
+
+		// build_query() hands back a recognised brand or category when nothing
+		// else is left, so any non-empty residue means another product was named.
+		if ( '' !== $query ) {
+			return null;
+		}
+
+		return $this->ask_for_variation( $order->product_id, max( 1, (int) $filters['quantity'] ), $language );
 	}
 
 	/**

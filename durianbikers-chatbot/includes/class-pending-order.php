@@ -34,6 +34,12 @@ class DB_Chat_Pending_Order {
 	const STAGE_CONFIRM = 'ask_confirm';
 
 	/**
+	 * Customer tapped "This one": a product is chosen, nothing is being bought.
+	 * Only an explicit purchase message continues it, into the size question.
+	 */
+	const STAGE_CHOSEN = 'chosen';
+
+	/**
 	 * Seconds a half-finished order stays alive.
 	 *
 	 * Long enough to walk away and come back mid-conversation, short enough
@@ -201,7 +207,7 @@ class DB_Chat_Pending_Order {
 	 * @return string[]
 	 */
 	public static function stages() {
-		return array( self::STAGE_PRODUCT, self::STAGE_VARIATION, self::STAGE_CONFIRM );
+		return array( self::STAGE_PRODUCT, self::STAGE_VARIATION, self::STAGE_CONFIRM, self::STAGE_CHOSEN );
 	}
 
 	/**

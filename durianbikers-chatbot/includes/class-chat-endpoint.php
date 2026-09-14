@@ -208,6 +208,18 @@ class DB_Chat_Chat_Endpoint {
 					 * shape and DB_Chat_Cart_Writer re-reads every fact from
 					 * WooCommerce before anything reaches a cart.
 					 */
+					/*
+					 * "This one" on a card. Deliberately NO default: has_param()
+					 * must stay false when the widget did not send it. Any scalar
+					 * is accepted so a junk value answers "couldn't find" instead
+					 * of a 400 — the id is a claim either way.
+					 */
+					'pick'    => array(
+						'required'          => false,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_scalar( $value );
+						},
+					),
 					'pending' => array(
 						'required'          => false,
 						'default'           => null,
@@ -572,7 +584,12 @@ class DB_Chat_Chat_Endpoint {
 		 * which brain answered.
 		 */
 		if ( DB_Chat_Plugin::ENGINE_LOOKUP === db_chat()->get_engine() ) {
-			return $this->handle_with_lookup( $message, $history, $request->get_param( 'pending' ) );
+			return $this->handle_with_lookup(
+				$message,
+				$history,
+				$request->get_param( 'pending' ),
+				$request->get_param( 'pick' )
+			);
 		}
 
 		$messages = $this->build_messages( $history, $message );
@@ -641,7 +658,7 @@ class DB_Chat_Chat_Endpoint {
 	 *                        slot; never trusted as a subject in itself.
 	 * @return WP_REST_Response|WP_Error
 	 */
-	private function handle_with_lookup( $message, array $history, $pending = null ) {
+	private function handle_with_lookup( $message, array $history, $pending = null, $pick = null ) {
 		if ( null === $this->lookup_engine ) {
 			/*
 			 * Unreachable in practice: get_engine() only returns 'lookup' when
@@ -673,7 +690,8 @@ class DB_Chat_Chat_Endpoint {
 		 * needs no special case to achieve that: the engine's answer() is what
 		 * logs, and on this path it is never called.
 		 */
-		if ( class_exists( 'DB_Chat_Product_Finder' ) ) {
+		// A pick names its product exactly; the guided finder has nothing to add.
+		if ( null === $pick && class_exists( 'DB_Chat_Product_Finder' ) ) {
 			$guided = null;
 
 			try {
@@ -694,7 +712,9 @@ class DB_Chat_Chat_Endpoint {
 		}
 
 		try {
-			$result = $this->lookup_engine->answer( $message, $history, $pending );
+			$result = null !== $pick
+				? $this->lookup_engine->answer_pick( self::pick_id( $pick ), $history, $pending )
+				: $this->lookup_engine->answer( $message, $history, $pending );
 		} catch ( Throwable $e ) {
 			DB_Chat_Plugin::log_error( 'Lookup mode failed: ' . $e->getMessage() );
 
@@ -775,6 +795,20 @@ class DB_Chat_Chat_Endpoint {
 		$response = rest_ensure_response( $payload );
 
 		return $this->apply_no_store( $response );
+	}
+
+	/**
+	 * A positive integer from the raw pick, or 0 for anything else.
+	 *
+	 * @param mixed $pick Raw value.
+	 * @return int
+	 */
+	private static function pick_id( $pick ) {
+		if ( ! is_scalar( $pick ) || 1 !== preg_match( '/^\s*([0-9]{1,10})\s*$/', (string) $pick, $m ) ) {
+			return 0;
+		}
+
+		return (int) $m[1];
 	}
 
 	/**

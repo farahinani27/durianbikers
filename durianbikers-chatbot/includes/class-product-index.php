@@ -1036,12 +1036,23 @@ class DB_Chat_Product_Index {
 		}
 
 		return array(
+			'id'       => (int) $product->get_id(),
 			'name'     => wp_strip_all_tags( $product->get_name() ),
 			'url'      => esc_url_raw( (string) $product->get_permalink() ),
 			'price'    => $this->get_price_text( $product ),
 			'image'    => '' !== $image_url ? esc_url_raw( $image_url ) : '',
 			'in_stock' => ! $this->is_unavailable( $product ) && (bool) $product->is_in_stock(),
 		);
+	}
+
+	/**
+	 * One card for a known product id, or null when it must not be shown.
+	 *
+	 * @param int $product_id Product id.
+	 * @return array|null
+	 */
+	public function card_for( $product_id ) {
+		return $this->format_card( (int) $product_id );
 	}
 
 	/**

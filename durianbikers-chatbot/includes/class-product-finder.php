@@ -1737,6 +1737,7 @@ final class DB_Chat_Product_Finder {
 		}
 
 		return array(
+			'id'       => (int) $product->get_id(),
 			'name'     => wp_strip_all_tags( $product->get_name() ),
 			'url'      => esc_url_raw( (string) $product->get_permalink() ),
 			'price'    => $this->index->get_price_text( $product ),
