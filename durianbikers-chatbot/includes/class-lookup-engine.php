@@ -983,6 +983,7 @@ class DB_Chat_Lookup_Engine {
 			'pick_in'            => __( 'In stock.', 'durianbikers-chatbot' ),
 			'pick_out'           => __( 'Out of stock right now.', 'durianbikers-chatbot' ),
 			'pick_buy'           => __( 'Say "buy" to add it to your cart.', 'durianbikers-chatbot' ),
+			'bare_reply'         => __( "What would you like to do? Tap This one on a product, or tell me what you're after.", 'durianbikers-chatbot' ),
 		);
 
 		$ms = array(
@@ -1086,6 +1087,7 @@ class DB_Chat_Lookup_Engine {
 			'pick_in'            => 'Ada stok.',
 			'pick_out'           => 'Stok habis buat masa ini.',
 			'pick_buy'           => 'Taip "beli" untuk masukkan ke dalam troli.',
+			'bare_reply'         => 'Apa yang anda mahu buat? Tekan This one pada produk, atau beritahu saya apa yang anda cari.',
 		);
 
 		$lang = in_array( $lang, array( 'ms', 'zh' ), true ) ? $lang : 'en';
@@ -1287,6 +1289,17 @@ class DB_Chat_Lookup_Engine {
 			return $this->compose( $this->text( 'en', 'fallback' ), 'en' );
 		}
 
+		/*
+		 * A bare "yes" / "ok" / "no" with nothing waiting for it. Reached only
+		 * after resume_pending() had its chance, so a real confirmation never
+		 * lands here. It used to be searched for as a product name.
+		 */
+		$bare = $this->bare_reply_language( $message, $normalized );
+
+		if ( '' !== $bare ) {
+			return $this->compose( $this->text( $bare, 'bare_reply' ), $bare );
+		}
+
 		$language = self::detect_language( $normalized );
 		$signals  = $this->signals( $normalized );
 		$intent   = $this->resolve_intent( $normalized, $signals );
@@ -1322,6 +1335,58 @@ class DB_Chat_Lookup_Engine {
 			default:
 				return $this->answer_products( $intent, $normalized, $signals, $language, $history, $message );
 		}
+	}
+
+	/**
+	 * Is this message nothing but yes / no / ok words?
+	 *
+	 * @param string $message    Raw message.
+	 * @param string $normalized Normalized message.
+	 * @return string Reply language ('en', 'ms', 'zh'), or '' when it is not a bare reply.
+	 */
+	private function bare_reply_language( $message, $normalized ) {
+		if ( self::is_chinese( $message ) ) {
+			$terms = self::chinese_terms();
+			$plain = (string) preg_replace( '/[\s\p{P}]+/u', '', (string) $message );
+			$all   = array_merge(
+				isset( $terms['confirm'] ) ? (array) $terms['confirm'] : array(),
+				isset( $terms['decline'] ) ? (array) $terms['decline'] : array()
+			);
+
+			return in_array( $plain, $all, true ) ? 'zh' : '';
+		}
+
+		$tokens = preg_split( '/\s+/u', trim( (string) $normalized ), -1, PREG_SPLIT_NO_EMPTY );
+
+		if ( empty( $tokens ) || count( $tokens ) > 3 ) {
+			return '';
+		}
+
+		$particles = array( 'la', 'lah', 'je', 'ja' );
+		$words     = array_merge( self::confirm_terms(), self::decline_terms(), $particles );
+		$malay     = array( 'ya', 'yer', 'betul', 'boleh', 'setuju', 'sah', 'teruskan', 'nak', 'tidak', 'tak', 'jangan', 'batal', 'belum', 'la', 'lah', 'je', 'ja' );
+		$is_ms     = false;
+		$real      = false;
+
+		foreach ( $tokens as $token ) {
+			if ( ! in_array( $token, $words, true ) ) {
+				return '';
+			}
+
+			if ( ! in_array( $token, $particles, true ) ) {
+				$real = true;
+			}
+
+			if ( in_array( $token, $malay, true ) ) {
+				$is_ms = true;
+			}
+		}
+
+		if ( ! $real ) {
+			return '';
+		}
+
+		return $is_ms ? 'ms' : 'en';
 	}
 
 	/**
