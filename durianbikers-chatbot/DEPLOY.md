@@ -127,13 +127,14 @@ scenarios, because those are the answers that protect you.
 
 ### 2.2 Choose an answering mode (free or paid)
 
-WooCommerce → Chatbot → **Answering mode**. Three choices:
+WooCommerce → Chatbot → **Answering mode**. Four choices:
 
 | Mode | What answers | Cost |
 |---|---|---|
 | **Automatic** (default) | Claude if an API key is set, otherwise free lookup | Only when a key is set |
 | **Free lookup only** | Always the built-in keyword lookup, even if a key is saved | Nothing, ever |
 | **Claude only** | Always Claude; with no key the widget hides and chat returns the offline message | Per message |
+| **Hybrid** | Free lookup first; Claude only for questions lookup cannot understand. With no key it behaves exactly like free lookup | Only for those questions, capped monthly — see below |
 
 **Free lookup mode is not AI and does not understand questions.** It matches keywords — English and
 Bahasa Malaysia — against your products and your six allowlisted help pages, then fills in a fixed
@@ -153,7 +154,35 @@ switched automatically — it stops calling itself an AI assistant in lookup mod
 
 Skip 2.3 entirely if you are staying on free lookup, and go to 2.4.
 
-### 2.3 Add your Anthropic API key (Claude modes only)
+#### Hybrid mode — free first, AI for the rest
+
+Hybrid answers everything the free engine can, at no cost, and sends only the questions it genuinely
+cannot understand to Claude. Fitment, stock, orders and the whole buying flow never go to AI.
+
+**Before switching it on, in this order:**
+
+1. At console.anthropic.com, create an API key **and set a monthly spend limit first**. That limit
+   is the only hard stop.
+2. Add the key yourself — WooCommerce → Chatbot → Claude API key, or `DB_CHAT_ANTHROPIC_API_KEY` in
+   `wp-config.php` (see 2.3).
+3. Add a line to your privacy policy: *Questions our chat assistant cannot answer automatically may
+   be sent to Anthropic, an AI provider, to write a reply. Please do not share personal or payment
+   details in the chat.*
+4. WooCommerce → Chatbot → Answering mode → **Hybrid**. Set **Monthly AI budget (RM)** — default 100.
+
+**What the budget does.** The plugin estimates each AI answer's cost from its token counts, priced
+deliberately high. It spreads what is left of the month across the days left, so a quiet day's
+budget rolls forward and a busy day cannot use up the month. When the budget is reached, customers
+quietly get the free answer instead — no error, no message about limits. The settings screen shows
+this month's estimated spend.
+
+**What customers are told.** In hybrid mode the greeting, the "are you a bot?" reply and the small
+print under the input all say that some answers are written by AI and can be wrong. This switches
+automatically with the mode; an explicit **Footnote** you set on the settings screen still wins.
+
+**Turning it off.** Switch Answering mode back to Free lookup only. Nothing else needs undoing.
+
+### 2.3 Add your Anthropic API key (Claude and Hybrid modes)
 
 Get a key from console.anthropic.com. **Set a monthly spend limit while you are there** — you have
 5,283 products and no way to predict traffic on day one.
@@ -282,8 +311,9 @@ anything for you.
 | wp-admin unreachable | Plesk File Manager → rename the plugin folder to `-OFF` |
 | Chatbot misbehaving, notifications fine | Untick **Enable chatbot** only. Notifications keep running. |
 | Notifications noisy, chatbot fine | Untick the channel. Chatbot keeps running. |
-| Costs climbing | Switch **Answering mode** to "Free lookup only" — the chat keeps working at zero cost. Or untick **Enable chatbot**, or revoke the key at console.anthropic.com |
-| Free lookup declining too much | Switch **Answering mode** back to Automatic with a key set |
+| Costs climbing | Switch **Answering mode** to "Free lookup only" — the chat keeps working at zero cost. Or untick **Enable chatbot**, or revoke the key at console.anthropic.com. In Hybrid, lowering **Monthly AI budget (RM)** also works, down to 0 |
+| Free lookup declining too much | Switch **Answering mode** to Hybrid (capped) or Automatic, with a key set |
+| Hybrid AI answers look wrong | Switch **Answering mode** to "Free lookup only". Customers go back to the free answers immediately |
 
 The two halves are independent by design — you can always turn off one and keep the other.
 
@@ -291,8 +321,9 @@ The two halves are independent by design — you can always turn off one and kee
 
 ## What this bot cannot do, by design
 
-Worth knowing before customers ask, so you are not surprised. The first block applies to BOTH
-answering modes; the free lookup block after it applies only when you run without an API key.
+Worth knowing before customers ask, so you are not surprised. The first block applies to EVERY
+answering mode; the free lookup block after it applies whenever free lookup is the one answering —
+free lookup mode, Automatic without a key, and the questions Hybrid answers without AI.
 
 - **Cannot confirm fitment.** Your catalogue has no structured bike-model attribute, so it will
   always defer to a human. This is deliberate — a wrong fitment answer on a brake or tyre part is a
