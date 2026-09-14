@@ -148,7 +148,7 @@ class DB_Chat_Settings {
 	}
 
 	/**
-	 * Which brain the owner asked for: auto | lookup | ai.
+	 * Which brain the owner asked for: auto | lookup | ai | hybrid.
 	 *
 	 * Mirrors DB_Chat_Plugin::get_mode() for the settings screen; the bootstrap
 	 * remains the source of truth at runtime.
@@ -156,7 +156,7 @@ class DB_Chat_Settings {
 	public static function get_mode(): string {
 		$mode = strtolower( self::get( 'db_chat_mode', 'auto' ) );
 
-		return in_array( $mode, array( 'auto', 'lookup', 'ai' ), true ) ? $mode : 'auto';
+		return in_array( $mode, array( 'auto', 'lookup', 'ai', 'hybrid' ), true ) ? $mode : 'auto';
 	}
 
 	/**
@@ -292,6 +292,7 @@ class DB_Chat_Settings {
 
 		self::register( 'db_chat_enabled', '0', array( __CLASS__, 'sanitize_bool' ) );
 		self::register( 'db_chat_mode', 'auto', array( __CLASS__, 'sanitize_mode' ) );
+		self::register( 'db_chat_ai_monthly_cap_myr', '100', array( __CLASS__, 'sanitize_cap' ) );
 
 		self::register(
 			'db_chat_api_key',
@@ -421,7 +422,20 @@ class DB_Chat_Settings {
 	public static function sanitize_mode( $value ): string {
 		$value = strtolower( self::sanitize_text( $value ) );
 
-		return in_array( $value, array( 'auto', 'lookup', 'ai' ), true ) ? $value : 'auto';
+		return in_array( $value, array( 'auto', 'lookup', 'ai', 'hybrid' ), true ) ? $value : 'auto';
+	}
+
+	/**
+	 * Monthly AI cap in MYR: a number from 0 to 10,000.
+	 *
+	 * @param mixed $value Submitted value.
+	 * @return string
+	 */
+	public static function sanitize_cap( $value ): string {
+		$number = is_numeric( $value ) ? (float) $value : 100.0;
+		$number = max( 0.0, min( 10000.0, $number ) );
+
+		return (string) round( $number, 2 );
 	}
 
 	public static function sanitize_text( $value ): string {
@@ -715,7 +729,7 @@ class DB_Chat_Settings {
 						self::row_secret(
 							'db_chat_api_key',
 							__( 'Claude API key', 'durianbikers-chatbot' ),
-							__( 'Only used by the Claude modes — free lookup mode needs no key and makes no external calls. Stored server-side only: never sent to the browser, never printed and never written to a log. Leave blank to keep the current key. Preferred alternative: define DB_CHAT_ANTHROPIC_API_KEY in wp-config.php to keep the key out of the database entirely.', 'durianbikers-chatbot' ),
+							__( 'Used by the Claude only and Hybrid modes. In Hybrid mode, questions the free engine cannot answer are sent to Anthropic\'s API. Stored server-side only: never sent to the browser, never printed and never written to a log. Leave blank to keep the current key. Preferred alternative: define DB_CHAT_ANTHROPIC_API_KEY in wp-config.php to keep the key out of the database entirely.', 'durianbikers-chatbot' ),
 							self::key_is_constant() ? self::API_KEY_CONSTANT : ''
 						);
 
@@ -961,6 +975,7 @@ class DB_Chat_Settings {
 						'auto'   => __( 'Automatic — use Claude if an API key is set, otherwise free lookup (recommended)', 'durianbikers-chatbot' ),
 						'lookup' => __( 'Free lookup only — never call the API, even if a key is set', 'durianbikers-chatbot' ),
 						'ai'     => __( 'Claude only — needs an API key; chat stays offline without one', 'durianbikers-chatbot' ),
+						'hybrid' => __( 'Hybrid — free lookup first, Claude only for questions it cannot understand (needs an API key; capped monthly)', 'durianbikers-chatbot' ),
 					),
 					__( 'Purge the page cache after changing this: it decides whether the widget appears at all, and that decision is baked into cached storefront HTML.', 'durianbikers-chatbot' )
 				);
@@ -970,7 +985,14 @@ class DB_Chat_Settings {
 					<th scope="row"><?php esc_html_e( 'Right now', 'durianbikers-chatbot' ); ?></th>
 					<td>
 						<p>
-							<?php if ( 'lookup' === $engine ) : ?>
+							<?php if ( 'hybrid' === $mode && 'lookup' === $engine ) : ?>
+								<strong><?php esc_html_e( 'Answering with free lookup, and Claude for questions it cannot understand.', 'durianbikers-chatbot' ); ?></strong>
+								<?php if ( $key ) : ?>
+									<?php esc_html_e( 'Only genuine misses are sent to Claude, within the monthly budget below. Fitment, stock, orders and buying never are.', 'durianbikers-chatbot' ); ?>
+								<?php else : ?>
+									<?php esc_html_e( 'No API key is set, so no AI answers are being given yet: every question gets the free answer.', 'durianbikers-chatbot' ); ?>
+								<?php endif; ?>
+							<?php elseif ( 'lookup' === $engine ) : ?>
 								<strong><?php esc_html_e( 'Answering with free lookup.', 'durianbikers-chatbot' ); ?></strong>
 								<?php if ( 'auto' === $mode && ! $key ) : ?>
 									<?php esc_html_e( 'No API key is set, so nothing is being charged. Add a key to switch this to Claude automatically.', 'durianbikers-chatbot' ); ?>
@@ -997,6 +1019,37 @@ class DB_Chat_Settings {
 						<?php endif; ?>
 					</td>
 				</tr>
+				<?php if ( 'hybrid' === $mode ) : ?>
+					<?php
+					self::row_text(
+						'db_chat_ai_monthly_cap_myr',
+						__( 'Monthly AI budget (RM)', 'durianbikers-chatbot' ),
+						__( 'An estimate the plugin enforces by falling back to the free answer. Set the same limit in the Anthropic console: that is the only hard stop.', 'durianbikers-chatbot' ),
+						'100',
+						'small-text'
+					);
+					?>
+					<?php if ( class_exists( 'DB_Chat_Ai_Budget' ) ) : ?>
+						<?php $db_chat_budget = new DB_Chat_Ai_Budget(); ?>
+						<tr>
+							<th scope="row"><?php esc_html_e( 'AI spend this month', 'durianbikers-chatbot' ); ?></th>
+							<td>
+								<p>
+									<?php
+									printf(
+										/* translators: 1: estimated spend; 2: monthly cap; 3: number of AI answers. */
+										esc_html__( 'RM%1$s of RM%2$s estimated, across %3$d AI answers.', 'durianbikers-chatbot' ),
+										esc_html( number_format_i18n( $db_chat_budget->month_to_date_myr(), 2 ) ),
+										esc_html( number_format_i18n( $db_chat_budget->cap_myr(), 2 ) ),
+										(int) $db_chat_budget->calls_this_month()
+									);
+									?>
+								</p>
+								<p class="description"><?php esc_html_e( 'Estimated from token counts and priced deliberately high.', 'durianbikers-chatbot' ); ?></p>
+							</td>
+						</tr>
+					<?php endif; ?>
+				<?php endif; ?>
 			</tbody>
 		</table>
 		<?php

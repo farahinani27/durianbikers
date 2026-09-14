@@ -142,8 +142,14 @@ final class DB_Chat_Plugin {
 	/** Mode: always Claude; offline (503) when no key is configured. */
 	const MODE_AI = 'ai';
 
+	/**
+	 * Mode: the free lookup engine answers first; Claude answers only what it
+	 * genuinely cannot understand, within the monthly AI budget.
+	 */
+	const MODE_HYBRID = 'hybrid';
+
 	/** Every accepted mode value. */
-	const MODES = array( self::MODE_AUTO, self::MODE_LOOKUP, self::MODE_AI );
+	const MODES = array( self::MODE_AUTO, self::MODE_LOOKUP, self::MODE_AI, self::MODE_HYBRID );
 
 	/** Resolved brain: the Anthropic API. */
 	const ENGINE_AI = 'ai';
@@ -496,7 +502,7 @@ final class DB_Chat_Plugin {
 		/**
 		 * Filter the chatbot mode.
 		 *
-		 * @param string $mode One of auto, lookup, ai.
+		 * @param string $mode One of auto, lookup, ai, hybrid.
 		 */
 		$mode = (string) apply_filters( 'db_chat_mode', $mode );
 
@@ -526,6 +532,16 @@ final class DB_Chat_Plugin {
 		}
 
 		if ( self::MODE_LOOKUP === $mode ) {
+			return null !== $this->lookup_engine ? self::ENGINE_LOOKUP : self::ENGINE_NONE;
+		}
+
+		/*
+		 * Hybrid runs ON the lookup engine; the AI step lives inside the lookup
+		 * branch of the endpoint. With no lookup engine there is nothing to fall
+		 * back from, so hybrid switches off rather than silently becoming
+		 * Claude-only and spending money the owner did not choose to spend.
+		 */
+		if ( self::MODE_HYBRID === $mode ) {
 			return null !== $this->lookup_engine ? self::ENGINE_LOOKUP : self::ENGINE_NONE;
 		}
 
