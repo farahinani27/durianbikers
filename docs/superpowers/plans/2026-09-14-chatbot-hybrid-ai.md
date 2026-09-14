@@ -25,13 +25,17 @@
 - AI is called **only** on the three misses (spec §4.2). **Never** for fitment, "we don't stock that", orders, or anything in the buying flow. The AI gets no cart tool.
 - Over budget is a **silent** fallback. Unused daily budget **rolls forward** within the month.
 - Months and days are in the **site timezone** (GMT+8), via `wp_date()` / `wp_timezone()`.
-- Deploy one file at a time: `$SSH "cat > <remote path>" < <local path>`, then confirm `md5` matches both ends and lint remotely.
+- Deploy one file at a time: `sshc "cat > <remote path>" < <local path>`, then confirm `md5` matches both ends and lint remotely.
+- **Safer deploy, used from Task 2 on:** upload to `<remote path>.new`, lint it on the server, then `mv` it into place so the site never sees a half-written file. For `durianbikers-chatbot.php`, back it up first and restore it automatically if `/my/` or `/my/checkout/` stops returning 200 — that file loads every class, so a mistake there takes the storefront down.
 - WP-CLI on the VPS needs `-d memory_limit=512M`.
 
 Shell shorthand used throughout:
 
 ```bash
-SSH="ssh -i $HOME/.ssh/durianbikers_vps -p 8288 -o BatchMode=yes durianbi@103.233.1.74"
+# A FUNCTION, not a string. zsh (the default shell here) does not word-split an
+# unquoted variable, so SSH="ssh -i …"; sshc "cmd" fails with
+# "no such file or directory: ssh -i …". A function works in zsh and bash alike.
+sshc () { ssh -i "$HOME/.ssh/durianbikers_vps" -p 8288 -o BatchMode=yes durianbi@103.233.1.74 "$@"; }
 WPROOT=/var/www/vhosts/durianbikers.com/staging.durianbikers.com
 WP="/opt/plesk/php/8.3/bin/php -d memory_limit=512M /usr/local/bin/wp --path=$WPROOT"
 PLUG=$WPROOT/wp-content/plugins/durianbikers-chatbot
@@ -200,8 +204,8 @@ echo "\n==== $pass passed, $fail failed ====\n";
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-$SSH "cat > ~/claude-uploads/t15-client.php" < $SCRATCH/t15-client.php
-$SSH "$WP eval-file ~/claude-uploads/t15-client.php"
+sshc "cat > ~/claude-uploads/t15-client.php" < $SCRATCH/t15-client.php
+sshc "$WP eval-file ~/claude-uploads/t15-client.php"
 ```
 
 Expected: `single round returns the text` passes, then a fatal: `Call to undefined method T15_Client::get_last_usage()`.
@@ -339,10 +343,10 @@ and add, as the very next line inside the same double-quoted string:
 
 ```bash
 /opt/homebrew/opt/php@8.3/bin/php -l durianbikers-chatbot/includes/class-claude-client.php
-$SSH "cat > $PLUG/includes/class-claude-client.php" < durianbikers-chatbot/includes/class-claude-client.php
+sshc "cat > $PLUG/includes/class-claude-client.php" < durianbikers-chatbot/includes/class-claude-client.php
 md5 -q durianbikers-chatbot/includes/class-claude-client.php
-$SSH "md5sum $PLUG/includes/class-claude-client.php | cut -d' ' -f1; /opt/plesk/php/8.3/bin/php -l $PLUG/includes/class-claude-client.php"
-$SSH "$WP eval-file ~/claude-uploads/t15-client.php"
+sshc "md5sum $PLUG/includes/class-claude-client.php | cut -d' ' -f1; /opt/plesk/php/8.3/bin/php -l $PLUG/includes/class-claude-client.php"
+sshc "$WP eval-file ~/claude-uploads/t15-client.php"
 ```
 
 Expected: checksums identical, `14 passed, 0 failed`.
@@ -460,8 +464,8 @@ echo "\n==== $pass passed, $fail failed ====\n";
 - [ ] **Step 3: Run it to verify it fails**
 
 ```bash
-$SSH "cat > ~/claude-uploads/t16-budget.php" < $SCRATCH/t16-budget.php
-$SSH "$WP eval-file ~/claude-uploads/t16-budget.php"
+sshc "cat > ~/claude-uploads/t16-budget.php" < $SCRATCH/t16-budget.php
+sshc "$WP eval-file ~/claude-uploads/t16-budget.php"
 ```
 
 Expected: fatal, `Class "DB_Chat_Ai_Budget" not found`.
@@ -749,11 +753,11 @@ require_once DB_CHAT_PATH . 'includes/class-ai-budget.php';
 
 ```bash
 for f in includes/class-ai-budget.php durianbikers-chatbot.php; do /opt/homebrew/opt/php@8.3/bin/php -l durianbikers-chatbot/$f; done
-$SSH "cat > $PLUG/includes/class-ai-budget.php" < durianbikers-chatbot/includes/class-ai-budget.php
-$SSH "cat > $PLUG/durianbikers-chatbot.php" < durianbikers-chatbot/durianbikers-chatbot.php
+sshc "cat > $PLUG/includes/class-ai-budget.php" < durianbikers-chatbot/includes/class-ai-budget.php
+sshc "cat > $PLUG/durianbikers-chatbot.php" < durianbikers-chatbot/durianbikers-chatbot.php
 md5 -q durianbikers-chatbot/includes/class-ai-budget.php durianbikers-chatbot/durianbikers-chatbot.php
-$SSH "md5sum $PLUG/includes/class-ai-budget.php $PLUG/durianbikers-chatbot.php | cut -d' ' -f1"
-$SSH "$WP eval-file ~/claude-uploads/t16-budget.php"
+sshc "md5sum $PLUG/includes/class-ai-budget.php $PLUG/durianbikers-chatbot.php | cut -d' ' -f1"
+sshc "$WP eval-file ~/claude-uploads/t16-budget.php"
 curl -s -m 25 -o /dev/null -w "%{http_code}\n" -L https://durianbikers.com/my/checkout/
 ```
 
@@ -842,8 +846,8 @@ The confirmation above is **declined**, so no cart line is ever written.
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-$SSH "cat > ~/claude-uploads/t17-miss-flag.php" < $SCRATCH/t17-miss-flag.php
-$SSH "$WP eval-file ~/claude-uploads/t17-miss-flag.php"
+sshc "cat > ~/claude-uploads/t17-miss-flag.php" < $SCRATCH/t17-miss-flag.php
+sshc "$WP eval-file ~/claude-uploads/t17-miss-flag.php"
 ```
 
 Expected: both probes PASS, then fatal `Call to undefined method DB_Chat_Lookup_Engine::needs_ai_fallback()`. **If a probe fails, stop**: that input does not route where the test assumes, and the rest of the test would be meaningless.
@@ -955,10 +959,10 @@ with:
 
 ```bash
 /opt/homebrew/opt/php@8.3/bin/php -l durianbikers-chatbot/includes/class-lookup-engine.php
-$SSH "cat > $PLUG/includes/class-lookup-engine.php" < durianbikers-chatbot/includes/class-lookup-engine.php
+sshc "cat > $PLUG/includes/class-lookup-engine.php" < durianbikers-chatbot/includes/class-lookup-engine.php
 md5 -q durianbikers-chatbot/includes/class-lookup-engine.php
-$SSH "md5sum $PLUG/includes/class-lookup-engine.php | cut -d' ' -f1"
-$SSH "$WP eval-file ~/claude-uploads/t17-miss-flag.php"
+sshc "md5sum $PLUG/includes/class-lookup-engine.php | cut -d' ' -f1"
+sshc "$WP eval-file ~/claude-uploads/t17-miss-flag.php"
 ```
 
 Expected: checksums identical, `14 passed, 0 failed`.
@@ -1031,8 +1035,8 @@ echo "\n==== $pass passed, $fail failed ====\n";
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-$SSH "cat > ~/claude-uploads/t18-mode.php" < $SCRATCH/t18-mode.php
-$SSH "$WP eval-file ~/claude-uploads/t18-mode.php"
+sshc "cat > ~/claude-uploads/t18-mode.php" < $SCRATCH/t18-mode.php
+sshc "$WP eval-file ~/claude-uploads/t18-mode.php"
 ```
 
 Expected: the picker/status/summary/cap assertions FAIL, then a fatal on `sanitize_cap()`.
@@ -1199,12 +1203,12 @@ with:
 
 ```bash
 for f in durianbikers-chatbot.php includes/class-settings.php; do /opt/homebrew/opt/php@8.3/bin/php -l durianbikers-chatbot/$f; done
-$SSH "cat > $PLUG/durianbikers-chatbot.php" < durianbikers-chatbot/durianbikers-chatbot.php
-$SSH "cat > $PLUG/includes/class-settings.php" < durianbikers-chatbot/includes/class-settings.php
+sshc "cat > $PLUG/durianbikers-chatbot.php" < durianbikers-chatbot/durianbikers-chatbot.php
+sshc "cat > $PLUG/includes/class-settings.php" < durianbikers-chatbot/includes/class-settings.php
 md5 -q durianbikers-chatbot/durianbikers-chatbot.php durianbikers-chatbot/includes/class-settings.php
-$SSH "md5sum $PLUG/durianbikers-chatbot.php $PLUG/includes/class-settings.php | cut -d' ' -f1"
-$SSH "$WP eval-file ~/claude-uploads/t18-mode.php"
-$SSH "$WP option get db_chat_mode"
+sshc "md5sum $PLUG/durianbikers-chatbot.php $PLUG/includes/class-settings.php | cut -d' ' -f1"
+sshc "$WP eval-file ~/claude-uploads/t18-mode.php"
+sshc "$WP option get db_chat_mode"
 curl -s -m 25 -o /dev/null -w "%{http_code}\n" -L https://durianbikers.com/my/checkout/
 ```
 
@@ -1344,8 +1348,8 @@ echo "\n==== $pass passed, $fail failed ====\n";
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-$SSH "cat > ~/claude-uploads/t19-endpoint.php" < $SCRATCH/t19-endpoint.php
-$SSH "$WP eval-file ~/claude-uploads/t19-endpoint.php"
+sshc "cat > ~/claude-uploads/t19-endpoint.php" < $SCRATCH/t19-endpoint.php
+sshc "$WP eval-file ~/claude-uploads/t19-endpoint.php"
 ```
 
 Expected: every "is answered by AI" assertion FAILS (the free answer comes back and the fake client is never called), and the "never reaches AI" assertions pass.
@@ -1494,10 +1498,10 @@ Add this method directly after `handle_with_lookup()`:
 
 ```bash
 /opt/homebrew/opt/php@8.3/bin/php -l durianbikers-chatbot/includes/class-chat-endpoint.php
-$SSH "cat > $PLUG/includes/class-chat-endpoint.php" < durianbikers-chatbot/includes/class-chat-endpoint.php
+sshc "cat > $PLUG/includes/class-chat-endpoint.php" < durianbikers-chatbot/includes/class-chat-endpoint.php
 md5 -q durianbikers-chatbot/includes/class-chat-endpoint.php
-$SSH "md5sum $PLUG/includes/class-chat-endpoint.php | cut -d' ' -f1"
-$SSH "$WP eval-file ~/claude-uploads/t19-endpoint.php"
+sshc "md5sum $PLUG/includes/class-chat-endpoint.php | cut -d' ' -f1"
+sshc "$WP eval-file ~/claude-uploads/t19-endpoint.php"
 curl -s -m 25 -o /dev/null -w "%{http_code}\n" -L https://durianbikers.com/my/checkout/
 ```
 
@@ -1571,8 +1575,8 @@ echo "\n==== $pass passed, $fail failed ====\n";
 - [ ] **Step 2: Run it to verify it fails**
 
 ```bash
-$SSH "cat > ~/claude-uploads/t20-copy.php" < $SCRATCH/t20-copy.php
-$SSH "$WP eval-file ~/claude-uploads/t20-copy.php"
+sshc "cat > ~/claude-uploads/t20-copy.php" < $SCRATCH/t20-copy.php
+sshc "$WP eval-file ~/claude-uploads/t20-copy.php"
 ```
 
 Expected: all seven hybrid assertions FAIL; the three lookup assertions pass.
@@ -1659,11 +1663,11 @@ with:
 
 ```bash
 for f in includes/class-lookup-engine.php durianbikers-chatbot.php; do /opt/homebrew/opt/php@8.3/bin/php -l durianbikers-chatbot/$f; done
-$SSH "cat > $PLUG/includes/class-lookup-engine.php" < durianbikers-chatbot/includes/class-lookup-engine.php
-$SSH "cat > $PLUG/durianbikers-chatbot.php" < durianbikers-chatbot/durianbikers-chatbot.php
+sshc "cat > $PLUG/includes/class-lookup-engine.php" < durianbikers-chatbot/includes/class-lookup-engine.php
+sshc "cat > $PLUG/durianbikers-chatbot.php" < durianbikers-chatbot/durianbikers-chatbot.php
 md5 -q durianbikers-chatbot/includes/class-lookup-engine.php durianbikers-chatbot/durianbikers-chatbot.php
-$SSH "md5sum $PLUG/includes/class-lookup-engine.php $PLUG/durianbikers-chatbot.php | cut -d' ' -f1"
-$SSH "$WP eval-file ~/claude-uploads/t20-copy.php"
+sshc "md5sum $PLUG/includes/class-lookup-engine.php $PLUG/durianbikers-chatbot.php | cut -d' ' -f1"
+sshc "$WP eval-file ~/claude-uploads/t20-copy.php"
 ```
 
 Expected: checksums identical, `10 passed, 0 failed`.
@@ -1714,15 +1718,15 @@ if ( 'save' === $action ) {
 ```
 
 ```bash
-$SSH "cat > ~/claude-uploads/t21-cart-snapshot.php" < $SCRATCH/t21-cart-snapshot.php
-$SSH "$WP eval-file ~/claude-uploads/t21-cart-snapshot.php save"
+sshc "cat > ~/claude-uploads/t21-cart-snapshot.php" < $SCRATCH/t21-cart-snapshot.php
+sshc "$WP eval-file ~/claude-uploads/t21-cart-snapshot.php save"
 ```
 
 - [ ] **Step 2: Run every suite**
 
 ```bash
 for t in rank-test purchase-test t1-cart-writer t2-vocabulary t3-pending t4-answer-matching t5-flow t6-confirm t8-chinese t10-fitment t11-brand-browse t15-client t16-budget t17-miss-flag t18-mode t19-endpoint t20-copy; do
-  printf "%-22s " "$t"; $SSH "$WP eval-file ~/claude-uploads/$t.php 2>&1 | grep -E 'Fatal|===='"
+  printf "%-22s " "$t"; sshc "$WP eval-file ~/claude-uploads/$t.php 2>&1 | grep -E 'Fatal|===='"
 done
 ```
 
@@ -1731,8 +1735,8 @@ Expected: zero failures and no fatals — the 161 existing assertions plus 94 ne
 - [ ] **Step 3: Restore the operator's cart**
 
 ```bash
-$SSH "$WP eval-file ~/claude-uploads/t21-cart-snapshot.php restore"
-$SSH "$WP eval-file ~/claude-uploads/t7-cartcheck.php"
+sshc "$WP eval-file ~/claude-uploads/t21-cart-snapshot.php restore"
+sshc "$WP eval-file ~/claude-uploads/t7-cartcheck.php"
 ```
 
 Expected: the cart lines match what was there before Step 1.
@@ -1741,11 +1745,11 @@ Expected: the cart lines match what was there before Step 1.
 
 ```bash
 for f in durianbikers-chatbot.php includes/class-claude-client.php includes/class-ai-budget.php includes/class-lookup-engine.php includes/class-settings.php includes/class-chat-endpoint.php; do
-  L=$(md5 -q durianbikers-chatbot/$f); R=$($SSH "md5sum $PLUG/$f | cut -d' ' -f1")
+  L=$(md5 -q durianbikers-chatbot/$f); R=$(sshc "md5sum $PLUG/$f | cut -d' ' -f1")
   [ "$L" = "$R" ] && echo "match   $f" || echo "MISMATCH $f"
 done
-$SSH "$WP option get db_chat_mode"
-$SSH "$WP option get db_chat_ai_spend 2>&1 | head -1"
+sshc "$WP option get db_chat_mode"
+sshc "$WP option get db_chat_ai_spend 2>&1 | head -1"
 for u in https://durianbikers.com/my/ https://durianbikers.com/my/cart/ https://durianbikers.com/my/checkout/; do printf "%-44s " "$u"; curl -s -m 25 -o /dev/null -w "%{http_code}\n" -L "$u"; done
 ```
 
@@ -1799,7 +1803,7 @@ git commit -m "docs: how to switch on hybrid mode safely"
 - [ ] **Step 1: Confirm the key is detected**
 
 ```bash
-$SSH "$WP eval '\$c = new DB_Chat_Claude_Client(); var_export( \$c->has_api_key() ); echo PHP_EOL;'"
+sshc "$WP eval '\$c = new DB_Chat_Claude_Client(); var_export( \$c->has_api_key() ); echo PHP_EOL;'"
 ```
 
 Expected: `true`. If `false`, stop and tell the operator.
@@ -1809,7 +1813,7 @@ Expected: `true`. If `false`, stop and tell the operator.
 This changes live behaviour for everyone who can reach the chat (the secret test link and staff). **Get the operator's explicit yes in chat first.**
 
 ```bash
-$SSH "$WP option update db_chat_mode hybrid"
+sshc "$WP option update db_chat_mode hybrid"
 ```
 
 - [ ] **Step 3: Exercise it through the secret test link**
@@ -1828,7 +1832,7 @@ In a private window, open the test link and send, in order:
 Send the two AI questions again within five minutes, then:
 
 ```bash
-$SSH "$WP eval '\$b = new DB_Chat_Ai_Budget(); printf( \"RM%.4f across %d calls\n\", \$b->month_to_date_myr(), \$b->calls_this_month() ); print_r( \$b->last_usage() );'"
+sshc "$WP eval '\$b = new DB_Chat_Ai_Budget(); printf( \"RM%.4f across %d calls\n\", \$b->month_to_date_myr(), \$b->calls_this_month() ); print_r( \$b->last_usage() );'"
 ```
 
 Expected: spend above zero and a call count matching the AI answers given. **`cache_read_input_tokens` above 0** on the repeat means caching works. If it is `0`, the prefix is under Haiku's 4,096-token minimum. Report that to the operator; do **not** pad the prompt without measuring (spec §7).
