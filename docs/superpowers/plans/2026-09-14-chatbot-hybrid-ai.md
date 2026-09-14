@@ -1101,7 +1101,7 @@ In `get_mode()`, replace `* @param string $mode One of auto, lookup, ai.` with `
 
 - [ ] **Step 4: Implement in `class-settings.php`**
 
-In `sanitize_mode()`, replace `array( 'auto', 'lookup', 'ai' )` with `array( 'auto', 'lookup', 'ai', 'hybrid' )`.
+**The mode list appears twice — change both.** Replace `array( 'auto', 'lookup', 'ai' )` with `array( 'auto', 'lookup', 'ai', 'hybrid' )` in `sanitize_mode()` **and** in `DB_Chat_Settings::get_mode()`, the screen's own mirror of the plugin mode, and update that method's docblock to `auto | lookup | ai | hybrid`. Changing only the sanitiser saves Hybrid correctly but reads it back as Automatic, so the status line, budget field and spend summary never appear. (Found during execution by checking every anchor before editing.)
 
 Directly after `public static function sanitize_mode( $value ): string { … }`, add:
 
