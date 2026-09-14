@@ -766,6 +766,12 @@ class DB_Chat_Chat_Endpoint {
 			$payload['cart'] = $result['cart'];
 		}
 
+		// Only ever true, only on a request for a person. chatbot.js highlights
+		// the WhatsApp row on it (replyOffersHandoff()).
+		if ( ! empty( $result['suggest_handoff'] ) ) {
+			$payload['suggest_handoff'] = true;
+		}
+
 		$response = rest_ensure_response( $payload );
 
 		return $this->apply_no_store( $response );

@@ -161,6 +161,16 @@ class DB_Chat_Handoff {
 			return '';
 		}
 
+		/*
+		 * Malaysian local form: 01x-xxx xxxx. Typed that way into the settings
+		 * screen it used to normalise to '' and the WhatsApp button silently
+		 * disappeared. 10 or 11 digits starting 01 become 60 + the number
+		 * without its leading 0. Any other leading 0 is still refused.
+		 */
+		if ( 1 === preg_match( '/^01[0-9]{8,9}$/', $digits ) ) {
+			$digits = '6' . $digits;
+		}
+
 		if ( '0' === $digits[0] ) {
 			return '';
 		}

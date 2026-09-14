@@ -399,10 +399,23 @@ class DB_Chat_Lookup_Engine {
 			/* -------- contact -------- */
 			'contact'      => array(
 				'contact', 'contact you', 'contact number', 'phone number', 'your number', 'email',
-				'email address', 'whatsapp', 'call you', 'talk to a human', 'talk to someone',
-				'speak to someone', 'speak to a person', 'customer service', 'customer support',
-				'hubungi', 'nombor telefon', 'no telefon', 'nombor', 'emel', 'cakap dengan orang',
-				'nak tanya orang', 'khidmat pelanggan',
+				'email address', 'whatsapp', 'call you',
+				'hubungi', 'nombor telefon', 'no telefon', 'nombor', 'emel',
+			),
+
+			/*
+			 * -------- "let me talk to a person" --------
+			 * PHRASES ONLY. A bare "agent" is how dealers and salesmen are
+			 * described on this business, and a bare "human" appears in "are you
+			 * human", which is an identity question. Identity is resolved first.
+			 */
+			'human'        => array(
+				'talk to a human', 'talk to a person', 'talk to someone', 'talk to staff',
+				'speak to someone', 'speak to a person', 'speak to a human', 'real person please',
+				'customer service', 'customer support', 'live agent',
+				'nak cakap dengan orang', 'cakap dengan orang', 'cakap dengan staf',
+				'bercakap dengan staf', 'nak cakap dengan manusia', 'nak tanya orang',
+				'khidmat pelanggan',
 			),
 
 			/* -------- opening hours -------- */
@@ -961,6 +974,9 @@ class DB_Chat_Lookup_Engine {
 
 			'handoff_hint'       => __( 'For anything I cannot answer, use the WhatsApp button below and a person will reply.', 'durianbikers-chatbot' ),
 			'handoff_none'       => __( 'For anything I cannot answer, please contact the shop directly.', 'durianbikers-chatbot' ),
+			'human_handoff'      => __( 'A person can help with that. Tap the WhatsApp button below and our team will reply.', 'durianbikers-chatbot' ),
+			'human_closed'       => __( "We're closed right now, so we'll reply when we open.", 'durianbikers-chatbot' ),
+			'human_none'         => __( 'A person can help with that. Please contact us — the details are on our Contact Us page.', 'durianbikers-chatbot' ),
 		);
 
 		$ms = array(
@@ -1056,6 +1072,9 @@ class DB_Chat_Lookup_Engine {
 
 			'handoff_hint'       => 'Untuk apa-apa yang saya tidak boleh jawab, guna butang WhatsApp di bawah dan seseorang akan membalas.',
 			'handoff_none'       => 'Untuk apa-apa yang saya tidak boleh jawab, sila hubungi kedai secara terus.',
+			'human_handoff'      => 'Staf kami boleh bantu. Tekan butang WhatsApp di bawah dan pasukan kami akan membalas.',
+			'human_closed'       => 'Kami tutup sekarang, jadi kami akan membalas bila kami buka.',
+			'human_none'         => 'Staf kami boleh bantu. Sila hubungi kami — butirannya ada di halaman Contact Us kami.',
 		);
 
 		$lang = in_array( $lang, array( 'ms', 'zh' ), true ) ? $lang : 'en';
@@ -1280,6 +1299,9 @@ class DB_Chat_Lookup_Engine {
 			case 'contact':
 				return $this->answer_contact( $normalized, $language );
 
+			case 'human':
+				return $this->answer_human( $language );
+
 			case 'fallback':
 				$this->ai_fallback = true;
 				$this->log_unmatched( $message, $signals, $language );
@@ -1503,6 +1525,15 @@ class DB_Chat_Lookup_Engine {
 		}
 
 		/*
+		 * A request for a person, decided before scoring for the same reason as
+		 * identity: answering it with a policy passage is exactly the failure
+		 * that sent "talk to a human" to the Terms & Conditions page.
+		 */
+		if ( $score( 'human' ) > 0 || $this->wants_human_zh( $normalized ) ) {
+			return 'human';
+		}
+
+		/*
 		 * COMPARISON, decided here for the same reason orders and identity are:
 		 * "Shinko 705 vs Shoei NXR2" scores as a plain product lookup and would
 		 * silently answer about one of the two, which is worse than either
@@ -1589,6 +1620,26 @@ class DB_Chat_Lookup_Engine {
 		 * with no signal at all we never actually understood the question.
 		 */
 		return '' !== $residual ? 'product' : 'fallback';
+	}
+
+	/**
+	 * Chinese request for a person. Substring match: Chinese has no spaces.
+	 *
+	 * @param string $normalized Normalized message.
+	 * @return bool
+	 */
+	private function wants_human_zh( $normalized ) {
+		if ( ! self::is_chinese( $normalized ) ) {
+			return false;
+		}
+
+		foreach ( array( '人工', '客服', '真人' ) as $term ) {
+			if ( false !== mb_strpos( (string) $normalized, $term ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -3101,6 +3152,59 @@ class DB_Chat_Lookup_Engine {
 			$language,
 			$extra
 		);
+	}
+
+	/**
+	 * "Let me talk to a person."
+	 *
+	 * Points at the WhatsApp button only when one is configured, says when
+	 * staff will reply when the shop is closed, and asks the widget to
+	 * highlight the button. Quotes no page passage.
+	 *
+	 * @param string    $language Reply language.
+	 * @param bool|null $open     Injected for tests; null reads the live schedule.
+	 * @return array
+	 */
+	private function answer_human( $language, $open = null ) {
+		$configured = false;
+
+		if ( class_exists( 'DB_Chat_Handoff' ) ) {
+			try {
+				$configured = (bool) DB_Chat_Handoff::is_configured();
+			} catch ( Throwable $e ) {
+				$configured = false;
+			}
+		}
+
+		if ( ! $configured ) {
+			$reply = $this->text( $language, 'human_none' );
+
+			return $this->compose( $reply, $language, array(), $this->resolve_pages( $reply ) );
+		}
+
+		if ( null === $open ) {
+			try {
+				$open = (bool) DB_Chat_Handoff::is_open();
+			} catch ( Throwable $e ) {
+				$open = true;
+			}
+		}
+
+		$lines = array( $this->text( $language, 'human_handoff' ) );
+		$hours = $this->hours_text();
+
+		if ( '' !== $hours ) {
+			$lines[] = $this->text( $language, 'contact_hours', $hours );
+		}
+
+		if ( ! $open ) {
+			$lines[] = $this->text( $language, 'human_closed' );
+		}
+
+		$out                    = $this->compose( implode( "\n", $lines ), $language );
+		$out['suggest_handoff'] = true;
+
+		return $out;
 	}
 
 	/**
