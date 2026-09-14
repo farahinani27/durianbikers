@@ -168,6 +168,7 @@ products.
 		inStock: cfg.inStockLabel || 'In stock',
 		outOfStock: cfg.outOfStockLabel || 'Out of stock',
 		view: cfg.viewLabel || 'View',
+		pick: cfg.pickLabel || 'This one',
 		// Heading over the page links the backend returns in `pages`.
 		pages: cfg.pagesLabel || 'From our site:',
 		typing: cfg.typingLabel || 'Assistant is typing',
@@ -217,8 +218,9 @@ products.
 	var SVG_NS = 'http://www.w3.org/2000/svg';
 
 	// --- STATE --- //
-	// Transcript lives in memory only. The only thing that touches browser
-	// storage is the rate-limit client token (sessionStorage), below.
+	// Browser storage holds two things, both sessionStorage (dies with the
+	// tab): the rate-limit client token, and the saved conversation described
+	// under CONVERSATION PERSISTENCE — which is never written once orders come up.
 
 	var history = [];
 	var isOpen = false;
@@ -243,6 +245,11 @@ products.
 	// Sticky once true: the moment orders enter the conversation, the prefill
 	// is off for the rest of the page lifetime.
 	var ordersTouched = false;
+	// Rendered conversation, for restoring it on the next page of this tab.
+	var transcript = [];
+	var restoring = false;
+	// Extra request fields for a retry of the last message (the pick id).
+	var lastAttemptExtra = null;
 
 	// --- SMALL HELPERS --- //
 
@@ -610,6 +617,7 @@ products.
 		}
 		if (ORDER_HINT.test(text)) {
 			ordersTouched = true;
+			clearSavedState();
 		}
 	}
 
@@ -630,6 +638,139 @@ products.
 		var used = Array.isArray(data.tools_used) ? data.tools_used : null;
 		if (used && used.indexOf('get_my_orders') !== -1) {
 			ordersTouched = true;
+			clearSavedState();
+		}
+	}
+
+	// --- CONVERSATION PERSISTENCE --- //
+	/*
+	 * Kept in sessionStorage so tapping a product card can open the product
+	 * page in the same tab without losing the chat. Per tab, per store, 30
+	 * minutes, 100 KB. Never once orders come up: the moment they do, what was
+	 * saved is deleted and nothing more is written for this page's lifetime.
+	 * Everything read back is rendered through the same textContent builders
+	 * as a live reply.
+	 */
+	var STATE_VERSION = 1;
+	var STATE_MAX_AGE = 30 * 60 * 1000;
+	var STATE_MAX_BYTES = 100000;
+	var STATE_MAX_ENTRIES = MAX_HISTORY_TURNS * 2;
+
+	function stateKey() {
+		var store = typeof cfg.store === 'string' ? cfg.store.trim().toLowerCase() : '';
+		if (!/^[a-z]{2,8}$/.test(store)) {
+			var match = /^\/([a-z]{2})(\/|$)/.exec(window.location.pathname || '');
+			store = match ? match[1] : 'default';
+		}
+		return 'db_chat_state_v' + STATE_VERSION + '_' + store;
+	}
+
+	function clearSavedState() {
+		try {
+			window.sessionStorage.removeItem(stateKey());
+		} catch (e) { /* storage unavailable */ }
+	}
+
+	function saveState() {
+		if (restoring) {
+			return;
+		}
+		if (ordersTouched) {
+			clearSavedState();
+			return;
+		}
+		var entries = transcript.slice(-STATE_MAX_ENTRIES).map(function (entry, i, list) {
+			// Chips are only valid on the last turn.
+			if (entry.role !== 'bot' || i === list.length - 1) {
+				return entry;
+			}
+			return { role: 'bot', text: entry.text, products: entry.products, pages: entry.pages, chips: [] };
+		});
+		var payload;
+		try {
+			payload = JSON.stringify({ v: STATE_VERSION, savedAt: Date.now(), open: isOpen, history: history, pending: pendingOrder, transcript: entries });
+		} catch (e) {
+			return;
+		}
+		if (payload.length > STATE_MAX_BYTES) {
+			clearSavedState();
+			return;
+		}
+		try {
+			window.sessionStorage.setItem(stateKey(), payload);
+		} catch (e) { /* private mode or quota: the chat still works in memory */ }
+	}
+
+	function readSavedState() {
+		var raw = null;
+		try {
+			raw = window.sessionStorage.getItem(stateKey());
+		} catch (e) {
+			return null;
+		}
+		if (!raw) {
+			return null;
+		}
+		var data = null;
+		try {
+			data = raw.length <= STATE_MAX_BYTES ? JSON.parse(raw) : null;
+		} catch (e) {
+			data = null;
+		}
+		var age = data && typeof data.savedAt === 'number' ? Date.now() - data.savedAt : -1;
+		var valid = !!data && typeof data === 'object' && data.v === STATE_VERSION &&
+			age >= 0 && age <= STATE_MAX_AGE &&
+			Array.isArray(data.history) && Array.isArray(data.transcript);
+		if (!valid) {
+			clearSavedState();
+			return null;
+		}
+		return data;
+	}
+
+	function restoreState() {
+		var data = readSavedState();
+		if (!data) {
+			return;
+		}
+		restoring = true;
+		try {
+			var entries = data.transcript.slice(-STATE_MAX_ENTRIES);
+			entries.forEach(function (entry, i) {
+				if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) {
+					return;
+				}
+				if (entry.role === 'user') {
+					addUserMessage(entry.text);
+					transcript.push({ role: 'user', text: entry.text });
+					return;
+				}
+				if (entry.role !== 'bot') {
+					return;
+				}
+				var products = Array.isArray(entry.products) ? entry.products : [];
+				var pages = Array.isArray(entry.pages) ? entry.pages : [];
+				var chips = Array.isArray(entry.chips) ? entry.chips : [];
+				addBotMessage(entry.text);
+				addProducts(products);
+				addPages(pages);
+				if (i === entries.length - 1) {
+					addChips(chips);
+				}
+				transcript.push({ role: 'bot', text: entry.text, products: products, pages: pages, chips: chips });
+			});
+			history = data.history.filter(function (turn) {
+				return turn && (turn.role === 'user' || turn.role === 'assistant') && typeof turn.content === 'string';
+			}).slice(-(MAX_HISTORY_TURNS * 2));
+			pendingOrder = data.pending && typeof data.pending === 'object' ? data.pending : null;
+			if (transcript.length && els.suggestions) {
+				els.suggestions.hidden = true;
+			}
+		} finally {
+			restoring = false;
+		}
+		if (data.open === true) {
+			openPanel();
 		}
 	}
 
@@ -1010,6 +1151,7 @@ products.
 
 		renderHandoff();
 		addBotMessage(TEXT.greeting);
+		restoreState();
 	}
 
 	// --- MESSAGE RENDERING --- //
@@ -1040,6 +1182,17 @@ products.
 
 	function buildProductCard(product) {
 		var card = el('li', 'db-chat-product');
+		var href = safeUrl(product.url);
+
+		// Thumbnail and text are one link, same tab. The conversation is saved
+		// on every turn, so it reopens on the product page exactly as it was.
+		var main = el(href ? 'a' : 'div', 'db-chat-product-main');
+		if (href) {
+			main.setAttribute('href', href);
+			main.addEventListener('click', function () {
+				saveState();
+			});
+		}
 
 		var thumb = el('div', 'db-chat-product-thumb');
 		var imageSrc = safeUrl(product.image);
@@ -1056,7 +1209,7 @@ products.
 		} else {
 			thumb.appendChild(icon(ICONS.image));
 		}
-		card.appendChild(thumb);
+		main.appendChild(thumb);
 
 		var body = el('div', 'db-chat-product-body');
 		body.appendChild(el('p', 'db-chat-product-name', product.name));
@@ -1074,16 +1227,21 @@ products.
 			inStock ? TEXT.inStock : TEXT.outOfStock
 		));
 		body.appendChild(meta);
-		card.appendChild(body);
+		main.appendChild(body);
+		card.appendChild(main);
 
-		// Link to the product page only. No add-to-cart in v1 by decision —
-		// see the note in chatbot.css.
-		var href = safeUrl(product.url);
-		if (href) {
-			var link = el('a', 'db-chat-product-link', TEXT.view);
-			link.setAttribute('href', href);
-			link.setAttribute('aria-label', TEXT.view + ': ' + product.name);
-			card.appendChild(link);
+		// "This one": tells the bot exactly which product. A sibling of the
+		// link, never inside it. Only for a real positive integer id — the
+		// server re-checks the product either way.
+		var id = typeof product.id === 'number' && product.id > 0 && Math.floor(product.id) === product.id ? product.id : 0;
+		if (id) {
+			var pick = el('button', 'db-chat-product-pick', TEXT.pick);
+			pick.type = 'button';
+			pick.setAttribute('aria-label', TEXT.pick + ': ' + product.name);
+			pick.addEventListener('click', function () {
+				send(product.name, { pick: id });
+			});
+			card.appendChild(pick);
 		}
 
 		return card;
@@ -1526,7 +1684,7 @@ products.
 	 */
 	var pendingOrder = null;
 
-	function postChat(message, nonce) {
+	function postChat(message, nonce, extra) {
 		var headers = {
 			'Content-Type': 'application/json',
 			'Accept': 'application/json',
@@ -1540,7 +1698,12 @@ products.
 			method: 'POST',
 			credentials: 'same-origin',
 			headers: headers,
-			body: JSON.stringify({
+			body: JSON.stringify(extra && extra.pick ? {
+				message: message,
+				history: history.slice(-MAX_HISTORY_SENT),
+				pending: pendingOrder,
+				pick: extra.pick
+			} : {
 				message: message,
 				history: history.slice(-MAX_HISTORY_SENT),
 				pending: pendingOrder
@@ -1573,18 +1736,18 @@ products.
 	 * One transparent retry on a stale nonce: fetch a fresh one and send the
 	 * same message again. The customer should never read "session expired".
 	 */
-	function dispatch(message, attempt) {
+	function dispatch(message, attempt, extra) {
 		return fetchNonce(attempt > 0).then(function (nonce) {
-			return postChat(message, nonce);
+			return postChat(message, nonce, extra);
 		}).then(function (result) {
 			if (attempt === 0 && isStaleNonce(result)) {
-				return dispatch(message, 1);
+				return dispatch(message, 1, extra);
 			}
 			return result;
 		});
 	}
 
-	function send(rawValue) {
+	function send(rawValue, extra) {
 		if (isSending) {
 			return;
 		}
@@ -1603,6 +1766,8 @@ products.
 		}
 
 		lastAttempt = message;
+		lastAttemptExtra = extra && extra.pick ? { pick: extra.pick } : null;
+		var sentExtra = lastAttemptExtra;
 		// The customer's own words: the only thing the WhatsApp prefill may
 		// ever carry, and only if orders never came up.
 		lastUserMessage = message;
@@ -1624,10 +1789,10 @@ products.
 		setBusy(true);
 		showTyping();
 
-		dispatch(message, 0).then(function (result) {
+		dispatch(message, 0, sentExtra).then(function (result) {
 			hideTyping();
 			setBusy(false);
-			handleResponse(result, message);
+			handleResponse(result, message, sentExtra);
 		}).catch(function (error) {
 			hideTyping();
 			setBusy(false);
@@ -1636,12 +1801,12 @@ products.
 			var isSession = error && typeof error.message === 'string' &&
 				error.message.indexOf('db_chat_session') === 0;
 			addNotice(isSession ? TEXT.error : TEXT.network, true, function () {
-				send(lastAttempt);
+				send(lastAttempt, lastAttemptExtra);
 			});
 		});
 	}
 
-	function handleResponse(result, sentMessage) {
+	function handleResponse(result, sentMessage, sentExtra) {
 		var data = result.data;
 
 		// Before anything renders: if this turn went near the customer's
@@ -1666,7 +1831,7 @@ products.
 			}
 			// 500 and anything else — worth one manual retry.
 			addNotice(serverMessage(data, TEXT.error), true, function () {
-				send(sentMessage);
+				send(sentMessage, sentExtra);
 			});
 			return;
 		}
@@ -1674,7 +1839,7 @@ products.
 		var reply = data && typeof data.reply === 'string' ? data.reply.trim() : '';
 		if (!reply) {
 			addNotice(TEXT.error, true, function () {
-				send(sentMessage);
+				send(sentMessage, sentExtra);
 			});
 			return;
 		}
@@ -1725,6 +1890,19 @@ products.
 		if (history.length > MAX_HISTORY_TURNS * 2) {
 			history = history.slice(-(MAX_HISTORY_TURNS * 2));
 		}
+
+		transcript.push({ role: 'user', text: sentMessage });
+		transcript.push({
+			role: 'bot',
+			text: reply,
+			products: data && Array.isArray(data.products) ? data.products : [],
+			pages: data && Array.isArray(data.pages) ? data.pages : [],
+			chips: data && Array.isArray(data.chips) ? data.chips : []
+		});
+		if (transcript.length > STATE_MAX_ENTRIES) {
+			transcript = transcript.slice(-STATE_MAX_ENTRIES);
+		}
+		saveState();
 	}
 
 	// --- OPEN / CLOSE / FOCUS --- //
@@ -1766,6 +1944,7 @@ products.
 		}
 
 		document.addEventListener('keydown', onKeydown, true);
+		saveState();
 
 		window.setTimeout(function () {
 			if (!isOpen) {
@@ -1790,6 +1969,7 @@ products.
 		els.launcher.setAttribute('aria-expanded', 'false');
 		unlockScroll();
 		document.removeEventListener('keydown', onKeydown, true);
+		saveState();
 
 		window.setTimeout(function () {
 			if (!isOpen) {

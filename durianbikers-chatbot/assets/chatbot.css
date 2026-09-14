@@ -710,7 +710,26 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     color: var(--db-chat-out-stock-ink);
 }
 
-.db-chat-product-link {
+.db-chat-product-main {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+    gap: 12px;
+    color: inherit;
+    text-decoration: none;
+    border-radius: 8px;
+}
+
+.db-chat-product-main:focus-visible {
+    outline: 2px solid var(--db-chat-brand);
+    outline-offset: 2px;
+}
+
+.db-chat-product-pick {
+    border: 0;
+    cursor: pointer;
+    font-family: inherit;
     align-self: center;
     flex: 0 0 auto;
     padding: 7px 14px;
@@ -725,8 +744,8 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     transition: background-color 0.2s ease-in-out;
 }
 
-.db-chat-product-link:hover,
-.db-chat-product-link:focus {
+.db-chat-product-pick:hover,
+.db-chat-product-pick:focus {
     background: var(--db-chat-brand-hover);
     color: var(--db-chat-brand-ink);
     text-decoration: none;
@@ -1164,7 +1183,8 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
         max-width: 90%;
     }
 
-    .db-chat-product-link {
+    .db-chat-product-pick {
+        min-height: 44px;
         padding: 7px 12px;
     }
 
@@ -1246,7 +1266,7 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
 
     .db-chat-launcher,
     .db-chat-send,
-    .db-chat-product-link,
+    .db-chat-product-pick,
     .db-chat-page-link,
     .db-chat-handoff-link {
         border: 1px solid ButtonText;

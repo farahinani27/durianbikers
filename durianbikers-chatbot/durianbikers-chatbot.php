@@ -727,6 +727,10 @@ final class DB_Chat_Plugin {
 			'suggestions'   => self::get_suggestions(),
 			'maxLength'     => DB_Chat_Chat_Endpoint::MAX_MESSAGE_LENGTH,
 			'maxHistory'    => DB_Chat_Chat_Endpoint::MAX_HISTORY,
+			// Which storefront this page belongs to ('my', 'gb', or '' on the
+			// splash). Keys the saved conversation, so MYR and USD chats never
+			// mix. From the live theme's store routing when present.
+			'store'         => function_exists( 'db_effective_store_prefix' ) ? (string) db_effective_store_prefix() : '',
 
 			// Copy overrides. Empty string means "use the JS default".
 			'title'         => '',
