@@ -54,7 +54,7 @@ class DB_Chat_Chat_Endpoint {
 	const MAX_CHIPS = 6;
 
 	/** Maximum history entries accepted from the client. */
-	const MAX_HISTORY = 10;
+	const MAX_HISTORY = 20;
 
 	/**
 	 * Tight limit: requests per window per (IP + client token).
@@ -1374,36 +1374,7 @@ class DB_Chat_Chat_Endpoint {
 	 * @return array<int,array{role:string,content:string}>
 	 */
 	private function build_messages( array $history, $message ) {
-		$messages = array();
-
-		foreach ( $history as $entry ) {
-			// Drop any assistant turns before the first user turn.
-			if ( empty( $messages ) && 'assistant' === $entry['role'] ) {
-				continue;
-			}
-
-			$last = count( $messages ) - 1;
-
-			if ( $last >= 0 && $messages[ $last ]['role'] === $entry['role'] ) {
-				$messages[ $last ]['content'] .= "\n\n" . $entry['content'];
-				continue;
-			}
-
-			$messages[] = $entry;
-		}
-
-		$last = count( $messages ) - 1;
-
-		if ( $last >= 0 && 'user' === $messages[ $last ]['role'] ) {
-			$messages[ $last ]['content'] .= "\n\n" . $message;
-		} else {
-			$messages[] = array(
-				'role'    => 'user',
-				'content' => (string) $message,
-			);
-		}
-
-		return $messages;
+		return DB_Chat_Messages::build( $history, (string) $message );
 	}
 
 	/*

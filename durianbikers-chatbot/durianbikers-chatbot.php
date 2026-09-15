@@ -83,6 +83,8 @@ require_once DB_CHAT_PATH . 'includes/class-pending-order.php';
 require_once DB_CHAT_PATH . 'includes/class-ai-budget.php';
 require_once DB_CHAT_PATH . 'includes/class-cart-writer.php';
 require_once DB_CHAT_PATH . 'includes/class-claude-client.php';
+require_once DB_CHAT_PATH . 'includes/class-pii.php';
+require_once DB_CHAT_PATH . 'includes/class-messages.php';
 require_once DB_CHAT_PATH . 'includes/class-chat-endpoint.php';
 require_once DB_CHAT_PATH . 'includes/class-conversation-store.php';
 
