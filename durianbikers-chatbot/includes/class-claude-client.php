@@ -282,6 +282,48 @@ class DB_Chat_Claude_Client {
 	}
 
 	/**
+	 * A bare Messages API call with NO tools — used only by internal tooling
+	 * (e.g. the graded test judge). Reuses the same key handling and HTTP path as
+	 * chat(). Returns plain assistant text, or '' on any error.
+	 *
+	 * @param string $system System prompt.
+	 * @param string $user   User content.
+	 * @param int    $max    Max output tokens.
+	 * @return string
+	 */
+	public function complete( $system, $user, $max = 400 ) {
+		if ( ! $this->has_api_key() ) {
+			return '';
+		}
+
+		$response = $this->request(
+			array(
+				'model'      => $this->get_model(),
+				'max_tokens' => (int) $max,
+				'system'     => (string) $system,
+				'messages'   => array( array( 'role' => 'user', 'content' => (string) $user ) ),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return '';
+		}
+
+		$this->add_usage( $response );
+
+		$content = isset( $response['content'] ) && is_array( $response['content'] ) ? $response['content'] : array();
+		$text    = '';
+
+		foreach ( $content as $block ) {
+			if ( isset( $block['type'], $block['text'] ) && 'text' === $block['type'] ) {
+				$text .= (string) $block['text'];
+			}
+		}
+
+		return trim( $text );
+	}
+
+	/**
 	 * Usage of the most recent chat() call.
 	 *
 	 * @return array<string,int>

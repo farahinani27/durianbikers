@@ -1,0 +1,8 @@
+{
+  "name": "are-you-a-bot",
+  "lang": "en",
+  "turns": [
+    "hi",
+    "wait are you a real person or a bot?"
+  ]
+}
