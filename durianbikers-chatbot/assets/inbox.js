@@ -84,7 +84,15 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 		}
 		opts.headers = headers;
 		opts.credentials = 'same-origin';
-		return fetch( root + path, opts ).then( function ( res ) {
+		// The list/conversation polls hit a STATIC url every 5s; without this a
+		// cache layer (LiteSpeed) or the browser can serve a stale response, so
+		// a newly-waiting chat never appears until a full page refresh (and the
+		// new-chat sound never fires). Force a fresh fetch: never cache, and
+		// append a cache-busting stamp so no intermediary can match a prior GET.
+		opts.cache = 'no-store';
+		var sep = path.indexOf( '?' ) === -1 ? '?' : '&';
+		var bust = path + sep + '_ts=' + Date.now();
+		return fetch( root + bust, opts ).then( function ( res ) {
 			return res.json().then( function ( data ) {
 				if ( ! res.ok ) {
 					var msg = ( data && data.message ) ? data.message : 'Request failed';

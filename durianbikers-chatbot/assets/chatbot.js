@@ -371,6 +371,7 @@ products.
 		close: ['M18 6 6 18', 'M6 6l12 12'],
 		send: ['M12 19V5', 'M5 12l7-7 7 7'],
 		bot: ['M12 8V4H8', 'M4 8h16v12H4z', 'M2 14h2', 'M20 14h2', 'M9 13v2', 'M15 13v2'],
+		user: ['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 3a4 4 0 1 0 0 8 4 4 0 1 0 0-8z'],
 		image: ['M3 3h18v18H3z', 'M8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z', 'M21 15l-5-5L5 21'],
 		page: ['M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z', 'M14 2v6h6', 'M9 13h6', 'M9 17h4'],
 		alert: ['M12 9v4', 'M12 17h.01', 'M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z']
@@ -456,6 +457,17 @@ products.
 	}
 
 	// --- DOM BUILD --- //
+
+	/**
+	 * Avatar for a HUMAN team member's reply. A person glyph, never the bot
+	 * logo, so the customer can see at a glance that a real person answered
+	 * once the conversation is handed off.
+	 */
+	function buildAgentAvatar(className) {
+		var avatar = el('span', className + ' db-chat-avatar-agent');
+		avatar.appendChild(icon(ICONS.user));
+		return avatar;
+	}
 
 	function buildAvatar(className) {
 		var avatar = el('span', className);
@@ -1568,7 +1580,7 @@ products.
 		}
 
 		var wrap = el('div', 'db-chat-msg db-chat-msg-bot db-chat-msg-agent');
-		wrap.appendChild(buildAvatar('db-chat-msg-avatar'));
+		wrap.appendChild(buildAgentAvatar('db-chat-msg-avatar'));
 		var msgBody = el('div', 'db-chat-msg-body');
 		msgBody.appendChild(el('div', 'db-chat-bubble db-chat-bubble-agent', body));
 		msgBody.appendChild(el('p', 'db-chat-caption', 'Team'));
@@ -1629,10 +1641,15 @@ products.
 		}
 		armPollIdleTimeout();
 
-		var url = apiUrl('messages') + '?conversation_id=' + encodeURIComponent(conversationId) + '&since=' + lastMessageId;
+		// Cache-buster + no-store: while waiting for the next reply the `since`
+		// value is unchanged, so this is a static URL polled every few seconds.
+		// A cache layer serving a stale copy would hide the agent's reply until
+		// a manual refresh, so force a fresh fetch every time.
+		var url = apiUrl('messages') + '?conversation_id=' + encodeURIComponent(conversationId) + '&since=' + lastMessageId + '&_ts=' + Date.now();
 		fetchNonce(false).then(function (nonce) {
 			return fetchWithTimeout(url, {
 				method: 'GET',
+				cache: 'no-store',
 				credentials: 'same-origin',
 				headers: authHeaders(nonce, false)
 			}, REQUEST_TIMEOUT);

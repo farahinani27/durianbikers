@@ -274,6 +274,12 @@ class DB_Chat_Product_Index {
 		$brand         = isset( $args['brand'] ) && is_scalar( $args['brand'] ) ? sanitize_text_field( (string) $args['brand'] ) : '';
 		$in_stock_only = ! empty( $args['in_stock_only'] );
 
+		// When the caller named a category/brand by name (a confident,
+		// whole-word taxonomy match), the "drop the filters" last resort below
+		// is suppressed: an empty in-category result declines honestly rather
+		// than surfacing unrelated products from other categories.
+		$strict_taxonomy = ! empty( $args['strict_taxonomy'] );
+
 		/*
 		 * Optional price constraint. When set, the query itself is asked for
 		 * priced, in-range products (see run_query()) instead of relying on a
@@ -304,8 +310,9 @@ class DB_Chat_Product_Index {
 			}
 		}
 
-		// Last resort: drop the filters, keep the query.
-		if ( empty( $products ) && ( '' !== $category || '' !== $brand ) ) {
+		// Last resort: drop the filters, keep the query — unless the caller
+		// asked us to respect the named taxonomy strictly (see above).
+		if ( ! $strict_taxonomy && empty( $products ) && ( '' !== $category || '' !== $brand ) ) {
 			$products = $this->run_query( $query, '', '', $in_stock_only, $max_price, $sort_cheapest );
 		}
 

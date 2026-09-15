@@ -2259,6 +2259,12 @@ class DB_Chat_Lookup_Engine {
 
 		if ( '' !== $filters['category'] ) {
 			$args['category'] = $filters['category'];
+			// The customer named a product TYPE by name (e.g. "helmet" → the
+			// Helmets category). Honour that constraint even when it yields
+			// nothing: "helmet under RM100" with no matching helmet must
+			// decline honestly, never fall back to a filterless search that
+			// surfaces unrelated helmet ACCESSORIES (bags, cleaners, visors).
+			$args['strict_taxonomy'] = true;
 		}
 
 		/*
