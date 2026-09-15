@@ -410,12 +410,18 @@ class DB_Chat_Lookup_Engine {
 			 * human", which is an identity question. Identity is resolved first.
 			 */
 			'human'        => array(
-				'talk to a human', 'talk to a person', 'talk to someone', 'talk to staff',
-				'speak to someone', 'speak to a person', 'speak to a human', 'real person please',
-				'customer service', 'customer support', 'live agent',
+				'talk to a human', 'talk to human', 'talk to a person', 'talk to someone',
+				'talk to staff', 'talk to agent', 'talk to an agent', 'talk to your team',
+				'talk to the team', 'talk to a real person', 'talk to real person',
+				'speak to someone', 'speak to a person', 'speak to a human', 'speak to agent',
+				'speak to staff', 'speak to a real person', 'real person please', 'real person',
+				'real human', 'live agent', 'live person', 'human agent', 'customer service',
+				'customer support', 'need a human', 'want a human', 'get me a human',
+				'need to speak to someone', 'connect me to someone', 'connect me with someone',
+				'connect me to a person', 'chat with a person',
 				'nak cakap dengan orang', 'cakap dengan orang', 'cakap dengan staf',
 				'bercakap dengan staf', 'nak cakap dengan manusia', 'nak tanya orang',
-				'khidmat pelanggan',
+				'nak jumpa staff', 'sambung ke staf', 'khidmat pelanggan',
 			),
 
 			/* -------- opening hours -------- */
@@ -975,6 +981,7 @@ class DB_Chat_Lookup_Engine {
 			'handoff_hint'       => __( 'For anything I cannot answer, use the WhatsApp button below and a person will reply.', 'durianbikers-chatbot' ),
 			'handoff_none'       => __( 'For anything I cannot answer, please contact the shop directly.', 'durianbikers-chatbot' ),
 			'human_handoff'      => __( 'A person can help with that. Tap the WhatsApp button below and our team will reply.', 'durianbikers-chatbot' ),
+			'human_inwidget'     => __( "Sure — I can connect you with a team member. Please leave your name and email below and we'll get back to you.", 'durianbikers-chatbot' ),
 			'human_closed'       => __( "We're closed right now, so we'll reply when we open.", 'durianbikers-chatbot' ),
 			'human_none'         => __( 'A person can help with that. Please contact us — the details are on our Contact Us page.', 'durianbikers-chatbot' ),
 			'pick_not_found'     => __( "I couldn't find that product — can you tell me which one?", 'durianbikers-chatbot' ),
@@ -1080,6 +1087,7 @@ class DB_Chat_Lookup_Engine {
 			'handoff_hint'       => 'Untuk apa-apa yang saya tidak boleh jawab, guna butang WhatsApp di bawah dan seseorang akan membalas.',
 			'handoff_none'       => 'Untuk apa-apa yang saya tidak boleh jawab, sila hubungi kedai secara terus.',
 			'human_handoff'      => 'Staf kami boleh bantu. Tekan butang WhatsApp di bawah dan pasukan kami akan membalas.',
+			'human_inwidget'     => 'Boleh — saya boleh sambungkan anda dengan pasukan kami. Sila tinggalkan nama dan emel anda di bawah dan kami akan hubungi anda semula.',
 			'human_closed'       => 'Kami tutup sekarang, jadi kami akan membalas bila kami buka.',
 			'human_none'         => 'Staf kami boleh bantu. Sila hubungi kami — butirannya ada di halaman Contact Us kami.',
 			'pick_not_found'     => 'Saya tidak jumpa produk itu — boleh beritahu yang mana satu?',
@@ -3568,6 +3576,15 @@ class DB_Chat_Lookup_Engine {
 	 * @return array
 	 */
 	private function answer_human( $language, $open = null ) {
+		/*
+		 * In-widget human handoff enabled → invite the widget's contact form
+		 * (the escalate flag, set from the 'human' intent, drives it) rather than
+		 * pushing the WhatsApp button. Kept minimal: the form carries the UX.
+		 */
+		if ( '1' === get_option( 'db_chat_handoff_enabled', '0' ) ) {
+			return $this->compose( $this->text( $language, 'human_inwidget' ), $language );
+		}
+
 		$configured = false;
 
 		if ( class_exists( 'DB_Chat_Handoff' ) ) {
