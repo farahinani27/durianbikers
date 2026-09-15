@@ -84,6 +84,7 @@ require_once DB_CHAT_PATH . 'includes/class-ai-budget.php';
 require_once DB_CHAT_PATH . 'includes/class-cart-writer.php';
 require_once DB_CHAT_PATH . 'includes/class-claude-client.php';
 require_once DB_CHAT_PATH . 'includes/class-chat-endpoint.php';
+require_once DB_CHAT_PATH . 'includes/class-conversation-store.php';
 
 /**
  * Optional modules, in dependency order agreed with the notifier agent.
@@ -112,6 +113,9 @@ $db_chat_optional_files = array(
 	'includes/notifiers/class-whatsapp-notifier.php',
 	'includes/class-order-notifier.php',
 	'includes/class-settings.php',
+	'includes/class-handoff-alert.php',
+	'includes/class-handoff-endpoint.php',
+	'includes/class-inbox-admin.php',
 );
 
 foreach ( $db_chat_optional_files as $db_chat_optional_file ) {
@@ -241,11 +245,34 @@ final class DB_Chat_Plugin {
 
 		$this->endpoint = new DB_Chat_Chat_Endpoint( $this->product_index, $this->client, $this->content_index, $this->order_lookup, $this->lookup_engine );
 
+		/*
+		 * Human handoff storage + services. Guarded the same way as the
+		 * lookup engine above: a manual file upload can be partial, and a
+		 * missing optional file must degrade the feature, never fatal the
+		 * storefront. class-conversation-store.php itself is a CORE
+		 * (unconditional) require because class-chat-endpoint.php already
+		 * calls DB_Chat_Conversation_Store:: unguarded above whenever the
+		 * handoff toggle is on.
+		 */
+		if ( class_exists( 'DB_Chat_Conversation_Store' ) ) {
+			DB_Chat_Conversation_Store::maybe_upgrade();
+		}
+
+		if ( class_exists( 'DB_Chat_Handoff_Endpoint' ) ) {
+			new DB_Chat_Handoff_Endpoint();
+		}
+
+		if ( class_exists( 'DB_Chat_Inbox_Admin' ) ) {
+			new DB_Chat_Inbox_Admin();
+		}
+
 		add_action( 'init', array( $this, 'load_textdomain' ) );
 		add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_frontend_assets' ) );
 		add_filter( 'plugin_action_links_' . plugin_basename( DB_CHAT_FILE ), array( $this, 'add_settings_action_link' ) );
 
 		$this->register_cache_purge_hooks();
+
+		$this->register_handoff_retention_cron();
 
 		$this->boot_optional_modules();
 
@@ -255,6 +282,38 @@ final class DB_Chat_Plugin {
 		 * @param DB_Chat_Plugin $plugin Plugin instance.
 		 */
 		do_action( 'db_chat_loaded', $this );
+	}
+
+	/**
+	 * Register the daily conversation-retention purge.
+	 *
+	 * The purge handler itself is always registered (harmless no-op if the
+	 * store class is missing), but the recurring event is only scheduled
+	 * when the handoff feature is actually on — no point cluttering wp-cron
+	 * with a job for a feature nobody enabled. Scheduling happens on
+	 * 'init' (not here in the constructor) because wp_next_scheduled() /
+	 * wp_schedule_event() need the cron system available.
+	 *
+	 * @return void
+	 */
+	private function register_handoff_retention_cron() {
+		add_action(
+			'db_chat_handoff_purge',
+			function () {
+				if ( class_exists( 'DB_Chat_Conversation_Store' ) ) {
+					DB_Chat_Conversation_Store::purge( (int) get_option( 'db_chat_handoff_retention_days', 90 ) );
+				}
+			}
+		);
+
+		add_action(
+			'init',
+			function () {
+				if ( '1' === get_option( 'db_chat_handoff_enabled', '0' ) && ! wp_next_scheduled( 'db_chat_handoff_purge' ) ) {
+					wp_schedule_event( time() + HOUR_IN_SECONDS, 'daily', 'db_chat_handoff_purge' );
+				}
+			}
+		);
 	}
 
 	/**
@@ -905,6 +964,14 @@ register_activation_hook(
 		add_option( DB_CHAT_OPT_MODEL, DB_CHAT_DEFAULT_MODEL );
 		add_option( DB_CHAT_OPT_GREETING, '' );
 		add_option( DB_CHAT_OPT_LOGGING, '0' );
+
+		// Human handoff. Off by default, same reasoning as DB_CHAT_OPT_ENABLED
+		// above: this runs on a live store, so the feature stays off until
+		// someone deliberately turns it on.
+		add_option( 'db_chat_handoff_enabled', '0' );
+		add_option( 'db_chat_handoff_notify', '0' );
+		add_option( 'db_chat_handoff_retention_days', '90' );
+		add_option( 'db_chat_handoff_poll_seconds', '5' );
 	}
 );
 
@@ -914,5 +981,7 @@ register_deactivation_hook(
 		// Only the cached retrieval indexes. Settings are left untouched.
 		delete_transient( 'db_chat_product_index' );
 		delete_transient( 'db_chat_content_index' );
+
+		wp_clear_scheduled_hook( 'db_chat_handoff_purge' );
 	}
 );
