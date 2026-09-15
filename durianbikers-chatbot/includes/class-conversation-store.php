@@ -142,6 +142,22 @@ final class DB_Chat_Conversation_Store {
 		return $row ?: null;
 	}
 
+	/** Look up a conversation by its public token WITHOUT creating one. Null if unknown. */
+	public static function get_by_public_id( $public_id ) {
+		global $wpdb;
+
+		if ( ! preg_match( '/^[a-f0-9]{32}$/', is_string( $public_id ) ? $public_id : '' ) ) {
+			return null;
+		}
+
+		$row = $wpdb->get_row(
+			$wpdb->prepare( 'SELECT * FROM ' . self::conversations_table() . ' WHERE public_id = %s', $public_id ),
+			ARRAY_A
+		);
+
+		return $row ?: null;
+	}
+
 	/**
 	 * Append a message and touch the conversation's activity timestamps.
 	 *

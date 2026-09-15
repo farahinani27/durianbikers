@@ -41,7 +41,10 @@ final class DB_Chat_Handoff_Endpoint {
 		}
 
 		$public_id = (string) $request->get_param( 'conversation_id' );
-		$conv      = DB_Chat_Conversation_Store::ensure( $public_id );
+		$conv      = DB_Chat_Conversation_Store::get_by_public_id( $public_id );
+		if ( ! $conv ) {
+			return new WP_Error( 'db_chat_bad_conversation', 'Unknown conversation.', array( 'status' => 404 ) );
+		}
 
 		// Already with a human/queue — don't re-alert.
 		$already = in_array( $conv['status'], array( DB_Chat_Conversation_Store::STATUS_WAITING, DB_Chat_Conversation_Store::STATUS_HUMAN ), true );
@@ -64,7 +67,8 @@ final class DB_Chat_Handoff_Endpoint {
 			}
 		}
 
-		return rest_ensure_response( array( 'status' => DB_Chat_Conversation_Store::STATUS_WAITING, 'conversation_id' => $conv['public_id'] ) );
+		$status = $already ? $conv['status'] : DB_Chat_Conversation_Store::STATUS_WAITING;
+		return rest_ensure_response( array( 'status' => $status, 'conversation_id' => $conv['public_id'] ) );
 	}
 
 	public function handle_messages( WP_REST_Request $request ) {
@@ -77,7 +81,10 @@ final class DB_Chat_Handoff_Endpoint {
 			return new WP_Error( 'db_chat_bad_conversation', 'Unknown conversation.', array( 'status' => 400 ) );
 		}
 
-		$conv = DB_Chat_Conversation_Store::ensure( $public_id );
+		$conv = DB_Chat_Conversation_Store::get_by_public_id( $public_id );
+		if ( ! $conv ) {
+			return new WP_Error( 'db_chat_bad_conversation', 'Unknown conversation.', array( 'status' => 404 ) );
+		}
 		$since = (int) $request->get_param( 'since' );
 
 		$messages = DB_Chat_Conversation_Store::messages_since( (int) $conv['id'], $since, array( 'agent', 'system' ) );
