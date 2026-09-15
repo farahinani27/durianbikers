@@ -152,6 +152,18 @@ class DB_Chat_Chat_Endpoint {
 	private $order_tool_used = false;
 
 	/**
+	 * Did the request_human tool run during THIS request?
+	 *
+	 * Request-scoped exactly like $order_tool_used above: reset at the top of
+	 * every handle_request(), set true only inside raise_human_handoff(). ORed
+	 * into $escalate so finalize_response() marks the reply for the widget
+	 * exactly as the free lookup engine's last_wants_human() path does.
+	 *
+	 * @var bool
+	 */
+	private $tool_requested_human = false;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param DB_Chat_Product_Index      $product_index Product retrieval service.
@@ -585,8 +597,9 @@ class DB_Chat_Chat_Endpoint {
 		 */
 		$this->prevent_caching( 'durianbikers chatbot: per-visitor reply, must never be cached' );
 
-		// Request-scoped flag; never carry a previous request's state.
-		$this->order_tool_used = false;
+		// Request-scoped flags; never carry a previous request's state.
+		$this->order_tool_used      = false;
+		$this->tool_requested_human = false;
 
 		// Declared here so finalize_response() has a stable value on every
 		// code path; the lookup branch below overwrites it once the engine
@@ -703,7 +716,7 @@ class DB_Chat_Chat_Endpoint {
 		$reply = $this->client->chat(
 			$messages,
 			$context,
-			$this->get_tool_executor(),
+			$this->get_tool_executor( null !== $conversation ? (int) $conversation['id'] : 0 ),
 			$pages
 		);
 
@@ -731,6 +744,11 @@ class DB_Chat_Chat_Endpoint {
 			'products' => array_values( $products ),
 			'pages'    => array_values( $pages ),
 		);
+
+		// The model may have called request_human during this turn's tool
+		// rounds; escalate the reply exactly as the lookup engine's
+		// last_wants_human() path does above.
+		$escalate = $escalate || $this->tool_requested_human;
 
 		return $this->finalize_response( $response_data, $conversation, $escalate );
 	}
@@ -760,6 +778,57 @@ class DB_Chat_Chat_Endpoint {
 		}
 
 		return $this->apply_no_store( rest_ensure_response( $response_data ) );
+	}
+
+	/**
+	 * Hand the conversation to a human: reuse the existing handoff + inbox +
+	 * alerts. Returns a warm next-step message the model relays to the
+	 * customer. When handoff is disabled (the production default until it is
+	 * turned on), falls back to the same "talk to a human" copy the free
+	 * lookup engine uses and changes no status.
+	 *
+	 * @param int $conversation_id Active conversation id, or 0 when handoff
+	 *                             tracking is off / no conversation exists.
+	 * @return array{ handoff:bool, message:string }
+	 */
+	public function raise_human_handoff( $conversation_id ) {
+		$conversation_id = (int) $conversation_id;
+
+		// Only ever set true: this drives $escalate in handle_request(), which
+		// must stay set for the rest of the request once the model has asked
+		// for a human, no matter how many tool rounds follow.
+		$this->tool_requested_human = true;
+
+		if ( ! $this->handoff_enabled() || $conversation_id <= 0 ) {
+			// Same wording as DB_Chat_Lookup_Engine's 'human_handoff' copy —
+			// see class-lookup-engine.php — so the customer sees one
+			// consistent line whichever brain answered.
+			return array(
+				'handoff' => true,
+				'message' => __( 'A person can help with that. Tap the WhatsApp button below and our team will reply.', 'durianbikers-chatbot' ),
+			);
+		}
+
+		DB_Chat_Conversation_Store::set_status( $conversation_id, DB_Chat_Conversation_Store::STATUS_WAITING );
+
+		if ( class_exists( 'DB_Chat_Handoff_Alert' ) ) {
+			DB_Chat_Handoff_Alert::send( $conversation_id );
+		}
+
+		$hours = class_exists( 'DB_Chat_Handoff' ) ? DB_Chat_Handoff::get_hours_text() : '';
+
+		$message = '' !== $hours
+			? sprintf(
+				/* translators: %s: opening hours summary. */
+				__( "I've flagged your chat for a team member — they'll reply right here. We're around %s. Anything you'd like me to note for them?", 'durianbikers-chatbot' ),
+				$hours
+			)
+			: __( "I've flagged your chat for a team member — they'll reply right here. Anything you'd like me to note for them?", 'durianbikers-chatbot' );
+
+		return array(
+			'handoff' => true,
+			'message' => $message,
+		);
 	}
 
 	/**
@@ -1133,27 +1202,42 @@ class DB_Chat_Chat_Endpoint {
 	/**
 	 * The callable the Anthropic client uses to run a tool.
 	 *
-	 * Dispatch is an explicit allowlist of exactly three tool names. Anything
-	 * else returns an empty result rather than reaching any store data — the
-	 * client already rejects unknown names, this is the second lock.
+	 * Dispatch is an explicit allowlist of exactly five tool names
+	 * (search_products, get_product, search_pages, get_my_orders,
+	 * request_human). Anything else returns an empty result rather than
+	 * reaching any store data — the client already rejects unknown names,
+	 * this is the second lock.
 	 *
 	 * NOTE ON IDENTITY: nothing about the customer is captured into this
 	 * closure and nothing identifying is passed through $input. The order
 	 * lookup resolves the user itself, from the session, at call time. That is
 	 * the whole point — there is no identity value here for anything to tamper
-	 * with. Do not add one.
+	 * with. Do not add one. The same applies to request_human: $conversation_id
+	 * identifies a conversation, never a person, and is never taken from the
+	 * model's tool input — it is threaded in from handle_request()'s own
+	 * $conversation row.
 	 *
+	 * @param int $conversation_id Active conversation id (handoff tracking),
+	 *                             or 0 when handoff is off / no conversation
+	 *                             exists yet. Threaded through so a
+	 *                             request_human call reaches the right row.
 	 * @return callable fn( string $name, array $input ): array
 	 */
-	private function get_tool_executor() {
-		$products = $this->product_index;
-		$pages    = $this->content_index;
-		$orders   = $this->order_lookup;
+	private function get_tool_executor( $conversation_id = 0 ) {
+		$products        = $this->product_index;
+		$pages           = $this->content_index;
+		$orders          = $this->order_lookup;
+		$conversation_id = (int) $conversation_id;
 
-		// Deliberately NOT static: it flags order tool use on $this so the
-		// response can be marked no-store and the log suppressed.
-		return function ( $name, $input ) use ( $products, $pages, $orders ) {
+		// Deliberately NOT static: it flags order/human tool use on $this so
+		// the response can be marked no-store, the log suppressed, and the
+		// turn escalated to a human.
+		return function ( $name, $input ) use ( $products, $pages, $orders, $conversation_id ) {
 			$input = is_array( $input ) ? $input : array();
+
+			if ( DB_Chat_Claude_Client::TOOL_HUMAN === $name ) {
+				return $this->raise_human_handoff( $conversation_id );
+			}
 
 			if ( DB_Chat_Claude_Client::TOOL_ORDERS === $name ) {
 				$this->order_tool_used = true;

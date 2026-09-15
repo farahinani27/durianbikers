@@ -510,6 +510,23 @@ final class DB_Chat_Plugin {
 		return $this->lookup_engine;
 	}
 
+	/**
+	 * Accessor for the REST endpoint.
+	 *
+	 * Minimal and non-sensitive: the endpoint object holds no credentials (the
+	 * API key lives only inside DB_Chat_Claude_Client, which never exposes
+	 * it), and every method on it that touches personal data resolves
+	 * identity from the request/session itself, never from a caller-supplied
+	 * value. Exists so server smoke tests (tests/server/) can exercise public
+	 * endpoint methods such as raise_human_handoff() against the real, fully
+	 * wired instance instead of constructing a second one by hand.
+	 *
+	 * @return DB_Chat_Chat_Endpoint
+	 */
+	public function endpoint() {
+		return $this->endpoint;
+	}
+
 	/*
 	 * -----------------------------------------------------------------------
 	 * Settings access

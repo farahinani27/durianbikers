@@ -72,6 +72,14 @@ class DB_Chat_Claude_Client {
 	const TOOL_ORDERS = 'get_my_orders';
 
 	/**
+	 * Hand the conversation to a human team member.
+	 *
+	 * Identity is never a tool input; its only parameter is a free-text
+	 * `reason` label. See DB_Chat_Chat_Endpoint::raise_human_handoff().
+	 */
+	const TOOL_HUMAN = 'request_human';
+
+	/**
 	 * Back-compat alias for the original single-tool constant.
 	 *
 	 * @deprecated Use TOOL_PRODUCTS.
@@ -243,7 +251,7 @@ class DB_Chat_Claude_Client {
 			if ( ( $round + 1 ) >= self::MAX_TOOL_ROUNDS ) {
 				$tool_results[] = array(
 					'type' => 'text',
-					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ' or ' . self::TOOL_PRODUCT . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human. Do not fill the gap with a guess.',
+					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ' or ' . self::TOOL_PRODUCT . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human — you may still call ' . self::TOOL_HUMAN . ' on this round. Do not fill the gap with a guess.',
 				);
 			}
 
@@ -341,9 +349,9 @@ class DB_Chat_Claude_Client {
 			'tool_use_id' => $id,
 		);
 
-		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT ), true ) ) {
+		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT, self::TOOL_HUMAN ), true ) ) {
 			$block['is_error'] = true;
-			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ' and ' . self::TOOL_PRODUCT . '.';
+			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ' and ' . self::TOOL_HUMAN . '.';
 
 			return $block;
 		}
@@ -445,9 +453,11 @@ class DB_Chat_Claude_Client {
 	/**
 	 * The tools exposed to the model.
 	 *
-	 * There are exactly three. One reads published products. One reads a fixed
-	 * allowlist of published help pages. The third reads the orders of the
-	 * customer who is signed in to THIS request — and only theirs.
+	 * There are five. One reads published products, one reads a single
+	 * product's sizes/stock/price, one reads a fixed allowlist of published
+	 * help pages, one reads the orders of the customer who is signed in to
+	 * THIS request — and only theirs — and the fifth hands the conversation
+	 * to a human team member.
 	 *
 	 * The guarantee is structural, not a promise made in the prompt: the order
 	 * tool's input schema contains no customer identifier of any kind, so there
@@ -533,6 +543,20 @@ class DB_Chat_Claude_Client {
 						),
 					),
 					'required'   => array(),
+				),
+			),
+			array(
+				'name'         => self::TOOL_HUMAN,
+				'description'  => 'Hand this conversation to a human team member. Call this when the customer asks for a person, is frustrated or angry, has a complaint/refund/warranty/damaged-item issue, a checkout or payment problem, a fitment question you cannot verify from product data, or you have already failed twice to help. After calling it, tell the customer warmly what happens next (use the message the tool returns).',
+				'input_schema' => array(
+					'type'       => 'object',
+					'properties' => array(
+						'reason' => array(
+							'type'        => 'string',
+							'description' => 'Short reason for the handoff (e.g. "complaint", "asked for a person", "unverifiable fitment").',
+						),
+					),
+					'required'   => array( 'reason' ),
 				),
 			),
 		);
