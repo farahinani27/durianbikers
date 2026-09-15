@@ -726,6 +726,55 @@ class DB_Chat_Product_Index {
 		return mb_strlen( $tokens[0] ) >= 3 ? $tokens[0] : '';
 	}
 
+	/**
+	 * Whitelisted variation detail for one product. Reuses the cart-writer's
+	 * read-only in_stock_variations() so there is one source of truth for stock.
+	 *
+	 * @param array $input { product_id:int }
+	 * @return array { name, url, variations:[{label,size,price,in_stock}] }
+	 */
+	public function get_product_detail( array $input ) {
+		$id = isset( $input['product_id'] ) ? (int) $input['product_id'] : 0;
+		if ( $id <= 0 || ! function_exists( 'wc_get_product' ) ) {
+			return array( 'name' => '', 'url' => '', 'variations' => array() );
+		}
+		$product = wc_get_product( $id );
+		if ( ! $product instanceof WC_Product || 'publish' !== $product->get_status() ) {
+			return array( 'name' => '', 'url' => '', 'variations' => array() );
+		}
+		$out = array(
+			'name'       => wp_strip_all_tags( $product->get_name() ),
+			'url'        => esc_url_raw( (string) $product->get_permalink() ),
+			'variations' => array(),
+		);
+		if ( class_exists( 'DB_Chat_Cart_Writer' ) ) {
+			$writer = new DB_Chat_Cart_Writer();
+			foreach ( $writer->in_stock_variations( $id ) as $v ) {
+				if ( ! is_array( $v ) ) {
+					continue;
+				}
+				$label = isset( $v['label'] ) ? wp_strip_all_tags( (string) $v['label'] ) : '';
+				$out['variations'][] = array(
+					'label'    => $label,
+					'size'     => $label, // the variation label IS the size/option wording
+					'price'    => isset( $v['price'] ) ? (string) $v['price'] : '',
+					'in_stock' => true,
+				);
+			}
+			// Simple (non-variable) product: no variations — surface the base price as one entry.
+			if ( empty( $out['variations'] ) && ! $product->is_type( 'variable' ) ) {
+				$d = $writer->describe( $id, 0 );
+				$out['variations'][] = array(
+					'label'    => '',
+					'size'     => '',
+					'price'    => is_array( $d ) && isset( $d['price'] ) ? (string) $d['price'] : '',
+					'in_stock' => (bool) $product->is_in_stock(),
+				);
+			}
+		}
+		return $out;
+	}
+
 	/*
 	 * -----------------------------------------------------------------------
 	 * Formatting

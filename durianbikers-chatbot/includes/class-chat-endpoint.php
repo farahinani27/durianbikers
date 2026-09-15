@@ -1193,6 +1193,10 @@ class DB_Chat_Chat_Endpoint {
 				return $products->search_products( $input );
 			}
 
+			if ( DB_Chat_Claude_Client::TOOL_PRODUCT === $name ) {
+				return $products->get_product_detail( $input );
+			}
+
 			return array(
 				'results'   => array(),
 				'count'     => 0,

@@ -59,6 +59,9 @@ class DB_Chat_Claude_Client {
 	/** Help page search tool. */
 	const TOOL_PAGES = 'search_pages';
 
+	/** Single-product size/stock/price detail tool. */
+	const TOOL_PRODUCT = 'get_product';
+
 	/**
 	 * The signed-in customer's own orders.
 	 *
@@ -240,7 +243,7 @@ class DB_Chat_Claude_Client {
 			if ( ( $round + 1 ) >= self::MAX_TOOL_ROUNDS ) {
 				$tool_results[] = array(
 					'type' => 'text',
-					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ' or ' . self::TOOL_ORDERS . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human. Do not fill the gap with a guess.',
+					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ' or ' . self::TOOL_PRODUCT . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human. Do not fill the gap with a guess.',
 				);
 			}
 
@@ -338,9 +341,9 @@ class DB_Chat_Claude_Client {
 			'tool_use_id' => $id,
 		);
 
-		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS ), true ) ) {
+		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT ), true ) ) {
 			$block['is_error'] = true;
-			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ' and ' . self::TOOL_ORDERS . '.';
+			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ' and ' . self::TOOL_PRODUCT . '.';
 
 			return $block;
 		}
@@ -502,6 +505,20 @@ class DB_Chat_Claude_Client {
 						),
 					),
 					'required'   => array( 'query' ),
+				),
+			),
+			array(
+				'name'         => self::TOOL_PRODUCT,
+				'description'  => 'Get in-stock sizes and their prices for ONE product you already found with search_products. Pass the product_id from a search result. Call this before telling a customer a specific size is in stock.',
+				'input_schema' => array(
+					'type'       => 'object',
+					'properties' => array(
+						'product_id' => array(
+							'type'        => 'integer',
+							'description' => 'The id from a search_products result.',
+						),
+					),
+					'required'   => array( 'product_id' ),
 				),
 			),
 			array(
