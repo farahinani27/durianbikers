@@ -251,6 +251,25 @@ final class DB_Chat_Conversation_Store {
 		);
 	}
 
+	/**
+	 * Hand a conversation back to the bot: clear whoever had it assigned and
+	 * drop the status back to 'bot'. The inverse of assign() above.
+	 */
+	public static function assign_to_bot( $conversation_id ) {
+		global $wpdb;
+		$wpdb->update(
+			self::conversations_table(),
+			array(
+				'assigned_user_id' => null,
+				'status'           => self::STATUS_BOT,
+				'updated_at'       => current_time( 'mysql', true ),
+			),
+			array( 'id' => (int) $conversation_id ),
+			array( '%d', '%s', '%s' ),
+			array( '%d' )
+		);
+	}
+
 	public static function set_contact( $conversation_id, $type, $value ) {
 		global $wpdb;
 		$wpdb->update(

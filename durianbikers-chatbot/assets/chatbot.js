@@ -1423,6 +1423,11 @@ products.
 		var ms = Math.max(2000, (pollSeconds || 5) * 1000);
 		pollTimer = window.setInterval(fetchNewMessages, ms);
 		armPollIdleTimeout();
+		// setInterval alone does not fire until the first tick elapses, so a
+		// reply (or an assignment note) already sitting on the server the
+		// moment handoff completes would sit unseen for a full pollSeconds.
+		// Poll once immediately too.
+		fetchNewMessages();
 	}
 
 	function stopPolling() {
@@ -1469,10 +1474,33 @@ products.
 					lastMessageId = mid;
 				}
 			});
-			if (typeof d.status === 'string') {
-				currentStatus = d.status;
+			if (typeof d.status !== 'string') {
+				return;
 			}
+			var previousStatus = currentStatus;
+			currentStatus = d.status;
+
 			if (currentStatus === 'resolved') {
+				// The conversation is over: stop polling, say so, and forget
+				// it entirely — localStorage id, in-memory id, last-seen
+				// message id, status — so the customer's NEXT message opens
+				// a brand new conversation instead of continuing this one.
+				stopPolling();
+				renderSystemNote('This chat has been closed. Send a message to start a new one.');
+				conversationId = null;
+				lastMessageId = 0;
+				currentStatus = null;
+				try {
+					window.localStorage.removeItem(CONVERSATION_ID_KEY);
+				} catch (e) { /* storage unavailable: memory only */ }
+				setHumanHandoffButtonVisible(true);
+				return;
+			}
+
+			if (currentStatus === 'bot' && (previousStatus === 'waiting' || previousStatus === 'human')) {
+				// Reassigned back to the bot: stop polling and let the next
+				// message go through the normal AI reply path again. Same
+				// conversation id on purpose — this is not a new chat.
 				stopPolling();
 				setHumanHandoffButtonVisible(true);
 			}

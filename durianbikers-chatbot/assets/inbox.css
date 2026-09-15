@@ -136,6 +136,13 @@ hyphen-separated, no BEM, no build step.
 	gap: 8px;
 }
 
+/* Bot/human assignment toggle: two plain admin buttons, the active side
+   picked up via .button-primary (see db-chat-inbox-assign-btn.is-active). */
+.db-chat-inbox-assign {
+	display: flex;
+	gap: 4px;
+}
+
 /* Name/email/phone captured at handoff — sits between the head bar and the
    transcript, only rendered when at least one field is present. */
 .db-chat-inbox-contact {

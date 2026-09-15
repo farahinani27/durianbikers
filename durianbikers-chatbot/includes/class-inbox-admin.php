@@ -91,6 +91,15 @@ final class DB_Chat_Inbox_Admin {
 		);
 		register_rest_route(
 			self::NS,
+			'/inbox/assign',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $perm,
+				'callback'            => array( $this, 'r_assign' ),
+			)
+		);
+		register_rest_route(
+			self::NS,
 			'/inbox/reply',
 			array(
 				'methods'             => 'POST',
@@ -133,6 +142,36 @@ final class DB_Chat_Inbox_Admin {
 		$id = (int) $req->get_param( 'id' );
 		DB_Chat_Conversation_Store::assign( $id, get_current_user_id() );
 		return rest_ensure_response( array( 'ok' => true ) );
+	}
+
+	/**
+	 * Two-way assignment toggle driven by the inbox UI: 'human' hands the
+	 * conversation to the current agent (same as r_take), 'bot' hands it back
+	 * to the AI assistant and clears whoever had it. Either way a system
+	 * message records the change in the transcript both sides can see.
+	 */
+	public function r_assign( WP_REST_Request $req ) {
+		$id   = (int) $req->get_param( 'id' );
+		$mode = (string) $req->get_param( 'mode' );
+		if ( ! in_array( $mode, array( 'human', 'bot' ), true ) ) {
+			return new WP_Error( 'bad_mode', 'Mode must be "human" or "bot".', array( 'status' => 400 ) );
+		}
+		$c = DB_Chat_Conversation_Store::get( $id );
+		if ( ! $c ) {
+			return new WP_Error( 'not_found', 'No such conversation', array( 'status' => 404 ) );
+		}
+
+		if ( 'bot' === $mode ) {
+			DB_Chat_Conversation_Store::assign_to_bot( $id );
+			DB_Chat_Conversation_Store::add_message( $id, 'system', 'Assigned to the AI assistant.' );
+			$status = DB_Chat_Conversation_Store::STATUS_BOT;
+		} else {
+			DB_Chat_Conversation_Store::assign( $id, get_current_user_id() );
+			DB_Chat_Conversation_Store::add_message( $id, 'system', 'Assigned to a team member.' );
+			$status = DB_Chat_Conversation_Store::STATUS_HUMAN;
+		}
+
+		return rest_ensure_response( array( 'ok' => true, 'status' => $status ) );
 	}
 
 	public function r_reply( WP_REST_Request $req ) {

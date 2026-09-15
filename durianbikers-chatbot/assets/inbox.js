@@ -211,6 +211,10 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 
 		var status = convo ? convo.status : '';
 		var resolved = 'resolved' === status;
+		// 'waiting' (just handed off, not yet taken) reads as the human side
+		// of the toggle — the bot is not answering it either way.
+		var humanActive = 'human' === status || 'waiting' === status;
+		var botActive = 'bot' === status;
 
 		var bubbles = buildBubblesHtml();
 
@@ -221,7 +225,10 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			'<span class="db-chat-inbox-badge db-chat-inbox-badge--' + esc( status ) + '">' + esc( STATUS_LABELS[ status ] || status ) + '</span>' +
 			'</div>' +
 			'<div class="db-chat-inbox-detail-actions">' +
-			'<button type="button" class="button" data-action="take"' + ( resolved ? ' disabled' : '' ) + '>Take</button>' +
+			'<div class="db-chat-inbox-assign" role="group" aria-label="Assign conversation">' +
+			'<button type="button" class="button db-chat-inbox-assign-btn' + ( humanActive ? ' button-primary is-active' : '' ) + '" data-action="assign" data-mode="human" aria-pressed="' + ( humanActive ? 'true' : 'false' ) + '"' + ( resolved ? ' disabled' : '' ) + '>Assign to human</button>' +
+			'<button type="button" class="button db-chat-inbox-assign-btn' + ( botActive ? ' button-primary is-active' : '' ) + '" data-action="assign" data-mode="bot" aria-pressed="' + ( botActive ? 'true' : 'false' ) + '"' + ( resolved ? ' disabled' : '' ) + '>Assign to bot</button>' +
+			'</div>' +
 			'<button type="button" class="button" data-action="resolve"' + ( resolved ? ' disabled' : '' ) + '>Resolve</button>' +
 			'</div>' +
 			'</div>' +
@@ -322,9 +329,17 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 		var action = btn.getAttribute( 'data-action' );
 		var id = state.selectedId;
 
-		btn.disabled = true;
-		var request = 'take' === action ? api( '/take', { method: 'POST', body: JSON.stringify( { id: id } ) } ) : api( '/resolve', { method: 'POST', body: JSON.stringify( { id: id } ) } );
+		var request;
+		if ( 'assign' === action ) {
+			var mode = btn.getAttribute( 'data-mode' );
+			request = api( '/assign', { method: 'POST', body: JSON.stringify( { id: id, mode: mode } ) } );
+		} else if ( 'resolve' === action ) {
+			request = api( '/resolve', { method: 'POST', body: JSON.stringify( { id: id } ) } );
+		} else {
+			return;
+		}
 
+		btn.disabled = true;
 		request
 			.then( function () {
 				return Promise.all( [ loadList(), loadConversation( id ) ] );
