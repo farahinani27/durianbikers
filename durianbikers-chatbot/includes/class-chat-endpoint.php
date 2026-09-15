@@ -286,9 +286,12 @@ class DB_Chat_Chat_Endpoint {
 	 * ID and session token, which is a further reason this response must never
 	 * be stored by a shared cache.)
 	 *
+	 * @param WP_REST_Request|null $request Request. Optional so the existing
+	 *                                       zero-arg call shape still works;
+	 *                                       WordPress always passes it in practice.
 	 * @return WP_REST_Response
 	 */
-	public function handle_session() {
+	public function handle_session( $request = null ) {
 		// First thing, before any output and before the response is built.
 		$this->prevent_caching( 'durianbikers chatbot: per-visitor nonce, must never be cached' );
 
@@ -316,6 +319,26 @@ class DB_Chat_Chat_Endpoint {
 			}
 		} catch ( Throwable $e ) {
 			DB_Chat_Plugin::log_error( 'Handoff state could not be computed: ' . $e->getMessage() );
+		}
+
+		/*
+		 * Off by default in production. When on, hand the widget a public_id
+		 * it can round-trip on /chat so both routes agree on one conversation.
+		 */
+		if ( $this->handoff_enabled() && $request instanceof WP_REST_Request ) {
+			$public_id_param = $request->get_param( 'conversation_id' );
+			$public_id       = is_string( $public_id_param ) ? $public_id_param : '';
+
+			$conversation = DB_Chat_Conversation_Store::ensure( $public_id );
+
+			$payload['conversation_id'] = $conversation['public_id'];
+
+			if ( ! isset( $payload['handoff'] ) ) {
+				$payload['handoff'] = array();
+			}
+
+			$payload['handoff']['enabled']     = true;
+			$payload['handoff']['pollSeconds'] = max( 2, (int) get_option( 'db_chat_handoff_poll_seconds', 5 ) );
 		}
 
 		$response = new WP_REST_Response( $payload );
@@ -421,6 +444,20 @@ class DB_Chat_Chat_Endpoint {
 
 		// Standard no-cache header set, for every layer that is not LiteSpeed.
 		nocache_headers();
+	}
+
+	/**
+	 * Master toggle for the whole handoff feature. Cheap, cached option read.
+	 *
+	 * Off ('0') by default in production: DB_Chat_Conversation_Store is not
+	 * required by the main plugin yet (Task 8 wires that up), so every call
+	 * site that touches it is gated behind this method, and nothing calls it
+	 * when the toggle is off.
+	 *
+	 * @return bool
+	 */
+	private function handoff_enabled() {
+		return '1' === get_option( 'db_chat_handoff_enabled', '0' );
 	}
 
 	/*
@@ -550,6 +587,10 @@ class DB_Chat_Chat_Endpoint {
 		// Request-scoped flag; never carry a previous request's state.
 		$this->order_tool_used = false;
 
+		// Set by Task 5; always false until then, but declared here so
+		// finalize_response() has a stable value on every code path.
+		$escalate = false;
+
 		if ( ! db_chat()->is_enabled() ) {
 			return new WP_Error(
 				'db_chat_offline',
@@ -578,18 +619,62 @@ class DB_Chat_Chat_Endpoint {
 		$history = $this->sanitize_history( $request->get_param( 'history' ) );
 
 		/*
+		 * HANDOFF GATE. Off by default (db_chat_handoff_enabled = '0'), in
+		 * which case $conversation stays null and nothing below this block
+		 * ever references DB_Chat_Conversation_Store. That is what makes it
+		 * safe to ship while the store isn't wired into the main plugin yet.
+		 */
+		$conversation = null;
+
+		if ( $this->handoff_enabled() ) {
+			$public_id_param = $request->get_param( 'conversation_id' );
+			$public_id       = is_string( $public_id_param ) ? $public_id_param : '';
+			$page_url_param  = $request->get_param( 'page_url' );
+
+			$conversation = DB_Chat_Conversation_Store::ensure(
+				$public_id,
+				array(
+					'lang'     => '',
+					'page_url' => is_scalar( $page_url_param ) ? (string) $page_url_param : '',
+				)
+			);
+
+			DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'customer', $message );
+
+			// Handed off → the human owns this conversation; do not run the AI.
+			if ( in_array( $conversation['status'], array( DB_Chat_Conversation_Store::STATUS_WAITING, DB_Chat_Conversation_Store::STATUS_HUMAN ), true ) ) {
+				return $this->apply_no_store(
+					rest_ensure_response(
+						array(
+							'ack'             => true,
+							'status'          => $conversation['status'],
+							'conversation_id' => $conversation['public_id'],
+							'last_message_id' => 0,
+						)
+					)
+				);
+			}
+		}
+
+		/*
 		 * THE BRANCH. Everything above this line — nonce, rate limit, caching
 		 * headers, sanitisation — is shared, and everything below the branch
 		 * returns the same JSON shape. Nothing else in the plugin needs to know
 		 * which brain answered.
 		 */
 		if ( DB_Chat_Plugin::ENGINE_LOOKUP === db_chat()->get_engine() ) {
-			return $this->handle_with_lookup(
+			$response_data = $this->handle_with_lookup(
 				$message,
 				$history,
 				$request->get_param( 'pending' ),
 				$request->get_param( 'pick' )
 			);
+
+			if ( is_wp_error( $response_data ) ) {
+				return $response_data;
+			}
+
+			return $this->finalize_response( $response_data, $conversation, $escalate );
 		}
 
 		$messages = $this->build_messages( $history, $message );
@@ -622,15 +707,40 @@ class DB_Chat_Chat_Endpoint {
 
 		$this->maybe_log( $message, $reply );
 
-		$response = rest_ensure_response(
-			array(
-				'reply'    => (string) $reply,
-				'products' => array_values( $products ),
-				'pages'    => array_values( $pages ),
-			)
+		$response_data = array(
+			'reply'    => (string) $reply,
+			'products' => array_values( $products ),
+			'pages'    => array_values( $pages ),
 		);
 
-		return $this->apply_no_store( $response );
+		return $this->finalize_response( $response_data, $conversation, $escalate );
+	}
+
+	/**
+	 * Persist the bot reply (when a conversation is tracked) and build the
+	 * final REST response. The single place every `/chat` return path funnels
+	 * through, so the persistence block runs exactly once per request.
+	 *
+	 * When $conversation is null (handoff disabled, the production default)
+	 * this is nothing more than `apply_no_store( rest_ensure_response( $response_data ) )`
+	 * — byte-identical to what every call site did before this method existed.
+	 *
+	 * @param array      $response_data Response payload built by the caller.
+	 * @param array|null $conversation  Conversation row from DB_Chat_Conversation_Store::ensure(), or null.
+	 * @param bool       $escalate      Whether this turn should escalate to a human (Task 5; always false for now).
+	 * @return WP_REST_Response
+	 */
+	private function finalize_response( array $response_data, $conversation, $escalate ) {
+		if ( null !== $conversation ) {
+			$bot_text = isset( $response_data['reply'] ) ? (string) $response_data['reply'] : '';
+			$mid      = '' !== $bot_text ? DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'bot', $bot_text ) : 0;
+
+			$response_data['conversation_id'] = $conversation['public_id'];
+			$response_data['escalate']        = ! empty( $escalate );
+			$response_data['last_message_id'] = $mid;
+		}
+
+		return $this->apply_no_store( rest_ensure_response( $response_data ) );
 	}
 
 	/**
@@ -656,7 +766,8 @@ class DB_Chat_Chat_Endpoint {
 	 * @param string $message Sanitized customer message.
 	 * @param array  $history Sanitized history. Used by the engine as a subject
 	 *                        slot; never trusted as a subject in itself.
-	 * @return WP_REST_Response|WP_Error
+	 * @return array|WP_Error Raw response data (finalize_response() wraps and
+	 *                        persists it), or a WP_Error passed straight through.
 	 */
 	private function handle_with_lookup( $message, array $history, $pending = null, $pick = null ) {
 		if ( null === $this->lookup_engine ) {
@@ -792,9 +903,7 @@ class DB_Chat_Chat_Endpoint {
 			$payload['suggest_handoff'] = true;
 		}
 
-		$response = rest_ensure_response( $payload );
-
-		return $this->apply_no_store( $response );
+		return $payload;
 	}
 
 	/**
@@ -822,7 +931,8 @@ class DB_Chat_Chat_Endpoint {
 	 *
 	 * @param string $message Sanitized customer message.
 	 * @param array  $history Sanitized history.
-	 * @return WP_REST_Response|null Null means "send the free answer".
+	 * @return array|null Raw response data (caller/finalize_response() wraps and
+	 *                     persists it), or null meaning "send the free answer".
 	 */
 	private function maybe_answer_with_ai( $message, array $history ) {
 		if ( DB_Chat_Plugin::MODE_HYBRID !== db_chat()->get_mode() ) {
@@ -895,17 +1005,13 @@ class DB_Chat_Chat_Endpoint {
 
 		$this->maybe_log( $message, $reply );
 
-		$response = rest_ensure_response(
-			array(
-				'reply'    => $reply,
-				'products' => array_values( $products ),
-				'pages'    => array_values( $pages ),
-				// An AI answer ends any purchase in progress, as an off-topic message does.
-				'pending'  => null,
-			)
+		return array(
+			'reply'    => $reply,
+			'products' => array_values( $products ),
+			'pages'    => array_values( $pages ),
+			// An AI answer ends any purchase in progress, as an off-topic message does.
+			'pending'  => null,
 		);
-
-		return $this->apply_no_store( $response );
 	}
 
 	/**
@@ -926,7 +1032,7 @@ class DB_Chat_Chat_Endpoint {
 	 *
 	 * @param string $message Sanitized customer message.
 	 * @param array  $guided  Finder payload.
-	 * @return WP_REST_Response|WP_Error
+	 * @return array Raw response data (caller/finalize_response() wraps and persists it).
 	 */
 	private function finder_response( $message, array $guided ) {
 		$reply    = (string) $guided['reply'];
@@ -954,15 +1060,11 @@ class DB_Chat_Chat_Endpoint {
 
 		$this->maybe_log( $message, $reply );
 
-		return $this->apply_no_store(
-			rest_ensure_response(
-				array(
-					'reply'    => $reply,
-					'products' => $products,
-					'pages'    => $pages,
-					'chips'    => $chips,
-				)
-			)
+		return array(
+			'reply'    => $reply,
+			'products' => $products,
+			'pages'    => $pages,
+			'chips'    => $chips,
 		);
 	}
 
