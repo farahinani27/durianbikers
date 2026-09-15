@@ -519,6 +519,28 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			}
 		} );
 
+		// Prime the notification AudioContext on the admin's first interaction.
+		// A context first created inside the poll callback (not a user gesture)
+		// is born 'suspended' and stays silent no matter how many times it is
+		// resumed later; creating and resuming it from a real gesture is what
+		// lets the poll-driven new-chat beep actually play. Idempotent.
+		var primeAudio = function () {
+			try {
+				var Ctx = window.AudioContext || window.webkitAudioContext;
+				if ( ! Ctx ) {
+					return;
+				}
+				if ( ! audioCtx ) {
+					audioCtx = new Ctx();
+				}
+				if ( 'suspended' === audioCtx.state && audioCtx.resume ) {
+					audioCtx.resume();
+				}
+			} catch ( e ) { /* audio is best-effort only */ }
+		};
+		document.addEventListener( 'pointerdown', primeAudio );
+		document.addEventListener( 'keydown', primeAudio );
+
 		renderDetail();
 		loadList();
 

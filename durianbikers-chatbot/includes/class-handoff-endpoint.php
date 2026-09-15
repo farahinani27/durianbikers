@@ -33,6 +33,12 @@ final class DB_Chat_Handoff_Endpoint {
 			'callback'            => array( $this, 'handle_messages' ),
 			'permission_callback' => '__return_true',
 		) );
+
+		register_rest_route( self::NS, '/handoff/cancel', array(
+			'methods'             => 'POST',
+			'callback'            => array( $this, 'handle_cancel' ),
+			'permission_callback' => '__return_true',
+		) );
 	}
 
 	public function handle_handoff( WP_REST_Request $request ) {
@@ -80,6 +86,39 @@ final class DB_Chat_Handoff_Endpoint {
 		}
 
 		$status = $already ? $conv['status'] : DB_Chat_Conversation_Store::STATUS_WAITING;
+		return rest_ensure_response( array( 'status' => $status, 'conversation_id' => $conv['public_id'] ) );
+	}
+
+	/**
+	 * Customer-initiated return to the bot. The mirror of handle_handoff():
+	 * a customer who is waiting for / talking to a person can hand themselves
+	 * back to the AI assistant with no staff action. Idempotent and never an
+	 * error for a conversation that is not currently with a human.
+	 */
+	public function handle_cancel( WP_REST_Request $request ) {
+		if ( ! $this->enabled() ) {
+			return new WP_Error( 'db_chat_handoff_off', 'Handoff is not enabled.', array( 'status' => 404 ) );
+		}
+
+		$public_id = (string) $request->get_param( 'conversation_id' );
+		if ( ! preg_match( '/^[a-f0-9]{32}$/', $public_id ) ) {
+			return new WP_Error( 'db_chat_bad_conversation', 'Unknown conversation.', array( 'status' => 400 ) );
+		}
+
+		$conv = DB_Chat_Conversation_Store::get_by_public_id( $public_id );
+		if ( ! $conv ) {
+			return new WP_Error( 'db_chat_bad_conversation', 'Unknown conversation.', array( 'status' => 404 ) );
+		}
+
+		// Only a conversation currently with the queue/human flips back to the
+		// bot; anything else is left exactly as it is.
+		$in_human = in_array( $conv['status'], array( DB_Chat_Conversation_Store::STATUS_WAITING, DB_Chat_Conversation_Store::STATUS_HUMAN ), true );
+		if ( $in_human ) {
+			DB_Chat_Conversation_Store::assign_to_bot( (int) $conv['id'] );
+			DB_Chat_Conversation_Store::add_message( (int) $conv['id'], 'system', 'Customer returned to the AI assistant.' );
+		}
+
+		$status = $in_human ? DB_Chat_Conversation_Store::STATUS_BOT : $conv['status'];
 		return rest_ensure_response( array( 'status' => $status, 'conversation_id' => $conv['public_id'] ) );
 	}
 

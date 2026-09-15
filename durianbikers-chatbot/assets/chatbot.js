@@ -942,10 +942,12 @@ products.
 				window.localStorage.removeItem(CONVERSATION_ID_KEY);
 			} catch (e) { /* storage unavailable: memory only */ }
 			setHumanHandoffButtonVisible(true);
+			setBotHandoffButtonVisible(false);
 			return;
 		}
 
 		setHumanHandoffButtonVisible(currentStatus !== 'waiting' && currentStatus !== 'human');
+		setBotHandoffButtonVisible(currentStatus === 'waiting' || currentStatus === 'human');
 		if (conversationId && (currentStatus === 'waiting' || currentStatus === 'human')) {
 			startPolling();
 		}
@@ -1170,6 +1172,73 @@ products.
 	}
 
 	/**
+	 * The mirror of the human button: lets a customer who is waiting for / with
+	 * a person hand THEMSELVES back to the AI assistant, no staff action
+	 * needed. Built once, hidden by default; only ever shown while the
+	 * conversation is waiting/human.
+	 */
+	function buildBotHandoffRow() {
+		var row = el('div', 'db-chat-human-handoff db-chat-bot-handoff');
+		row.hidden = true;
+
+		var btn = el('button', 'db-chat-human-handoff-btn', 'Talk to the AI assistant');
+		btn.type = 'button';
+		btn.addEventListener('click', function () {
+			// Real user gesture: keep the notification audio primed too.
+			primeAudioContext();
+			submitBackToBot();
+		});
+		row.appendChild(btn);
+
+		els.botHandoffRow = row;
+		els.botHandoffBtn = btn;
+		return row;
+	}
+
+	/** Show/hide the "back to AI" button. Always false while handoffEnabled is false. */
+	function setBotHandoffButtonVisible(visible) {
+		if (!els.botHandoffRow) {
+			return;
+		}
+		els.botHandoffRow.hidden = !handoffEnabled || !visible;
+	}
+
+	/**
+	 * Customer-initiated return to the bot. POST /handoff/cancel flips the
+	 * conversation back to `bot` server-side (see class-handoff-endpoint.php);
+	 * locally we stop polling, restore the "Talk to a human" button, and let
+	 * the next message go through the normal AI reply path. Same conversation
+	 * id — this is not a new chat.
+	 */
+	function submitBackToBot() {
+		if (!handoffEnabled || !conversationId) {
+			return;
+		}
+		fetchNonce(false).then(function (nonce) {
+			return fetchWithTimeout(apiUrl('handoff/cancel'), {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: authHeaders(nonce, true),
+				body: JSON.stringify({ conversation_id: conversationId })
+			}, REQUEST_TIMEOUT);
+		}).then(function (response) {
+			return response.ok ? response.json() : null;
+		}).then(function (d) {
+			if (!d) {
+				addNotice(TEXT.network, true);
+				return;
+			}
+			stopPolling();
+			currentStatus = 'bot';
+			setBotHandoffButtonVisible(false);
+			setHumanHandoffButtonVisible(true);
+			renderSystemNote('You are back with the AI assistant. How can I help?');
+		}).catch(function () {
+			addNotice(TEXT.network, true);
+		});
+	}
+
+	/**
 	 * Inline "Want me to bring in a team member?" confirm, rendered into the
 	 * transcript when a /chat response carries `escalate === true`. Same
 	 * message-row shape as a chips row (spacer + body), so it lines up under
@@ -1380,6 +1449,7 @@ products.
 			var data = result.data;
 			currentStatus = data && typeof data.status === 'string' ? data.status : 'waiting';
 			setHumanHandoffButtonVisible(false);
+			setBotHandoffButtonVisible(true);
 			renderSystemNote('A team member will reply here shortly.');
 			startPolling();
 			if (typeof callbacks.onSuccess === 'function') {
@@ -1389,6 +1459,7 @@ products.
 			// Transient failure: leave the button available so the customer
 			// can simply try again rather than land on a dead end.
 			setHumanHandoffButtonVisible(true);
+			setBotHandoffButtonVisible(false);
 			addNotice(TEXT.network, true);
 			if (typeof callbacks.onOtherFailure === 'function') {
 				callbacks.onOtherFailure();
@@ -1445,18 +1516,23 @@ products.
 				return;
 			}
 			var ctx = audioCtx;
+			// A context can slip back to 'suspended' between gesture and poll;
+			// nudge it before scheduling so the tone is not silently dropped.
+			if ('suspended' === ctx.state && ctx.resume) {
+				ctx.resume();
+			}
 			var now = ctx.currentTime;
 			var osc = ctx.createOscillator();
 			var gain = ctx.createGain();
 			osc.type = 'sine';
 			osc.frequency.setValueAtTime(660, now);
 			gain.gain.setValueAtTime(0.0001, now);
-			gain.gain.exponentialRampToValueAtTime(0.1, now + 0.01);
-			gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+			gain.gain.exponentialRampToValueAtTime(0.22, now + 0.01);
+			gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
 			osc.connect(gain);
 			gain.connect(ctx.destination);
 			osc.start(now);
-			osc.stop(now + 0.14);
+			osc.stop(now + 0.2);
 		} catch (e) { /* audio is best-effort only */ }
 	}
 
@@ -1598,6 +1674,7 @@ products.
 					window.localStorage.removeItem(CONVERSATION_ID_KEY);
 				} catch (e) { /* storage unavailable: memory only */ }
 				setHumanHandoffButtonVisible(true);
+				setBotHandoffButtonVisible(false);
 				return;
 			}
 
@@ -1607,6 +1684,7 @@ products.
 				// conversation id on purpose — this is not a new chat.
 				stopPolling();
 				setHumanHandoffButtonVisible(true);
+				setBotHandoffButtonVisible(false);
 			}
 		}).catch(function () { /* transient network hiccup: try again next tick */ });
 	}
@@ -1653,6 +1731,7 @@ products.
 		// Escape hatch to a human, above the AI disclaimer. Quiet on purpose:
 		// it must not compete with the composer for attention.
 		composer.appendChild(buildHandoffRow());
+		composer.appendChild(buildBotHandoffRow());
 		// Staff-inbox "Talk to a human" control — a second, unrelated escape
 		// hatch, hidden unless handoffEnabled. See HUMAN HANDOFF (STAFF INBOX)
 		// above for why it is safe to always build this and just keep it hidden.
@@ -2513,6 +2592,7 @@ products.
 				currentStatus = data.status;
 			}
 			setHumanHandoffButtonVisible(false);
+			setBotHandoffButtonVisible(currentStatus === 'waiting' || currentStatus === 'human');
 			if (currentStatus === 'waiting' || currentStatus === 'human') {
 				startPolling();
 			}
