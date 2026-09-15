@@ -1100,6 +1100,165 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     70%, 100% { box-shadow: 0 0 0 9px rgba(37, 211, 102, 0); }
 }
 
+/*------------------------------------------------------------*/
+/*                HUMAN HANDOFF (STAFF INBOX)                 */
+/*------------------------------------------------------------*/
+
+/* Unrelated to the WhatsApp escape hatch above — this is the in-widget
+   "talk to a team member" flow: a footer button, an inline escalate confirm,
+   a contact-capture step, and rendered agent/system messages. chatbot.js
+   keeps every element behind it hidden unless GET /session reports the
+   feature is on, so [hidden] here is what makes that free. */
+
+.db-chat-human-handoff {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid var(--db-chat-border);
+    text-align: center;
+}
+
+.db-chat-human-handoff[hidden] {
+    display: none;
+}
+
+.db-chat-human-handoff-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 36px;
+    padding: 7px 16px;
+    border: 1px solid var(--db-chat-border);
+    border-radius: 999px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-ink);
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 700;
+    cursor: pointer;
+    transition: border-color 0.2s ease-in-out, background-color 0.2s ease-in-out;
+}
+
+.db-chat-human-handoff-btn:hover,
+.db-chat-human-handoff-btn:focus {
+    border-color: var(--db-chat-brand);
+    background: var(--db-chat-bubble-bot-bg);
+}
+
+/* Inline "want a human?" confirm and the contact-capture step both live in
+   the transcript, under the message they belong to — same footprint as a
+   bot bubble, not a separate panel. */
+.db-chat-escalate,
+.db-chat-contact-step {
+    max-width: calc(100% - 2rem);
+    padding: 10px 12px;
+    border: 1px solid var(--db-chat-border);
+    border-radius: var(--db-chat-radius-card);
+    background: var(--db-chat-surface);
+}
+
+.db-chat-escalate-text,
+.db-chat-contact-label {
+    margin: 0 0 8px;
+    font-size: var(--db-chat-size-message);
+    line-height: 1.4;
+    color: var(--db-chat-ink);
+}
+
+.db-chat-escalate-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 7px 14px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out;
+}
+
+.db-chat-escalate-btn:hover {
+    background: var(--db-chat-brand-hover);
+}
+
+.db-chat-contact-input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--db-chat-border);
+    border-radius: 10px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-ink);
+    font-family: inherit;
+    font-size: 16px; /* keeps iOS Safari from zooming the page on focus */
+    line-height: 1.4;
+}
+
+.db-chat-contact-input:focus {
+    border-color: var(--db-chat-brand);
+}
+
+.db-chat-contact-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.db-chat-contact-send,
+.db-chat-contact-skip {
+    flex: 0 0 auto;
+    padding: 7px 14px;
+    border-radius: 999px;
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+}
+
+.db-chat-contact-send {
+    border: 0;
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+}
+
+.db-chat-contact-send:hover {
+    background: var(--db-chat-brand-hover);
+}
+
+.db-chat-contact-skip {
+    border: 1px solid var(--db-chat-border);
+    background: var(--db-chat-surface);
+    color: var(--db-chat-ink-muted);
+}
+
+.db-chat-contact-skip:hover {
+    border-color: var(--db-chat-ink-muted);
+    color: var(--db-chat-ink);
+}
+
+/* Agent ("Team") reply — same bubble shape as a bot message, tinted with the
+   brand colour at low opacity so it reads as a different voice without
+   introducing a whole new colour. */
+.db-chat-bubble-agent {
+    background: var(--db-chat-in-stock-bg);
+    color: var(--db-chat-ink);
+}
+
+/* System note ("Conversation handed to a team member.", "A team member
+   will reply here shortly.") — centered and quiet, never a bubble: it is
+   not something either side said. */
+.db-chat-system-note {
+    margin: 2px 0;
+    padding: 0 8px;
+    font-size: var(--db-chat-size-caption);
+    line-height: 1.4;
+    color: var(--db-chat-ink-muted);
+    text-align: center;
+}
+
 /* Persistent AI disclaimer. Muc-Off ships none; PDPA plus the fitment risk
    on motorcycle parts both argue for keeping it visible at all times. */
 .db-chat-footnote {

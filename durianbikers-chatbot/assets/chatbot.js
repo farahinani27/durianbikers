@@ -208,6 +208,15 @@ products.
 	var CLIENT_KEY = 'db_chat_client';
 	var HANDOFF_PREFILL_MAX = 200;  // characters of the customer's own message
 	var HANDOFF_HIGHLIGHT_MS = 6000;
+	// Human handoff (staff inbox) — a second, unrelated "handoff" concept from
+	// the WhatsApp button above. `dbchat_cid` is localStorage on purpose (it
+	// must outlive the tab, unlike everything else this file stores) and
+	// holds only an opaque conversation id — never a message, never contact
+	// info. POLL_IDLE_MS caps how long fetchNewMessages() is allowed to keep
+	// ticking with the panel open and nobody replying, so a customer who
+	// opens the chat and walks away does not poll forever.
+	var CONVERSATION_ID_KEY = 'dbchat_cid';
+	var POLL_IDLE_MS = 10 * 60 * 1000;
 	// Header name is contract, not decoration — read it from the localized
 	// object so a backend rename cannot silently send every request into the
 	// shared rate-limit bucket. Fallback matches the route as built.
@@ -250,6 +259,32 @@ products.
 	var restoring = false;
 	// Extra request fields for a retry of the last message (the pick id).
 	var lastAttemptExtra = null;
+
+	// Human handoff (staff inbox), OFF by default in production. Every single
+	// behaviour below — the footer button, the escalate prompt, the contact
+	// step, polling, rendering agent/system messages — is gated on
+	// handoffEnabled, which only ever becomes true from a real GET /session
+	// response. While it is false this file behaves exactly as it did before
+	// this feature existed: no new button, no new fetches, no new DOM.
+	var conversationId = null;
+	var lastMessageId = 0;
+	var handoffEnabled = false;
+	var pollSeconds = 5;
+	var pollTimer = null;
+	var pollIdleTimer = null;
+	// 'bot' | 'waiting' | 'human' | 'resolved' | null (unknown / not started)
+	var currentStatus = null;
+
+	// Seeded once, synchronously, so the very first /session call already
+	// carries the id if this tab (or a previous one, via localStorage) has
+	// one. try/catch: private mode / blocked storage must not break the rest
+	// of the widget.
+	try {
+		var storedConversationId = window.localStorage.getItem(CONVERSATION_ID_KEY);
+		if (typeof storedConversationId === 'string' && storedConversationId) {
+			conversationId = storedConversationId;
+		}
+	} catch (e) { /* storage unavailable: start without one */ }
 
 	// --- SMALL HELPERS --- //
 
@@ -842,6 +877,44 @@ products.
 		renderHandoff();
 	}
 
+	/**
+	 * Human handoff (staff inbox) — an unrelated feature from the WhatsApp
+	 * button above, sharing only the `handoff` key on the session response.
+	 * Reads `conversation_id` (round-tripped regardless of the flag: see
+	 * sessionUrl's caller) and `handoff.enabled` / `handoff.pollSeconds`
+	 * (only ever present when the backend has the feature turned on).
+	 *
+	 * A missing or malformed block leaves handoffEnabled false, which is the
+	 * production default — nothing here ever turns it on by guessing.
+	 */
+	function applyHandoffFeature(data) {
+		if (!data || typeof data !== 'object') {
+			return;
+		}
+		if (typeof data.conversation_id === 'string' && data.conversation_id) {
+			conversationId = data.conversation_id;
+			try {
+				window.localStorage.setItem(CONVERSATION_ID_KEY, conversationId);
+			} catch (e) { /* storage unavailable: memory only for this tab */ }
+		}
+
+		var block = data.handoff && typeof data.handoff === 'object' ? data.handoff : null;
+		if (!block || block.enabled !== true) {
+			return;
+		}
+
+		handoffEnabled = true;
+		var seconds = parseInt(block.pollSeconds, 10);
+		if (!isNaN(seconds) && seconds > 0) {
+			pollSeconds = seconds;
+		}
+
+		setHumanHandoffButtonVisible(currentStatus !== 'waiting' && currentStatus !== 'human');
+		if (conversationId && (currentStatus === 'waiting' || currentStatus === 'human')) {
+			startPolling();
+		}
+	}
+
 	function handoffOpener() {
 		return (handoff && handoff.opener) || TEXT.handoffOpener;
 	}
@@ -1020,6 +1093,295 @@ products.
 		refreshHandoffHref();
 	}
 
+	// --- HUMAN HANDOFF (STAFF INBOX) --- //
+	// Unrelated to the WhatsApp escape hatch above: this is the in-widget
+	// "talk to a team member" flow (contact capture + polled agent replies).
+	// Built once, hidden by default — a production visitor, where
+	// handoffEnabled never becomes true, never sees this row change state.
+
+	/**
+	 * Persistent footer control. Hidden until GET /session confirms
+	 * handoffEnabled; toggled by setHumanHandoffButtonVisible() from then on
+	 * (hidden again once a handoff is actually raised, so there is no way to
+	 * open two contact steps at once).
+	 */
+	function buildHumanHandoffRow() {
+		var row = el('div', 'db-chat-human-handoff');
+		row.hidden = true;
+
+		var btn = el('button', 'db-chat-human-handoff-btn', 'Talk to a human');
+		btn.type = 'button';
+		btn.addEventListener('click', function () {
+			openContactStep();
+		});
+		row.appendChild(btn);
+
+		els.humanHandoffRow = row;
+		els.humanHandoffBtn = btn;
+		return row;
+	}
+
+	/**
+	 * Show/hide the footer button. Always false while handoffEnabled is
+	 * false, so nothing here can un-hide it before /session has said the
+	 * feature is really on.
+	 */
+	function setHumanHandoffButtonVisible(visible) {
+		if (!els.humanHandoffRow) {
+			return;
+		}
+		els.humanHandoffRow.hidden = !handoffEnabled || !visible;
+	}
+
+	/**
+	 * Inline "Want me to bring in a team member?" confirm, rendered into the
+	 * transcript when a /chat response carries `escalate === true`. Same
+	 * message-row shape as a chips row (spacer + body), so it lines up under
+	 * the reply it belongs to.
+	 */
+	function addEscalatePrompt() {
+		if (!handoffEnabled) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-escalate');
+		box.appendChild(el('p', 'db-chat-escalate-text', 'Want me to bring in a team member?'));
+		var confirm = el('button', 'db-chat-escalate-btn', 'Yes, connect me');
+		confirm.type = 'button';
+		confirm.addEventListener('click', function () {
+			box.remove();
+			openContactStep();
+		});
+		box.appendChild(confirm);
+
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
+	 * Contact-capture step: an inline optional field plus Send/Skip, appended
+	 * to the transcript. Either action POSTs /handoff — Skip just omits
+	 * contact_type/contact_value. Guarded against opening twice at once.
+	 */
+	function openContactStep() {
+		if (!handoffEnabled || els.contactStep) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-contact-step');
+		box.appendChild(el('p', 'db-chat-contact-label', 'Leave your email or WhatsApp number so we can reply (optional)'));
+
+		var input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'db-chat-contact-input';
+		input.setAttribute('placeholder', 'Email or WhatsApp number');
+		input.setAttribute('autocomplete', 'off');
+		box.appendChild(input);
+
+		var actions = el('div', 'db-chat-contact-actions');
+		var sendBtn = el('button', 'db-chat-contact-send', 'Send');
+		sendBtn.type = 'button';
+		var skipBtn = el('button', 'db-chat-contact-skip', 'Skip');
+		skipBtn.type = 'button';
+
+		function finish(value) {
+			wrap.remove();
+			els.contactStep = null;
+			submitHandoff(value);
+		}
+		sendBtn.addEventListener('click', function () {
+			finish(input.value);
+		});
+		skipBtn.addEventListener('click', function () {
+			finish('');
+		});
+		input.addEventListener('keydown', function (event) {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				finish(input.value);
+			}
+		});
+
+		actions.appendChild(sendBtn);
+		actions.appendChild(skipBtn);
+		box.appendChild(actions);
+
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		els.contactStep = wrap;
+		scrollToEnd();
+		try {
+			input.focus();
+		} catch (e) { /* not focusable yet: harmless */ }
+	}
+
+	/**
+	 * POST /handoff. Same header discipline as /chat (authHeaders, same
+	 * nonce, same token header, same credentials mode). On success the
+	 * conversation is with a human: stop offering the button, show the
+	 * confirmation line, and start polling for replies.
+	 */
+	function submitHandoff(rawValue) {
+		if (!handoffEnabled || !conversationId) {
+			return;
+		}
+
+		var value = trimmed(rawValue);
+		var body = { conversation_id: conversationId };
+		if (value) {
+			body.contact_type = value.indexOf('@') !== -1 ? 'email' : 'whatsapp';
+			body.contact_value = value;
+		}
+
+		fetchNonce(false).then(function (nonce) {
+			return fetchWithTimeout(apiUrl('handoff'), {
+				method: 'POST',
+				credentials: 'same-origin',
+				headers: authHeaders(nonce, true),
+				body: JSON.stringify(body)
+			}, REQUEST_TIMEOUT);
+		}).then(function (response) {
+			return response.json().catch(function () {
+				return null;
+			});
+		}).then(function (data) {
+			currentStatus = data && typeof data.status === 'string' ? data.status : 'waiting';
+			setHumanHandoffButtonVisible(false);
+			renderSystemNote('A team member will reply here shortly.');
+			startPolling();
+		}).catch(function () {
+			// Transient failure: leave the button available so the customer
+			// can simply try again rather than land on a dead end.
+			setHumanHandoffButtonVisible(true);
+			addNotice(TEXT.network, true);
+		});
+	}
+
+	/** Centered, subtle system line — used for both the local confirmation
+	 *  above and any `system`-sender message that comes back from polling. */
+	function renderSystemNote(text) {
+		if (typeof text !== 'string' || !text.trim()) {
+			return;
+		}
+		var note = el('p', 'db-chat-system-note', text.trim());
+		note.setAttribute('role', 'status');
+		els.log.appendChild(note);
+		scrollToEnd();
+	}
+
+	/**
+	 * `agent` → a "Team" bubble, reusing the same avatar/body/caption shape
+	 * as a bot message so it sits visually consistent with the rest of the
+	 * transcript. `system` → the subtle centered note. Anything else, or an
+	 * empty body, renders nothing.
+	 */
+	function renderTeamMessage(m) {
+		if (!m || typeof m !== 'object') {
+			return;
+		}
+		var body = typeof m.body === 'string' ? m.body.trim() : '';
+		if (!body) {
+			return;
+		}
+		if (m.sender === 'system') {
+			renderSystemNote(body);
+			return;
+		}
+		if (m.sender !== 'agent') {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot db-chat-msg-agent');
+		wrap.appendChild(buildAvatar('db-chat-msg-avatar'));
+		var msgBody = el('div', 'db-chat-msg-body');
+		msgBody.appendChild(el('div', 'db-chat-bubble db-chat-bubble-agent', body));
+		msgBody.appendChild(el('p', 'db-chat-caption', 'Team'));
+		wrap.appendChild(msgBody);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
+	 * Poll GET /messages while the panel is open and a human is (or might
+	 * soon be) on the other end. Interval length comes from the backend
+	 * (`handoff.pollSeconds`, floored at 2s client-side too, matching the
+	 * brief's own floor). Stops on: resolved, panel close, or ~10 minutes of
+	 * no activity — never runs during normal bot chat.
+	 */
+	function startPolling() {
+		if (pollTimer || !handoffEnabled || !conversationId) {
+			return;
+		}
+		var ms = Math.max(2000, (pollSeconds || 5) * 1000);
+		pollTimer = window.setInterval(fetchNewMessages, ms);
+		armPollIdleTimeout();
+	}
+
+	function stopPolling() {
+		if (pollTimer) {
+			window.clearInterval(pollTimer);
+			pollTimer = null;
+		}
+		if (pollIdleTimer) {
+			window.clearTimeout(pollIdleTimer);
+			pollIdleTimer = null;
+		}
+	}
+
+	function armPollIdleTimeout() {
+		if (pollIdleTimer) {
+			window.clearTimeout(pollIdleTimer);
+		}
+		pollIdleTimer = window.setTimeout(stopPolling, POLL_IDLE_MS);
+	}
+
+	function fetchNewMessages() {
+		if (!isOpen || !handoffEnabled || !conversationId) {
+			return;
+		}
+		armPollIdleTimeout();
+
+		var url = apiUrl('messages') + '?conversation_id=' + encodeURIComponent(conversationId) + '&since=' + lastMessageId;
+		fetchNonce(false).then(function (nonce) {
+			return fetchWithTimeout(url, {
+				method: 'GET',
+				credentials: 'same-origin',
+				headers: authHeaders(nonce, false)
+			}, REQUEST_TIMEOUT);
+		}).then(function (response) {
+			return response.ok ? response.json() : null;
+		}).then(function (d) {
+			if (!d) {
+				return;
+			}
+			(Array.isArray(d.messages) ? d.messages : []).forEach(function (m) {
+				renderTeamMessage(m);
+				var mid = parseInt(m && m.id, 10);
+				if (!isNaN(mid) && mid > lastMessageId) {
+					lastMessageId = mid;
+				}
+			});
+			if (typeof d.status === 'string') {
+				currentStatus = d.status;
+			}
+			if (currentStatus === 'resolved') {
+				stopPolling();
+				setHumanHandoffButtonVisible(true);
+			}
+		}).catch(function () { /* transient network hiccup: try again next tick */ });
+	}
+
 	function buildComposer() {
 		var composer = el('div', 'db-chat-composer');
 		var form = el('form', 'db-chat-form');
@@ -1062,6 +1424,10 @@ products.
 		// Escape hatch to a human, above the AI disclaimer. Quiet on purpose:
 		// it must not compete with the composer for attention.
 		composer.appendChild(buildHandoffRow());
+		// Staff-inbox "Talk to a human" control — a second, unrelated escape
+		// hatch, hidden unless handoffEnabled. See HUMAN HANDOFF (STAFF INBOX)
+		// above for why it is safe to always build this and just keep it hidden.
+		composer.appendChild(buildHumanHandoffRow());
 		composer.appendChild(buildFootnote());
 
 		els.input = input;
@@ -1588,6 +1954,40 @@ products.
 		return cfg.ajaxUrl.replace(/\/chat(\/)?(?=$|[?&#])/, '/session$1');
 	}
 
+	/**
+	 * Derive a sibling REST route from the chat route, the same way
+	 * sessionUrl() does. Used only by the human-handoff fetches (POST
+	 * /handoff, GET /messages), which are themselves only ever reached when
+	 * handoffEnabled is true.
+	 */
+	function apiUrl(route) {
+		if (typeof cfg.ajaxUrl !== 'string' || !cfg.ajaxUrl) {
+			return '';
+		}
+		return cfg.ajaxUrl.replace(/\/chat(\/)?(?=$|[?&#])/, '/' + route + '$1');
+	}
+
+	/**
+	 * The one place request headers are built for every authenticated fetch
+	 * in this file — /chat, and (gated on handoffEnabled) /handoff and
+	 * /messages — so the nonce header and the rate-limit token header can
+	 * never drift apart between them. `withBody` adds the JSON content-type,
+	 * which a GET must not send.
+	 */
+	function authHeaders(nonce, withBody) {
+		var headers = {
+			'Accept': 'application/json',
+			'X-WP-Nonce': nonce
+		};
+		if (withBody) {
+			headers['Content-Type'] = 'application/json';
+		}
+		// Abuse control only. This token goes nowhere else, is never used as
+		// an analytics id, and dies with the tab.
+		headers[TOKEN_HEADER] = getClientToken();
+		return headers;
+	}
+
 	function fetchWithTimeout(url, options, ms) {
 		var controller = typeof AbortController === 'function' ? new AbortController() : null;
 		if (controller) {
@@ -1624,6 +2024,13 @@ products.
 		if (!url) {
 			return Promise.reject(new Error('db_chat_no_session_url'));
 		}
+		// Round-trip whatever conversation id this tab already knows, so the
+		// backend can hand the SAME conversation back once handoff is turned
+		// on. Harmless when the feature is off: handle_session() only reads
+		// this param inside its own handoff_enabled() check.
+		if (conversationId) {
+			url += (url.indexOf('?') === -1 ? '?' : '&') + 'conversation_id=' + encodeURIComponent(conversationId);
+		}
 
 		sessionPromise = fetchWithTimeout(url, {
 			method: 'GET',
@@ -1643,6 +2050,7 @@ products.
 			// can come from. Never fatal: a missing handoff block just leaves
 			// the button without an availability claim.
 			applySessionHandoff(data);
+			applyHandoffFeature(data);
 			sessionNonce = data.nonce;
 			sessionPromise = null;
 			return sessionNonce;
@@ -1685,29 +2093,30 @@ products.
 	var pendingOrder = null;
 
 	function postChat(message, nonce, extra) {
-		var headers = {
-			'Content-Type': 'application/json',
-			'Accept': 'application/json',
-			'X-WP-Nonce': nonce
+		var headers = authHeaders(nonce, true);
+
+		var body = extra && extra.pick ? {
+			message: message,
+			history: history.slice(-MAX_HISTORY_SENT),
+			pending: pendingOrder,
+			pick: extra.pick
+		} : {
+			message: message,
+			history: history.slice(-MAX_HISTORY_SENT),
+			pending: pendingOrder
 		};
-		// Abuse control only. This token goes nowhere else, is never used as
-		// an analytics id, and dies with the tab.
-		headers[TOKEN_HEADER] = getClientToken();
+		// Only ever present once GET /session has round-tripped one back
+		// (i.e. only when handoffEnabled). Off in production: this field is
+		// simply absent, same request body as before this feature existed.
+		if (handoffEnabled && conversationId) {
+			body.conversation_id = conversationId;
+		}
 
 		return fetchWithTimeout(cfg.ajaxUrl, {
 			method: 'POST',
 			credentials: 'same-origin',
 			headers: headers,
-			body: JSON.stringify(extra && extra.pick ? {
-				message: message,
-				history: history.slice(-MAX_HISTORY_SENT),
-				pending: pendingOrder,
-				pick: extra.pick
-			} : {
-				message: message,
-				history: history.slice(-MAX_HISTORY_SENT),
-				pending: pendingOrder
-			})
+			body: JSON.stringify(body)
 		}, REQUEST_TIMEOUT).then(function (response) {
 			return response.json().catch(function () {
 				return null;
@@ -1806,12 +2215,38 @@ products.
 		});
 	}
 
+	/**
+	 * Pull `conversation_id` / `last_message_id` out of any /chat response
+	 * (ack or normal reply) and fold them into local state. Gated on
+	 * handoffEnabled — the backend only ever sends these fields once the
+	 * feature is on, so this is a genuine no-op in production today.
+	 */
+	function syncHandoffFields(data) {
+		if (!handoffEnabled || !data || typeof data !== 'object') {
+			return;
+		}
+		if (typeof data.conversation_id === 'string' && data.conversation_id) {
+			conversationId = data.conversation_id;
+			try {
+				window.localStorage.setItem(CONVERSATION_ID_KEY, conversationId);
+			} catch (e) { /* storage unavailable: memory only for this tab */ }
+		}
+		var mid = parseInt(data.last_message_id, 10);
+		if (!isNaN(mid) && mid > lastMessageId) {
+			lastMessageId = mid;
+		}
+	}
+
 	function handleResponse(result, sentMessage, sentExtra) {
 		var data = result.data;
 
 		// Before anything renders: if this turn went near the customer's
 		// orders, the prefill is off from here on.
 		noteOrderTools(data);
+		// Round-trip conversation_id / last_message_id from every /chat
+		// response — a no-op whenever handoffEnabled is false, since the
+		// backend never sends either field in that case.
+		syncHandoffFields(data);
 
 		if (!result.ok) {
 			if (result.status === 429) {
@@ -1833,6 +2268,25 @@ products.
 			addNotice(serverMessage(data, TEXT.error), true, function () {
 				send(sentMessage, sentExtra);
 			});
+			return;
+		}
+
+		/*
+		 * Handed off already: the backend answers with `{ ack: true, status,
+		 * conversation_id, last_message_id }` and no `reply` at all while the
+		 * conversation is waiting/human — the customer is talking to a
+		 * person now, not the bot. Render nothing for this turn (no empty
+		 * bubble, no "something went wrong") and just make sure polling is
+		 * running.
+		 */
+		if (handoffEnabled && data && data.ack === true) {
+			if (typeof data.status === 'string') {
+				currentStatus = data.status;
+			}
+			setHumanHandoffButtonVisible(false);
+			if (currentStatus === 'waiting' || currentStatus === 'human') {
+				startPolling();
+			}
 			return;
 		}
 
@@ -1882,6 +2336,12 @@ products.
 		// The assistant just pointed at the button — make it easy to find.
 		if (replyOffersHandoff(reply, data)) {
 			highlightHandoff();
+		}
+
+		// The lookup engine resolved an explicit "talk to a human" intent —
+		// offer the contact step inline, right under this reply.
+		if (handoffEnabled && data && data.escalate === true) {
+			addEscalatePrompt();
 		}
 
 		history.push({ role: 'user', content: sentMessage });
@@ -1946,6 +2406,13 @@ products.
 		document.addEventListener('keydown', onKeydown, true);
 		saveState();
 
+		// Resume polling if this tab already had a conversation waiting on
+		// (or already with) a human when the panel was closed. No-op unless
+		// handoffEnabled — see startPolling()'s own guard.
+		if (handoffEnabled && conversationId && (currentStatus === 'waiting' || currentStatus === 'human')) {
+			startPolling();
+		}
+
 		window.setTimeout(function () {
 			if (!isOpen) {
 				return;
@@ -1969,6 +2436,9 @@ products.
 		els.launcher.setAttribute('aria-expanded', 'false');
 		unlockScroll();
 		document.removeEventListener('keydown', onKeydown, true);
+		// Never poll while the panel is closed. Harmless when polling was
+		// never running (handoffEnabled false, or no conversation yet).
+		stopPolling();
 		saveState();
 
 		window.setTimeout(function () {
