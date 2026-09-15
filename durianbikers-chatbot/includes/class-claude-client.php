@@ -53,6 +53,18 @@ class DB_Chat_Claude_Client {
 	 */
 	private $last_usage = array();
 
+	/**
+	 * Decoded tool-executor results of the most recent chat() call, one entry
+	 * per tool_use handled across every round.
+	 *
+	 * Captured for DB_Chat_Orchestrator's grounding check: the executor's raw
+	 * return array (product/page/order data), never the encoded tool_result
+	 * string and never fed back into the prompt.
+	 *
+	 * @var array[]
+	 */
+	private $last_tool_results = array();
+
 	/** Catalogue search tool. */
 	const TOOL_PRODUCTS = 'search_products';
 
@@ -169,7 +181,8 @@ class DB_Chat_Claude_Client {
 	 * @return string|WP_Error Assistant reply text, or WP_Error.
 	 */
 	public function chat( array $messages, $static_context, callable $tool_executor, $page_context = '' ) {
-		$this->last_usage = self::empty_usage();
+		$this->last_usage        = self::empty_usage();
+		$this->last_tool_results = array();
 
 		if ( ! $this->has_api_key() ) {
 			return new WP_Error(
@@ -386,11 +399,27 @@ class DB_Chat_Claude_Client {
 			return $block;
 		}
 
+		$this->last_tool_results[] = is_array( $result ) ? $result : array();
+
 		$encoded = wp_json_encode( $result );
 
 		$block['content'] = is_string( $encoded ) ? $encoded : '{"results":[],"count":0}';
 
 		return $block;
+	}
+
+	/**
+	 * Decoded tool-executor results of the most recent chat() call.
+	 *
+	 * The raw arrays returned by the tool executor (never the encoded
+	 * tool_result JSON), in the order the tools were run across every round.
+	 * Feeds DB_Chat_Grounding::collect_facts() — this is side-effect-free and
+	 * never itself sent back to the model.
+	 *
+	 * @return array[]
+	 */
+	public function last_tool_results() {
+		return $this->last_tool_results;
 	}
 
 	/**
