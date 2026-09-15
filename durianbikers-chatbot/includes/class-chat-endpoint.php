@@ -709,46 +709,36 @@ class DB_Chat_Chat_Endpoint {
 			return $this->finalize_response( $response_data, $conversation, $escalate );
 		}
 
-		$messages = $this->build_messages( $history, $message );
-		$context  = $this->product_index->get_context();
-		$pages    = null !== $this->content_index ? $this->content_index->get_context() : '';
-
-		$reply = $this->client->chat(
-			$messages,
-			$context,
-			$this->get_tool_executor( null !== $conversation ? (int) $conversation['id'] : 0 ),
-			$pages
+		// AI brain: the orchestrator runs the grounded AI turn, or silently falls
+		// back to the keyword engine when AI is unavailable / over budget / errors.
+		$orchestrator = new DB_Chat_Orchestrator(
+			$this->client,
+			$this->lookup_engine,
+			$this->ai_budget,
+			$this->product_index,
+			$this->content_index
 		);
 
-		if ( is_wp_error( $reply ) ) {
-			// Already customer-safe: the client never puts upstream detail in
-			// a WP_Error message.
-			return $reply;
-		}
+		$context   = $this->product_index->get_context();
+		$pages_ctx = ( null !== $this->content_index ) ? $this->content_index->get_context() : '';
 
-		$products = $this->product_index->match_in_text( $reply );
+		$result = $orchestrator->answer(
+			$message,
+			$history,
+			$this->get_tool_executor( null !== $conversation ? (int) $conversation['id'] : 0 ),
+			$context,
+			$pages_ctx
+		);
 
-		/*
-		 * Page links are resolved from the real WP_Post, never from the reply
-		 * text: the model is never shown a URL, so it cannot emit one. The
-		 * widget renders replies with textContent, so a URL typed into the
-		 * prose would be dead text anyway — this array is what makes it a
-		 * tappable link.
-		 */
-		$pages = null !== $this->content_index ? $this->content_index->match_in_text( $reply ) : array();
+		$this->maybe_log( $message, isset( $result['reply'] ) ? (string) $result['reply'] : '' );
 
-		$this->maybe_log( $message, $reply );
+		$escalate = ! empty( $result['escalate'] ) || $this->tool_requested_human;
 
 		$response_data = array(
-			'reply'    => (string) $reply,
-			'products' => array_values( $products ),
-			'pages'    => array_values( $pages ),
+			'reply'    => isset( $result['reply'] ) ? (string) $result['reply'] : '',
+			'products' => isset( $result['products'] ) && is_array( $result['products'] ) ? array_values( $result['products'] ) : array(),
+			'pages'    => isset( $result['pages'] ) && is_array( $result['pages'] ) ? array_values( $result['pages'] ) : array(),
 		);
-
-		// The model may have called request_human during this turn's tool
-		// rounds; escalate the reply exactly as the lookup engine's
-		// last_wants_human() path does above.
-		$escalate = $escalate || $this->tool_requested_human;
 
 		return $this->finalize_response( $response_data, $conversation, $escalate );
 	}
