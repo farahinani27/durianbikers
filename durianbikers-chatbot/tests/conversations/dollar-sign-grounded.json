@@ -1,0 +1,1 @@
+{ "name": "dollar-sign price grounded against numeric tool value", "ai_available": true, "stub_tool_results": [ { "name": "HJC C10", "price": "RM469.00" } ], "stub_reply": "That one is $469.", "assert": { "source": "ai", "grounding": "ok", "reply_contains": [ "469" ] } }

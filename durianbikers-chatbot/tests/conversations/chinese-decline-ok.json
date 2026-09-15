@@ -1,0 +1,1 @@
+{ "name": "chinese decline (no price) not blocked", "ai_available": true, "stub_tool_results": [], "stub_reply": "不好意思，我们不卖汽车零件。", "assert": { "source": "ai", "grounding": "ok", "reply_nonempty": true } }

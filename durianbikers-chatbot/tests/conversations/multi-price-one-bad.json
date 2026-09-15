@@ -1,0 +1,12 @@
+{
+  "name": "one bad price among several blocks the whole reply",
+  "ai_available": true,
+  "stub_tool_results": [ { "name": "HJC Helmet C10", "price": "RM469.00" }, { "name": "AGV S1GP", "price": "RM999.00" } ],
+  "stub_reply": "The C10 is RM469 and the S1GP is RM284.",
+  "assert": {
+    "source": "ai",
+    "grounding": "blocked",
+    "escalate": true,
+    "reply_not_contains": ["RM284", "RM469"]
+  }
+}

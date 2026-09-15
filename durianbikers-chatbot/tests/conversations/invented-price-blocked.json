@@ -1,0 +1,12 @@
+{
+  "name": "invented price is blocked",
+  "ai_available": true,
+  "stub_tool_results": [ { "name": "HJC Helmet C10", "price": "RM469.00" } ],
+  "stub_reply": "That helmet is RM999, in stock.",
+  "assert": {
+    "source": "ai",
+    "grounding": "blocked",
+    "escalate": true,
+    "reply_not_contains": ["RM999"]
+  }
+}

@@ -1,0 +1,1 @@
+{ "name": "bare non-currency numbers are not grounded/blocked", "ai_available": true, "stub_tool_results": [], "stub_reply": "We have 12 of those in stock, in sizes S to XXL.", "assert": { "source": "ai", "grounding": "ok", "reply_contains": [ "12" ] } }

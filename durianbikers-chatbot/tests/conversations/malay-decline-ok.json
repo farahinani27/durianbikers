@@ -1,0 +1,1 @@
+{ "name": "malay off-topic decline (no price) not blocked", "ai_available": true, "stub_tool_results": [], "stub_reply": "Maaf, kami tak jual kereta — kami kedai alat ganti motosikal.", "assert": { "source": "ai", "grounding": "ok", "reply_nonempty": true } }

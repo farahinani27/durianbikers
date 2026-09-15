@@ -1,0 +1,13 @@
+{
+  "name": "AI error falls back silently",
+  "ai_available": true,
+  "stub_tool_results": [],
+  "stub_reply": "__WP_ERROR__",
+  "fallback_reply": "keyword fallback",
+  "assert": {
+    "source": "fallback",
+    "grounding": "na",
+    "escalate": false,
+    "reply_contains": ["keyword fallback"]
+  }
+}

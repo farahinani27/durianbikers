@@ -1,0 +1,12 @@
+{
+  "name": "grounded price is passed through",
+  "ai_available": true,
+  "stub_tool_results": [ { "name": "HJC Helmet C10", "price": "RM469.00" } ],
+  "stub_reply": "The C10 is RM469, in stock.",
+  "assert": {
+    "source": "ai",
+    "grounding": "ok",
+    "escalate": false,
+    "reply_contains": ["RM469"]
+  }
+}

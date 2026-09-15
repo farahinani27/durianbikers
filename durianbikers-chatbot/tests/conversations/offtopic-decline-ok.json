@@ -1,0 +1,11 @@
+{
+  "name": "off-topic decline with no price is not blocked",
+  "ai_available": true,
+  "stub_tool_results": [],
+  "stub_reply": "We don't sell cars — we're a motorcycle parts shop.",
+  "assert": {
+    "source": "ai",
+    "grounding": "ok",
+    "reply_nonempty": true
+  }
+}

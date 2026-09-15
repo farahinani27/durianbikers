@@ -1,0 +1,1 @@
+{ "name": "cheapest grounded price passes", "ai_available": true, "stub_tool_results": [ { "name": "NHK R1S", "price": "RM236.00" } ], "stub_reply": "The cheapest is the R1S at RM236.", "assert": { "source": "ai", "grounding": "ok", "reply_contains": [ "RM236" ] } }

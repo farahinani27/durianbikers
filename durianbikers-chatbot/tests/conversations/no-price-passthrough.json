@@ -1,0 +1,11 @@
+{
+  "name": "no-price clarifying question passes through ungrounded",
+  "ai_available": true,
+  "stub_tool_results": [],
+  "stub_reply": "Sure — full-face or open-face?",
+  "assert": {
+    "source": "ai",
+    "grounding": "ok",
+    "reply_contains": ["full-face"]
+  }
+}

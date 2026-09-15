@@ -1,0 +1,11 @@
+{
+  "name": "grounded thousands-separator price is passed through",
+  "ai_available": true,
+  "stub_tool_results": [ { "name": "Shoei M30", "price": "RM3,940.00" } ],
+  "stub_reply": "The M30 is RM3,940.",
+  "assert": {
+    "source": "ai",
+    "grounding": "ok",
+    "reply_contains": ["RM3,940"]
+  }
+}

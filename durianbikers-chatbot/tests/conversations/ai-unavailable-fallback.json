@@ -1,0 +1,13 @@
+{
+  "name": "AI unavailable falls back silently",
+  "ai_available": false,
+  "stub_tool_results": [],
+  "stub_reply": "This should never be reached.",
+  "fallback_reply": "keyword fallback",
+  "assert": {
+    "source": "fallback",
+    "grounding": "na",
+    "escalate": false,
+    "reply_contains": ["keyword fallback"]
+  }
+}

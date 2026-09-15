@@ -1,0 +1,1 @@
+{ "name": "two grounded prices both pass", "ai_available": true, "stub_tool_results": [ { "name": "NHK R1S", "price": "RM236.00" }, { "name": "NHK S1GP", "price": "RM284.00" } ], "stub_reply": "The R1S is RM236 and the S1GP is RM284, both in stock.", "assert": { "source": "ai", "grounding": "ok", "reply_contains": [ "RM236", "RM284" ] } }
