@@ -1270,6 +1270,7 @@ class DB_Chat_Lookup_Engine {
 		$this->pending_out = null;
 		$this->ai_fallback = false;
 		$this->advice_miss = false;
+		$this->wants_human = false;
 
 		/*
 		 * A buying conversation in progress takes precedence — but only if the
@@ -1325,6 +1326,7 @@ class DB_Chat_Lookup_Engine {
 				return $this->answer_contact( $normalized, $language );
 
 			case 'human':
+				$this->wants_human = true;
 				return $this->answer_human( $language );
 
 			case 'fallback':
@@ -1512,6 +1514,16 @@ class DB_Chat_Lookup_Engine {
 	 */
 	public function last_was_advice() {
 		return (bool) $this->advice_miss;
+	}
+
+	/**
+	 * Did the last answer() call resolve the explicit "let me talk to a
+	 * person" intent? Lets the endpoint raise the handoff escalation signal.
+	 *
+	 * @return bool
+	 */
+	public function last_wants_human() {
+		return (bool) $this->wants_human;
 	}
 
 	/**
@@ -4073,6 +4085,14 @@ class DB_Chat_Lookup_Engine {
 	 * @var bool
 	 */
 	private $advice_miss = false;
+
+	/**
+	 * Whether the last answer() call resolved the explicit "let me talk to a
+	 * person" intent.
+	 *
+	 * @var bool
+	 */
+	private $wants_human = false;
 
 	/**
 	 * Continue a buying conversation, if one is genuinely in progress.

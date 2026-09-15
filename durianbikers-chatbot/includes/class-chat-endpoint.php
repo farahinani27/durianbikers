@@ -587,8 +587,10 @@ class DB_Chat_Chat_Endpoint {
 		// Request-scoped flag; never carry a previous request's state.
 		$this->order_tool_used = false;
 
-		// Set by Task 5; always false until then, but declared here so
-		// finalize_response() has a stable value on every code path.
+		// Declared here so finalize_response() has a stable value on every
+		// code path; the lookup branch below overwrites it once the engine
+		// has answered. The direct-AI branch has no lookup-engine signal, so
+		// it stays false.
 		$escalate = false;
 
 		if ( ! db_chat()->is_enabled() ) {
@@ -674,6 +676,10 @@ class DB_Chat_Chat_Endpoint {
 				return $response_data;
 			}
 
+			$escalate = $this->handoff_enabled()
+				&& is_callable( array( $this->lookup_engine, 'last_wants_human' ) )
+				&& $this->lookup_engine->last_wants_human();
+
 			return $this->finalize_response( $response_data, $conversation, $escalate );
 		}
 
@@ -727,7 +733,7 @@ class DB_Chat_Chat_Endpoint {
 	 *
 	 * @param array      $response_data Response payload built by the caller.
 	 * @param array|null $conversation  Conversation row from DB_Chat_Conversation_Store::ensure(), or null.
-	 * @param bool       $escalate      Whether this turn should escalate to a human (Task 5; always false for now).
+	 * @param bool       $escalate      Whether this turn should escalate to a human. True only when handoff is enabled and the free lookup engine resolved an explicit "talk to a human" intent; the direct-AI branch never sets it.
 	 * @return WP_REST_Response
 	 */
 	private function finalize_response( array $response_data, $conversation, $escalate ) {
