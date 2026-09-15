@@ -348,6 +348,20 @@ class DB_Chat_Settings {
 		self::register( 'db_chat_handoff_hours', self::default_handoff_hours(), array( __CLASS__, 'sanitize_handoff_hours' ) );
 		self::register( 'db_chat_handoff_hours_text', '', array( __CLASS__, 'sanitize_text' ) );
 
+		/* ---------- human handoff INBOX (staff takes over a conversation) ----------
+		 *
+		 * NOT the section above. That one is a customer-facing wa.me link and
+		 * needs no credentials. This one gates the staff inbox where an agent
+		 * takes over a conversation started in the chat widget, plus the staff
+		 * alert fired when a customer asks for one. Shares the db_chat_handoff_
+		 * option prefix with the section above only by coincidence of naming.
+		 */
+
+		self::register( 'db_chat_handoff_enabled', '0', array( __CLASS__, 'sanitize_bool' ) );
+		self::register( 'db_chat_handoff_notify', '0', array( __CLASS__, 'sanitize_bool' ) );
+		self::register( 'db_chat_handoff_retention_days', '90', array( __CLASS__, 'sanitize_int' ) );
+		self::register( 'db_chat_handoff_poll_seconds', '5', array( __CLASS__, 'sanitize_int' ) );
+
 		/* ---------- Telegram ---------- */
 
 		self::register( 'db_chat_telegram_enabled', '0', array( __CLASS__, 'sanitize_bool' ) );
@@ -412,6 +426,13 @@ class DB_Chat_Settings {
 
 	public static function sanitize_bool( $value ): string {
 		return ( '1' === (string) $value || 1 === $value || true === $value ) ? '1' : '0';
+	}
+
+	/**
+	 * A non-negative integer, stored as a string like every other option here.
+	 */
+	public static function sanitize_int( $value ): string {
+		return (string) max( 0, (int) $value );
 	}
 
 	/**
@@ -798,6 +819,8 @@ class DB_Chat_Settings {
 
 				<?php self::render_handoff_section(); ?>
 
+				<?php self::render_handoff_inbox_section(); ?>
+
 				<h2><?php esc_html_e( 'Order notifications', 'durianbikers-chatbot' ); ?></h2>
 				<p class="description">
 					<?php esc_html_e( 'Sent to you when a new order is placed. These are independent of the chatbot toggle above — you can run notifications with the chat widget switched off. Order alerts are sent once per order and never block or slow down checkout.', 'durianbikers-chatbot' ); ?>
@@ -932,6 +955,53 @@ class DB_Chat_Settings {
 						<?php endif; ?>
 					</td>
 				</tr>
+			</tbody>
+		</table>
+		<?php
+	}
+
+	/**
+	 * Human handoff INBOX settings.
+	 *
+	 * Gates the staff inbox where an agent takes over a conversation that
+	 * started in the chat widget, and the staff alert fired when a customer
+	 * asks for one. Not the same feature as "Talk to a human (WhatsApp
+	 * button)" above — see the comment in register_settings().
+	 */
+	private static function render_handoff_inbox_section(): void {
+		?>
+		<h2><?php esc_html_e( 'Human handoff', 'durianbikers-chatbot' ); ?></h2>
+		<table class="form-table" role="presentation">
+			<tbody>
+				<?php
+				self::row_checkbox(
+					'db_chat_handoff_enabled',
+					__( 'Enable human handoff inbox', 'durianbikers-chatbot' ),
+					__( 'Lets a customer conversation started in the chat widget be escalated to a human agent in a staff inbox.', 'durianbikers-chatbot' )
+				);
+
+				self::row_checkbox(
+					'db_chat_handoff_notify',
+					__( 'Alert staff when a customer needs a human', 'durianbikers-chatbot' ),
+					__( 'Alerts use the channels configured in Order notifications below.', 'durianbikers-chatbot' )
+				);
+
+				self::row_text(
+					'db_chat_handoff_retention_days',
+					__( 'Conversation retention (days)', 'durianbikers-chatbot' ),
+					__( 'Resolved or abandoned conversations older than this are deleted.', 'durianbikers-chatbot' ),
+					'90',
+					'small-text'
+				);
+
+				self::row_text(
+					'db_chat_handoff_poll_seconds',
+					__( 'Inbox poll interval (seconds)', 'durianbikers-chatbot' ),
+					__( 'How often the staff inbox checks for new messages.', 'durianbikers-chatbot' ),
+					'5',
+					'small-text'
+				);
+				?>
 			</tbody>
 		</table>
 		<?php
