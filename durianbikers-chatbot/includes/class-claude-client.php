@@ -528,6 +528,14 @@ class DB_Chat_Claude_Client {
 							'type'        => 'boolean',
 							'description' => 'Optional. When true, only return items currently in stock.',
 						),
+						'max_price'     => array(
+							'type'        => 'number',
+							'description' => 'Optional price ceiling in ringgit. ALWAYS set this when the customer asks for products "under RM X", "below RM X", "cheaper than X" or "around X" — pass X as the number. Results are limited to items at or under that price, ordered cheapest first, so you never have to guess whether something fits their budget.',
+						),
+						'sort_cheapest' => array(
+							'type'        => 'boolean',
+							'description' => 'Optional. Set true when the customer asks for the cheapest or lowest-priced option, so results come back cheapest first.',
+						),
 					),
 					'required'   => array( 'query' ),
 				),
