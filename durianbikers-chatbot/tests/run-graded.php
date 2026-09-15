@@ -116,7 +116,13 @@ foreach ( $scenarios as $file ) {
 	}
 
 	$verdict_raw = $client->complete( $JUDGE_SYS, $transcript, 200 );
-	$v           = json_decode( $verdict_raw, true );
+	// The judge often wraps its JSON in a ```json ... ``` markdown fence and may
+	// add prose around it; extract the first {...} object before decoding.
+	$verdict_json = $verdict_raw;
+	if ( preg_match( '/\{.*\}/s', $verdict_raw, $jm ) ) {
+		$verdict_json = $jm[0];
+	}
+	$v = json_decode( $verdict_json, true );
 	$n++;
 
 	echo "\n== " . $s['name'] . " ==\n" . $transcript;
