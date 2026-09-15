@@ -1,0 +1,231 @@
+/*
+Durian Bikers Chatbot — admin "Chatbot Inbox" (wp-admin > Chatbot Inbox)
+Text domain: durianbikers-chatbot
+
+Renders inside normal wp-admin ".wrap" markup (no shadow DOM — this is an
+admin screen, not the storefront widget). Class naming follows the same
+`db-chat-` prefix used by the frontend widget's chatbot.css, with an
+`-inbox` segment so the two stylesheets never collide. Flat, lowercase,
+hyphen-separated, no BEM, no build step.
+*/
+
+#db-chat-inbox-app {
+	margin-top: 16px;
+}
+
+.db-chat-inbox {
+	display: flex;
+	gap: 16px;
+	align-items: flex-start;
+	max-width: 1200px;
+}
+
+/* -------------------------- left: conversation list -------------------------- */
+
+.db-chat-inbox-list {
+	flex: 0 0 320px;
+	max-height: 70vh;
+	overflow-y: auto;
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+}
+
+.db-chat-inbox-empty,
+.db-chat-inbox-placeholder {
+	padding: 24px 16px;
+	color: #646970;
+	font-style: italic;
+}
+
+.db-chat-inbox-row {
+	display: flex;
+	gap: 10px;
+	align-items: flex-start;
+	padding: 10px 12px;
+	border-bottom: 1px solid #f0f0f1;
+	cursor: pointer;
+}
+
+.db-chat-inbox-row:hover {
+	background: #f6f7f7;
+}
+
+.db-chat-inbox-row.is-active {
+	background: #e7f2fd;
+}
+
+.db-chat-inbox-row-main {
+	min-width: 0;
+	flex: 1;
+}
+
+.db-chat-inbox-row-contact {
+	font-weight: 600;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.db-chat-inbox-row-time {
+	font-size: 12px;
+	color: #646970;
+	margin-top: 2px;
+}
+
+/* -------------------------------- badges -------------------------------- */
+
+.db-chat-inbox-badge {
+	display: inline-block;
+	flex: 0 0 auto;
+	padding: 2px 8px;
+	border-radius: 10px;
+	font-size: 11px;
+	font-weight: 600;
+	line-height: 1.6;
+	white-space: nowrap;
+	color: #1d2327;
+	background: #dcdcde;
+}
+
+.db-chat-inbox-badge--waiting {
+	background: #f8d7da;
+	color: #842029;
+}
+
+.db-chat-inbox-badge--human {
+	background: #fff3cd;
+	color: #664d03;
+}
+
+.db-chat-inbox-badge--bot {
+	background: #cfe2ff;
+	color: #084298;
+}
+
+.db-chat-inbox-badge--resolved {
+	background: #d1e7dd;
+	color: #0f5132;
+}
+
+/* --------------------------- right: detail pane --------------------------- */
+
+.db-chat-inbox-detail {
+	flex: 1;
+	min-width: 0;
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+	display: flex;
+	flex-direction: column;
+	min-height: 400px;
+}
+
+.db-chat-inbox-detail-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 12px 16px;
+	border-bottom: 1px solid #f0f0f1;
+	flex-wrap: wrap;
+}
+
+.db-chat-inbox-detail-actions {
+	display: flex;
+	gap: 8px;
+}
+
+.db-chat-inbox-transcript {
+	flex: 1;
+	overflow-y: auto;
+	padding: 16px;
+	max-height: 45vh;
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+}
+
+.db-chat-inbox-msg {
+	max-width: 75%;
+	padding: 8px 12px;
+	border-radius: 8px;
+	background: #f0f0f1;
+}
+
+.db-chat-inbox-msg-meta {
+	font-size: 11px;
+	color: #646970;
+	margin-bottom: 3px;
+	text-transform: capitalize;
+}
+
+.db-chat-inbox-msg-body {
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.db-chat-inbox-msg--customer {
+	align-self: flex-start;
+	background: #f0f0f1;
+}
+
+.db-chat-inbox-msg--bot {
+	align-self: flex-start;
+	background: #e7f2fd;
+}
+
+.db-chat-inbox-msg--agent {
+	align-self: flex-end;
+	background: #d1e7dd;
+}
+
+.db-chat-inbox-msg--system {
+	align-self: center;
+	background: transparent;
+	color: #646970;
+	font-style: italic;
+	font-size: 12px;
+	max-width: 100%;
+	text-align: center;
+}
+
+.db-chat-inbox-reply {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	padding: 12px 16px;
+	border-top: 1px solid #f0f0f1;
+}
+
+.db-chat-inbox-reply textarea {
+	width: 100%;
+	resize: vertical;
+}
+
+.db-chat-inbox-reply button {
+	align-self: flex-end;
+}
+
+/* -------------------------------- mobile -------------------------------- */
+
+@media (max-width: 700px) {
+	.db-chat-inbox {
+		flex-direction: column;
+	}
+
+	.db-chat-inbox-list {
+		flex: 1 1 auto;
+		width: 100%;
+		max-height: 40vh;
+	}
+
+	.db-chat-inbox-detail {
+		width: 100%;
+		min-height: 300px;
+	}
+
+	.db-chat-inbox-msg {
+		max-width: 90%;
+	}
+}
