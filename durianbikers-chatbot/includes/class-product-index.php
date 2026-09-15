@@ -265,7 +265,8 @@ class DB_Chat_Product_Index {
 
 		$query = trim( mb_substr( $query, 0, 200 ) );
 
-		$products = $this->run_query( $query, $category, $brand, $in_stock_only );
+		$products      = $this->run_query( $query, $category, $brand, $in_stock_only );
+		$used_fallback = false;
 
 		/*
 		 * WordPress core search is an AND across all words. Motorcycle part
@@ -276,7 +277,8 @@ class DB_Chat_Product_Index {
 			$fallback = $this->longest_token( $query );
 
 			if ( '' !== $fallback && $fallback !== $query ) {
-				$products = $this->run_query( $fallback, $category, $brand, $in_stock_only );
+				$products      = $this->run_query( $fallback, $category, $brand, $in_stock_only );
+				$used_fallback = true;
 			}
 		}
 
@@ -297,6 +299,19 @@ class DB_Chat_Product_Index {
 		 */
 		if ( '' !== $query ) {
 			$products = $this->rank_by_title_overlap( $products, $query );
+
+			/*
+			 * SPURIOUS-MATCH GATE. The single-token fallback can match a common
+			 * word — "jet engines" has no AND-match, falls back to "engines", and
+			 * hits unrelated products that merely carry "engine" in their body.
+			 * If NOT ONE result shares even a word with the customer's actual
+			 * query, the matches are noise: report nothing, so the caller says we
+			 * do not stock it rather than listing junk. Only the loose fallback is
+			 * gated; a real AND-match (the common case) is always trusted.
+			 */
+			if ( $used_fallback && ! empty( $products ) && ! $this->any_title_overlap( $query, $products ) ) {
+				$products = array();
+			}
 		}
 
 		$include_unavailable = (bool) apply_filters( 'db_chat_include_unavailable', true );
@@ -556,6 +571,57 @@ class DB_Chat_Product_Index {
 
 		return ( $matched / count( $query_tokens ) ) * 0.7
 			+ ( $matched / count( $title_tokens ) ) * 0.3;
+	}
+
+	/**
+	 * Does any product's title share at least one word with the query? Used to
+	 * reject spurious single-token-fallback matches (see search_products).
+	 *
+	 * @param string       $query    Customer's search string.
+	 * @param WC_Product[] $products Candidate products.
+	 * @return bool
+	 */
+	private function any_title_overlap( $query, array $products ) {
+		$q = $this->tokenise( $query );
+
+		if ( empty( $q ) ) {
+			return true;   // nothing distinctive to judge by — do not gate.
+		}
+
+		foreach ( $products as $product ) {
+			if ( $product instanceof WC_Product
+				&& count( array_intersect( $q, $this->tokenise( $product->get_name() ) ) ) > 0 ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * Do any of these result records share a word with the query? Lets the
+	 * engine reject a fuzzy correction that landed on unrelated products.
+	 *
+	 * @param array<int,array> $records Search results (each with a 'name').
+	 * @param string           $query   The customer's ORIGINAL query.
+	 * @return bool
+	 */
+	public function results_match_query( array $records, $query ) {
+		$q = $this->tokenise( $query );
+
+		if ( empty( $q ) ) {
+			return true;
+		}
+
+		foreach ( $records as $record ) {
+			$name = isset( $record['name'] ) ? (string) $record['name'] : '';
+
+			if ( '' !== $name && count( array_intersect( $q, $this->tokenise( $name ) ) ) > 0 ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
@@ -886,10 +952,29 @@ class DB_Chat_Product_Index {
 	 * @return void
 	 */
 	private function remember( WC_Product $product ) {
-		$key = $this->normalize( $product->get_name() );
+		$name = $product->get_name();
+		$key  = $this->normalize( $name );
 
 		if ( '' !== $key && ! isset( $this->seen[ $key ] ) ) {
 			$this->seen[ $key ] = $product->get_id();
+		}
+
+		/*
+		 * Many titles carry a trailing disambiguation code in brackets — "Muc Off
+		 * All Weather Chain Lube (400ml) (637)". The model copies the readable
+		 * name but drops that "(637)", so an exact-name card match fails. Register
+		 * an ALIAS with only that trailing "(digits)" removed, so the readable
+		 * name still resolves to a card. Only a bracketed pure-number suffix is
+		 * stripped, so a model name like "Shinko 705" (no brackets) is untouched.
+		 */
+		$core = preg_replace( '/\s*\(\d+\)\s*$/', '', $name );
+
+		if ( is_string( $core ) && $core !== $name ) {
+			$alias = $this->normalize( $core );
+
+			if ( '' !== $alias && ! isset( $this->seen[ $alias ] ) ) {
+				$this->seen[ $alias ] = $product->get_id();
+			}
 		}
 	}
 
@@ -972,6 +1057,7 @@ class DB_Chat_Product_Index {
 		);
 
 		$matched = array();
+		$seen_id = array();
 
 		foreach ( $keys as $key ) {
 			if ( count( $matched ) >= self::MAX_CARDS ) {
@@ -984,7 +1070,16 @@ class DB_Chat_Product_Index {
 			}
 
 			if ( false !== strpos( $haystack, ' ' . $key . ' ' ) ) {
-				$matched[] = $this->seen[ $key ];
+				$product_id = $this->seen[ $key ];
+
+				// A product can match via both its full name and its stripped
+				// alias — card it once.
+				if ( isset( $seen_id[ $product_id ] ) ) {
+					continue;
+				}
+
+				$seen_id[ $product_id ] = true;
+				$matched[]              = $product_id;
 			}
 		}
 
@@ -995,6 +1090,100 @@ class DB_Chat_Product_Index {
 
 			if ( null !== $card ) {
 				$cards[] = $card;
+			}
+		}
+
+		return $cards;
+	}
+
+	/**
+	 * Real product cards for a topic query, for programmatic attachment to an AI
+	 * advice answer ("how do I care for my chain?" -> a chain lube/cleaner card).
+	 *
+	 * Applies a relevance guard so this fitment-heavy catalogue never surfaces a
+	 * fitment part for a care question: a result qualifies only if its name
+	 * contains one of the topic nouns AND carries no fitment marker. Errs toward
+	 * returning nothing rather than something wrong.
+	 *
+	 * @param string[] $queries Ordered search strings; tried in turn until enough
+	 *                          cards are found (care-typed queries first).
+	 * @param string[] $nouns   Distinctive product nouns the name must contain.
+	 * @param int      $limit   Max cards.
+	 * @return array<int,array> Cards, same shape as match_in_text().
+	 */
+	public function cards_for_query( array $queries, array $nouns, $limit = 2 ) {
+		if ( empty( $queries ) || empty( $nouns ) || $limit < 1 ) {
+			return array();
+		}
+
+		// Name fragments that mark a fitment-specific part, not a consumable.
+		$fitment = array(
+			'fits for', 'sprocket', 'guard', ' cover', 'bracket', 'slider',
+			'protector', 'crash', 'cage', 'hugger', 'fender', 'chain guide',
+			'sparepart', 'spare part',
+		);
+
+		$cards = array();
+		$used  = array();
+
+		foreach ( $queries as $query ) {
+			if ( count( $cards ) >= $limit ) {
+				break;
+			}
+
+			$query = trim( (string) $query );
+
+			if ( '' === $query ) {
+				continue;
+			}
+
+			$results = $this->search_products( array( 'query' => $query ) );
+			$rows    = isset( $results['results'] ) && is_array( $results['results'] ) ? $results['results'] : array();
+
+			foreach ( $rows as $row ) {
+				if ( count( $cards ) >= $limit ) {
+					break;
+				}
+
+				$id   = isset( $row['id'] ) ? (int) $row['id'] : 0;
+				$name = isset( $row['name'] ) ? ' ' . mb_strtolower( (string) $row['name'] ) . ' ' : '';
+
+				if ( $id <= 0 || '' === trim( $name ) || isset( $used[ $id ] ) ) {
+					continue;
+				}
+
+				$on_topic = false;
+
+				foreach ( $nouns as $noun ) {
+					if ( false !== mb_strpos( $name, mb_strtolower( (string) $noun ) ) ) {
+						$on_topic = true;
+						break;
+					}
+				}
+
+				if ( ! $on_topic ) {
+					continue;
+				}
+
+				$is_fitment = false;
+
+				foreach ( $fitment as $marker ) {
+					if ( false !== mb_strpos( $name, $marker ) ) {
+						$is_fitment = true;
+						break;
+					}
+				}
+
+				if ( $is_fitment ) {
+					continue;
+				}
+
+				$card = $this->format_card( $id );
+
+				if ( null !== $card ) {
+					$cards[]     = $card;
+					$used[ $id ] = true;
+				}
 			}
 		}
 

@@ -1269,6 +1269,7 @@ class DB_Chat_Lookup_Engine {
 		$this->order_turn  = false;
 		$this->pending_out = null;
 		$this->ai_fallback = false;
+		$this->advice_miss = false;
 
 		/*
 		 * A buying conversation in progress takes precedence — but only if the
@@ -1501,6 +1502,129 @@ class DB_Chat_Lookup_Engine {
 	 */
 	public function needs_ai_fallback() {
 		return (bool) $this->ai_fallback;
+	}
+
+	/**
+	 * Was the last answer a how-to / advice miss (as opposed to any other miss)?
+	 * Lets the AI path attach relevant product cards for advice answers only.
+	 *
+	 * @return bool
+	 */
+	public function last_was_advice() {
+		return (bool) $this->advice_miss;
+	}
+
+	/**
+	 * Turn an advice question into product-search topics, for programmatic card
+	 * attachment (an upsell of the RIGHT product type). Strips the how-to/filler
+	 * words to find the product noun, and reads the care ACTION so the search
+	 * targets the matching consumable:
+	 *   "how to clean my helmet"      -> queries ["helmet cleaner", "helmet"]
+	 *   "macam mana nak jaga chain"   -> queries ["chain cleaner","chain lube","chain"]
+	 *   "how often change engine oil" -> queries ["engine lube","oil lube","engine oil"]
+	 *
+	 * @param string $message Raw customer message.
+	 * @return array{queries:array<int,string>,nouns:array<int,string>}
+	 */
+	public function advice_search_query( $message ) {
+		$normalized = $this->normalize( $message );
+		$tokens     = preg_split( '/\s+/u', trim( $normalized ), -1, PREG_SPLIT_NO_EMPTY );
+		$tokens     = is_array( $tokens ) ? $tokens : array();
+
+		// How-to / filler / advice / care-verb words to drop from the noun. Product
+		// nouns (chain, oil, helmet, tyre, brake…) are deliberately NOT here.
+		$stop = array(
+			'how', 'to', 'do', 'i', 'we', 'my', 'the', 'a', 'an', 'is', 'it', 'of',
+			'on', 'in', 'and', 'or', 'should', 'when', 'why', 'what', 'often', 'long',
+			'frequently', 'best', 'way', 'tips', 'need', 'keep', 'take', 'get', 'use',
+			'clean', 'cleaning', 'wash', 'washing', 'maintain', 'maintenance', 'care',
+			'look', 'after', 'change', 'replace', 'check', 'service', 'fix', 'jaga',
+			'cara', 'macam', 'mana', 'macamana', 'camne', 'camner', 'cmne', 'bagaimana',
+			'nak', 'nk', 'saya', 'kita', 'aku', 'korang', 'boleh', 'guna', 'gunakan',
+			'patut', 'patutkah', 'perlu', 'perlukah', 'kena', 'tukar', 'berapa',
+			'kerap', 'lama', 'kenapa', 'mengapa', 'untuk', 'yang', 'dengan', 'basuh',
+			'bersih', 'bersihkan', 'jenis', 'macammana', 'polish', 'wax', 'lube',
+			'lubricate', 'lumas', 'lumasi', 'protect', 'senggara',
+		);
+
+		$vehicle = array( 'motor', 'motorcycle', 'motorbike', 'motosikal', 'moto', 'bike', 'basikal' );
+
+		$query_nouns = array();
+		$nouns       = array();
+
+		foreach ( $tokens as $token ) {
+			if ( in_array( $token, $stop, true ) || mb_strlen( $token ) < 2 ) {
+				continue;
+			}
+
+			$query_nouns[] = $token;
+
+			if ( ! in_array( $token, $vehicle, true ) ) {
+				$nouns[] = $token;
+			}
+		}
+
+		$nouns = array_values( array_unique( $nouns ) );
+
+		if ( empty( $nouns ) ) {
+			$nouns = array_values( array_unique( $query_nouns ) );
+		}
+
+		// The care ACTION → product-type word(s) that surface the right upsell.
+		$pad = ' ' . $normalized . ' ';
+		$has = static function ( array $set ) use ( $pad ) {
+			foreach ( $set as $w ) {
+				if ( false !== strpos( $pad, ' ' . $w . ' ' ) ) {
+					return true;
+				}
+			}
+			return false;
+		};
+
+		$actions = array();
+
+		if ( $has( array( 'clean', 'cleaning', 'wash', 'washing', 'cuci', 'bersih', 'bersihkan', 'shampoo', 'degrease', 'degreaser', 'dirty', 'kotor' ) ) ) {
+			$actions[] = 'cleaner';
+		}
+		if ( $has( array( 'lube', 'lubricate', 'lubricant', 'oil', 'oiling', 'lumas', 'lumasi', 'grease', 'gris', 'minyak' ) ) ) {
+			$actions[] = 'lube';
+		}
+		if ( $has( array( 'polish', 'shine', 'wax', 'kilat', 'gilap' ) ) ) {
+			$actions[] = 'polish';
+		}
+		if ( $has( array( 'protect', 'protection', 'protectant', 'rust', 'karat' ) ) ) {
+			$actions[] = 'protectant';
+		}
+		if ( empty( $actions ) && $has( array( 'jaga', 'care', 'maintain', 'maintenance', 'service', 'senggara', 'penjagaan', 'condition', 'look' ) ) ) {
+			$actions = array( 'cleaner', 'lube' );   // generic upkeep → the two staples
+		}
+
+		$vehicle_word = '';
+		foreach ( $query_nouns as $token ) {
+			if ( in_array( $token, $vehicle, true ) ) {
+				$vehicle_word = $token;
+				break;
+			}
+		}
+
+		$primary = ! empty( $nouns ) ? implode( ' ', $nouns ) : implode( ' ', $query_nouns );
+
+		// Care-typed queries first (the targeted upsell), then broad fallbacks.
+		$queries = array();
+		foreach ( $actions as $action ) {
+			foreach ( $nouns as $noun ) {
+				$queries[] = trim( $noun . ' ' . $action );
+			}
+		}
+		if ( '' !== $primary ) {
+			$queries[] = trim( $primary . ' ' . $vehicle_word );
+			$queries[] = $primary;
+		}
+
+		return array(
+			'queries' => array_values( array_unique( array_filter( $queries ) ) ),
+			'nouns'   => $nouns,
+		);
 	}
 
 	/**
@@ -1958,6 +2082,76 @@ class DB_Chat_Lookup_Engine {
 	 * @param string $raw        The customer's own words, for the unmatched log.
 	 * @return array{reply:string,products:array,pages:array}
 	 */
+	/**
+	 * A how-to / advice / maintenance question ("how often should I change my
+	 * oil?", "berapa kerap tukar minyak?", "机油多久换一次?"), rather than a
+	 * product / price / stock lookup.
+	 *
+	 * Such a question has no answer in the catalogue, so its keyword-search hits
+	 * are noise. It is routed to Claude in hybrid mode (or declined cleanly in
+	 * lookup-only mode) instead of being answered with a loose product list.
+	 *
+	 * Matched by SPECIFIC advice phrases only, so a commerce question is never
+	 * captured: "berapa harga" (price) and "do you have X" (stock) are not here,
+	 * even though "berapa" on its own scores as a price word. Fitment and safety
+	 * questions are handled earlier and separately and never reach this.
+	 *
+	 * @param string $normalized Normalized message.
+	 * @param string $raw        Original message (for Chinese, which has no spaces).
+	 * @return bool
+	 */
+	private function is_advice_question( $normalized, $raw = '' ) {
+		// Chinese carries no spaces, so match advice substrings on the raw text.
+		if ( '' !== $raw && self::is_chinese( $raw ) ) {
+			$needles = array(
+				'多久',       // how long / how often
+				'多长时间',   // how long
+				'多久换',     // how often to change
+				'多久一次',   // how often
+				'多久保养',   // how often to service
+				'如何保养', '怎样保养', '怎么保养', // how to maintain
+				'需要多久',   // how long does it need
+				'该不该', '该换', '要不要换',        // should I / should I change
+				'建议',       // recommend / suggest
+				'值得',       // worth
+			);
+
+			foreach ( $needles as $needle ) {
+				if ( false !== mb_strpos( $raw, $needle ) ) {
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		$padded = ' ' . $normalized . ' ';
+
+		$phrases = array(
+			// English how-to / advice / maintenance phrasing.
+			'how often', 'how long', 'how frequently', 'how many times',
+			'how many km', 'how many miles', 'how do i', 'how do you', 'how to',
+			'how can i', 'how should i', 'should i', 'do i need', 'do i have to',
+			'when should', 'when do i', 'when to', 'why does', 'why is', 'why do',
+			'what happens', 'is it worth', 'is it ok', 'is it okay', 'is it safe',
+			'is it bad', 'is it fine', 'is it normal', 'recommend', 'any tips',
+			'best way', 'difference between',
+			// Malay / colloquial Malay.
+			'berapa kerap', 'berapa lama', 'macam mana', 'macamana', 'camne',
+			'camner', 'cmne', 'bagaimana', 'patutkah', 'patut ke', 'perlu ke',
+			'perlukah', 'kena tukar', 'bila nak', 'bila patut', 'bila kena',
+			'kenapa', 'mengapa', 'elok tak', 'ok tak', 'boleh tak guna',
+		);
+
+		foreach ( $phrases as $phrase ) {
+			if ( false !== strpos( $padded, ' ' . $phrase . ' ' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	private function answer_products( $intent, $normalized, array $signals, $language, array $history = array(), $raw = '' ) {
 		$filters            = $this->blank_filters();
 		$filters['fitment'] = ! empty( $signals['scores']['fitment'] );
@@ -1990,6 +2184,28 @@ class DB_Chat_Lookup_Engine {
 
 		// Nothing recognised at all: the intent was inferred, not detected.
 		$blind = empty( $signals['scores'] );
+
+		/*
+		 * A how-to / advice / maintenance question ("how often should I change
+		 * my oil?", "berapa kerap tukar minyak?", "机油多久换一次?") has no answer
+		 * in the catalogue — its keyword-search hits are noise (a bag that says
+		 * "gear", a tyre that says "engine"). Treat it as a genuine miss so
+		 * hybrid mode hands it to Claude, and lookup-only mode declines cleanly,
+		 * instead of dumping a loose product list.
+		 *
+		 * NOT gated on $blind: a Malay "berapa kerap" scores as a PRICE word so
+		 * the message is not blind, yet it is still advice. is_advice_question()
+		 * matches specific advice phrasing only, so a real price/stock lookup
+		 * ("berapa harga X", "do you have X") is never captured here. Fitment is
+		 * declined above, before this point.
+		 */
+		if ( $this->is_advice_question( $normalized, $raw ) ) {
+			$this->ai_fallback = true;
+			$this->advice_miss = true;
+			$this->log_unmatched( $raw, $signals, $language );
+
+			return $this->product_miss( $intent, $query, $filters, true, $language );
+		}
 
 		/*
 		 * THE SUBJECT SLOT FIRES HERE, AND ONLY HERE.
@@ -2051,6 +2267,18 @@ class DB_Chat_Lookup_Engine {
 			if ( '' !== $corrected ) {
 				$args['query'] = $corrected;
 				$records       = $this->search_products( $args );
+
+				/*
+				 * A correction that lands on products unrelated to what the
+				 * customer actually typed is a WRONG guess — "jet engines" has no
+				 * match, gets "corrected", and the guess pulls up unrelated air
+				 * filters. If nothing found shares a word with their real query,
+				 * drop it and decline, rather than show junk under "showing
+				 * results for X instead".
+				 */
+				if ( ! empty( $records ) && ! $this->product_index->results_match_query( $records, $query ) ) {
+					$records = array();
+				}
 
 				if ( empty( $records ) ) {
 					// The guess bought nothing. Say nothing about it either.
@@ -3838,6 +4066,13 @@ class DB_Chat_Lookup_Engine {
 	 * @var bool
 	 */
 	private $ai_fallback = false;
+
+	/**
+	 * Whether the last answer was specifically a how-to / advice miss.
+	 *
+	 * @var bool
+	 */
+	private $advice_miss = false;
 
 	/**
 	 * Continue a buying conversation, if one is genuinely in progress.

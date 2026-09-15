@@ -871,6 +871,28 @@ class DB_Chat_Chat_Endpoint {
 		$products = $this->product_index->match_in_text( $reply );
 		$pages    = null !== $this->content_index ? $this->content_index->match_in_text( $reply ) : array();
 
+		/*
+		 * PROGRAMMATIC CARDS FOR ADVICE ANSWERS.
+		 *
+		 * Haiku answers a how-to question well but will not reliably call
+		 * search_products mid-answer (and must never invent a product), so an
+		 * advice reply usually names no product and match_in_text finds nothing.
+		 * When the free engine flagged this as an advice miss, attach REAL cards
+		 * ourselves: derive the topic from the customer's message and look it up
+		 * in the catalogue. Every card is a real published product with a real
+		 * price — nothing is invented — and the relevance guard in
+		 * cards_for_query() keeps a fitment part off a care question.
+		 */
+		if ( empty( $products )
+			&& is_callable( array( $this->lookup_engine, 'last_was_advice' ) )
+			&& $this->lookup_engine->last_was_advice() ) {
+			$topic = $this->lookup_engine->advice_search_query( $message );
+
+			if ( ! empty( $topic['queries'] ) && ! empty( $topic['nouns'] ) ) {
+				$products = $this->product_index->cards_for_query( $topic['queries'], $topic['nouns'], 2 );
+			}
+		}
+
 		$this->maybe_log( $message, $reply );
 
 		$response = rest_ensure_response(
