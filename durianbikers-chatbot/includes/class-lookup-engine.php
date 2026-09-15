@@ -2332,6 +2332,24 @@ class DB_Chat_Lookup_Engine {
 			}
 		}
 
+		/*
+		 * SPURIOUS SUBSTRING MATCH. WordPress search matches substrings, so an
+		 * off-topic word pulls up products that merely CONTAIN it inside a
+		 * longer word: "car" → "…(Carbon)" helmets, "oil" → "…Spoiler…". If not
+		 * one result shares a real, plural-folded word with what the customer
+		 * actually typed, the matches are noise. Treat it as a genuine miss:
+		 * drop them and raise the AI-fallback flag so — in hybrid mode — Claude
+		 * answers the off-topic question properly ("no, we sell motorcycle
+		 * parts, not cars"), instead of the bot listing unrelated products.
+		 * Never applied to a carried subject (already validated) or an empty
+		 * query, and a real word-match (the common case) is untouched.
+		 */
+		if ( ! empty( $records ) && '' === $carried && '' !== $query
+			&& ! $this->query_matches_records( $records, $query ) ) {
+			$records            = array();
+			$this->ai_fallback  = true;
+		}
+
 		$dropped_unpriced = false;
 
 		if ( null !== $filters['ceiling'] ) {
@@ -5748,6 +5766,70 @@ class DB_Chat_Lookup_Engine {
 	 * @param mixed $text Price text.
 	 * @return float|null
 	 */
+	/**
+	 * Fold a token to a plural-tolerant stem: lowercase, and drop a trailing
+	 * "s" only when that leaves at least three characters. So "brakes"→"brake",
+	 * "tyres"→"tyre", "pads"→"pad", "cars"→"car", while "car", "carbon", "abs"
+	 * and "gps" are left alone. Keeps "brake" matching a "Brakes" title without
+	 * letting "car" match "Carbon".
+	 *
+	 * @param string $token Raw token.
+	 * @return string
+	 */
+	private function fold_token( $token ) {
+		$token = strtolower( (string) $token );
+
+		if ( strlen( $token ) > 3 && 's' === substr( $token, -1 ) ) {
+			$token = substr( $token, 0, -1 );
+		}
+
+		return $token;
+	}
+
+	/**
+	 * Does any result record share a real (plural-folded) word with the
+	 * customer's query? Used to reject WordPress substring matches where the
+	 * query only appears INSIDE a longer word in the title. Empty/indistinct
+	 * queries are never gated (returns true).
+	 *
+	 * @param array<int,array> $records Search results (each with a 'name').
+	 * @param string           $query   Customer's query.
+	 * @return bool
+	 */
+	private function query_matches_records( array $records, $query ) {
+		$q_tokens = preg_split( '/[^a-z0-9]+/', strtolower( (string) $query ), -1, PREG_SPLIT_NO_EMPTY );
+
+		$q_folded = array();
+		if ( is_array( $q_tokens ) ) {
+			foreach ( $q_tokens as $t ) {
+				if ( strlen( $t ) >= 2 ) {
+					$q_folded[ $this->fold_token( $t ) ] = true;
+				}
+			}
+		}
+
+		if ( empty( $q_folded ) ) {
+			return true;
+		}
+
+		foreach ( $records as $record ) {
+			$name    = isset( $record['name'] ) ? (string) $record['name'] : '';
+			$n_tokens = preg_split( '/[^a-z0-9]+/', strtolower( $name ), -1, PREG_SPLIT_NO_EMPTY );
+
+			if ( ! is_array( $n_tokens ) ) {
+				continue;
+			}
+
+			foreach ( $n_tokens as $t ) {
+				if ( strlen( $t ) >= 2 && isset( $q_folded[ $this->fold_token( $t ) ] ) ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	private function price_value( $text ) {
 		if ( ! is_scalar( $text ) ) {
 			return null;

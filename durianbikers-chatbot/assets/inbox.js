@@ -51,15 +51,23 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	// textarea) on every 5s tick.
 	var lastSeenMessageId = {};
 
+	// Per-open-conversation status last rendered, so the poll can tell a status
+	// change (assign to bot / resolve) apart from a plain new message and
+	// re-render the whole detail only when the status actually moved.
+	var lastSeenStatus = {};
+
 	var mount = null;
 	var listEl = null;
 	var detailEl = null;
 	var pollTimer = null;
 
-	// Conversation ids seen on the previous /list poll. null until the first
-	// load completes, so the very first poll only seeds this set rather than
-	// treating every existing conversation as "new" and beeping on load.
-	var knownIds = null;
+	// Per-conversation status seen on the previous /list poll (id → status).
+	// null until the first load completes, so the very first poll only seeds
+	// this map rather than beeping for every existing conversation on load.
+	// Tracking the STATUS (not just presence) lets us beep when an existing
+	// bot conversation flips to 'waiting' — the common "customer clicked Talk
+	// to a human" case — not only for brand-new conversation ids.
+	var knownStatus = null;
 
 	// Lazily-created WebAudio context for the new-chat notification sound.
 	var audioCtx = null;
@@ -228,6 +236,9 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 		var status = convo ? convo.status : '';
 		var resolved = 'resolved' === status;
 		var botActive = 'bot' === status;
+		// The AI owns a 'bot' conversation and a 'resolved' one is closed —
+		// staff cannot reply into either, so the reply box is disabled.
+		var replyDisabled = resolved || botActive;
 
 		/*
 		 * Single toggle instead of two static buttons: it always offers the
@@ -258,9 +269,12 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			'</div>' +
 			contactBlock( convo ) +
 			'<div class="db-chat-inbox-transcript">' + ( bubbles || '<div class="db-chat-inbox-placeholder">No messages yet.</div>' ) + '</div>' +
+			( botActive
+				? '<div class="db-chat-inbox-botnote">The AI assistant is handling this conversation. Assign it to a human to reply.</div>'
+				: '' ) +
 			'<form class="db-chat-inbox-reply">' +
-			'<textarea name="body" placeholder="Type a reply…" rows="3"' + ( resolved ? ' disabled' : '' ) + '></textarea>' +
-			'<button type="submit" class="button button-primary"' + ( resolved ? ' disabled' : '' ) + '>Send reply</button>' +
+			'<textarea name="body" placeholder="' + ( replyDisabled ? 'Replies are disabled — the AI assistant has this chat' : 'Type a reply…' ) + '" rows="3"' + ( replyDisabled ? ' disabled' : '' ) + '></textarea>' +
+			'<button type="submit" class="button button-primary"' + ( replyDisabled ? ' disabled' : '' ) + '>Send reply</button>' +
 			'</form>';
 
 		var transcriptEl = detailEl.querySelector( '.db-chat-inbox-transcript' );
@@ -283,6 +297,7 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			state.messages = data.messages || [];
 			// Baseline for the poll's "did anything new arrive" check below.
 			lastSeenMessageId[ id ] = newestMessageId( state.messages );
+			lastSeenStatus[ id ] = data.conversation ? data.conversation.status : undefined;
 			// Keep the row list's status in sync with what we just fetched.
 			state.conversations = state.conversations.map( function ( row ) {
 				return String( row.id ) === String( id ) ? data.conversation : row;
@@ -318,6 +333,20 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 					return String( row.id ) === String( id ) ? data.conversation : row;
 				} );
 
+				// A status change (e.g. the customer tapped "Talk to the AI
+				// assistant" → 'bot', or Resolve) must re-render the whole
+				// detail so the assign toggle and the reply box's enabled/
+				// disabled state follow it live. A plain new message only needs
+				// the transcript, which leaves any in-progress reply draft
+				// untouched.
+				var newStatus = data.conversation ? data.conversation.status : undefined;
+				if ( newStatus !== lastSeenStatus[ id ] ) {
+					lastSeenStatus[ id ] = newStatus;
+					lastSeenMessageId[ id ] = newestMessageId( messages );
+					renderDetail();
+					return;
+				}
+
 				var newestId = newestMessageId( messages );
 				var previous = Object.prototype.hasOwnProperty.call( lastSeenMessageId, id ) ? lastSeenMessageId[ id ] : null;
 
@@ -347,24 +376,32 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			if ( ! audioCtx ) {
 				audioCtx = new Ctx();
 			}
+			var schedule = function () {
+				try {
+					var ctx = audioCtx;
+					var now = ctx.currentTime;
+					[ [ 880, now, 0.08 ], [ 1175, now + 0.09, 0.07 ] ].forEach( function ( tone ) {
+						var osc = ctx.createOscillator();
+						var gain = ctx.createGain();
+						osc.type = 'sine';
+						osc.frequency.setValueAtTime( tone[ 0 ], tone[ 1 ] );
+						gain.gain.setValueAtTime( 0.0001, tone[ 1 ] );
+						gain.gain.exponentialRampToValueAtTime( 0.25, tone[ 1 ] + 0.01 );
+						gain.gain.exponentialRampToValueAtTime( 0.0001, tone[ 1 ] + tone[ 2 ] );
+						osc.connect( gain );
+						gain.connect( ctx.destination );
+						osc.start( tone[ 1 ] );
+						osc.stop( tone[ 1 ] + tone[ 2 ] + 0.02 );
+					} );
+				} catch ( e ) { /* best-effort */ }
+			};
+			// resume() is async: scheduling before it resolves plays into a
+			// still-suspended context and is silently dropped. Wait for it.
 			if ( 'suspended' === audioCtx.state && audioCtx.resume ) {
-				audioCtx.resume();
+				audioCtx.resume().then( schedule ).catch( function () {} );
+			} else {
+				schedule();
 			}
-			var ctx = audioCtx;
-			var now = ctx.currentTime;
-			[ [ 880, now, 0.08 ], [ 1175, now + 0.09, 0.07 ] ].forEach( function ( tone ) {
-				var osc = ctx.createOscillator();
-				var gain = ctx.createGain();
-				osc.type = 'sine';
-				osc.frequency.setValueAtTime( tone[ 0 ], tone[ 1 ] );
-				gain.gain.setValueAtTime( 0.0001, tone[ 1 ] );
-				gain.gain.exponentialRampToValueAtTime( 0.2, tone[ 1 ] + 0.01 );
-				gain.gain.exponentialRampToValueAtTime( 0.0001, tone[ 1 ] + tone[ 2 ] );
-				osc.connect( gain );
-				gain.connect( ctx.destination );
-				osc.start( tone[ 1 ] );
-				osc.stop( tone[ 1 ] + tone[ 2 ] + 0.02 );
-			} );
 		} catch ( e ) {
 			// Audio is best-effort only: never let it break the inbox.
 		}
@@ -378,18 +415,22 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	 * (just seeds knownIds) on the very first load.
 	 */
 	function detectNewWaiting( rows ) {
-		var nextKnown = {};
+		var nextStatus = {};
 		var isNew = false;
 
 		rows.forEach( function ( row ) {
 			var id = String( row.id );
-			nextKnown[ id ] = true;
-			if ( null !== knownIds && 'waiting' === row.status && ! knownIds[ id ] ) {
+			var prev = knownStatus ? knownStatus[ id ] : undefined;
+			nextStatus[ id ] = row.status;
+			// Beep when a conversation BECOMES 'waiting': either brand new, or
+			// an existing bot chat the customer just handed to a human. The
+			// first poll (knownStatus === null) only seeds the map, silently.
+			if ( null !== knownStatus && 'waiting' === row.status && 'waiting' !== prev ) {
 				isNew = true;
 			}
 		} );
 
-		knownIds = nextKnown;
+		knownStatus = nextStatus;
 
 		if ( isNew ) {
 			playNewChatSound();

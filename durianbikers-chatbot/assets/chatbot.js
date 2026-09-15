@@ -1527,24 +1527,31 @@ products.
 			if (!audioCtx) {
 				return;
 			}
-			var ctx = audioCtx;
-			// A context can slip back to 'suspended' between gesture and poll;
-			// nudge it before scheduling so the tone is not silently dropped.
-			if ('suspended' === ctx.state && ctx.resume) {
-				ctx.resume();
+			var schedule = function () {
+				try {
+					var ctx = audioCtx;
+					var now = ctx.currentTime;
+					var osc = ctx.createOscillator();
+					var gain = ctx.createGain();
+					osc.type = 'sine';
+					osc.frequency.setValueAtTime(660, now);
+					gain.gain.setValueAtTime(0.0001, now);
+					gain.gain.exponentialRampToValueAtTime(0.22, now + 0.01);
+					gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
+					osc.connect(gain);
+					gain.connect(ctx.destination);
+					osc.start(now);
+					osc.stop(now + 0.2);
+				} catch (e) { /* best-effort */ }
+			};
+			// resume() is async: a context that slipped back to 'suspended'
+			// between the priming gesture and this poll would silently drop a
+			// tone scheduled immediately, so wait for the resume to resolve.
+			if ('suspended' === audioCtx.state && audioCtx.resume) {
+				audioCtx.resume().then(schedule).catch(function () {});
+			} else {
+				schedule();
 			}
-			var now = ctx.currentTime;
-			var osc = ctx.createOscillator();
-			var gain = ctx.createGain();
-			osc.type = 'sine';
-			osc.frequency.setValueAtTime(660, now);
-			gain.gain.setValueAtTime(0.0001, now);
-			gain.gain.exponentialRampToValueAtTime(0.22, now + 0.01);
-			gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.18);
-			osc.connect(gain);
-			gain.connect(ctx.destination);
-			osc.start(now);
-			osc.stop(now + 0.2);
 		} catch (e) { /* audio is best-effort only */ }
 	}
 

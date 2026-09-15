@@ -270,3 +270,13 @@ hyphen-separated, no BEM, no build step.
 		max-width: 90%;
 	}
 }
+
+.db-chat-inbox-botnote {
+	margin: 8px 0 4px;
+	padding: 8px 10px;
+	background: #f0f6fc;
+	border: 1px solid #c3d9ed;
+	border-radius: 4px;
+	color: #1d2327;
+	font-size: 12px;
+}
