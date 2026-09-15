@@ -634,13 +634,25 @@ class DB_Chat_Chat_Endpoint {
 			$public_id       = is_string( $public_id_param ) ? $public_id_param : '';
 			$page_url_param  = $request->get_param( 'page_url' );
 
-			$conversation = DB_Chat_Conversation_Store::ensure(
-				$public_id,
-				array(
-					'lang'     => '',
-					'page_url' => is_scalar( $page_url_param ) ? (string) $page_url_param : '',
-				)
+			$seed = array(
+				'lang'     => '',
+				'page_url' => is_scalar( $page_url_param ) ? (string) $page_url_param : '',
 			);
+
+			$conversation = DB_Chat_Conversation_Store::ensure( $public_id, $seed );
+
+			/*
+			 * RESOLVE IS FINAL, SERVER-ENFORCED. A resolved conversation must
+			 * never receive another message, no matter what conversation_id the
+			 * client sent — the widget clears its stored id on resolve, but a
+			 * stale tab, a restored localStorage value, or any other client that
+			 * skips that step must not be able to reopen a closed thread. Ignore
+			 * the resolved id entirely and start a brand-new conversation, whose
+			 * fresh public_id goes back to the widget in the response below.
+			 */
+			if ( DB_Chat_Conversation_Store::STATUS_RESOLVED === $conversation['status'] ) {
+				$conversation = DB_Chat_Conversation_Store::ensure( '', $seed );
+			}
 
 			DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'customer', $message );
 

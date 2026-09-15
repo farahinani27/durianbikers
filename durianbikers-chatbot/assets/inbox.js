@@ -56,6 +56,14 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	var detailEl = null;
 	var pollTimer = null;
 
+	// Conversation ids seen on the previous /list poll. null until the first
+	// load completes, so the very first poll only seeds this set rather than
+	// treating every existing conversation as "new" and beeping on load.
+	var knownIds = null;
+
+	// Lazily-created WebAudio context for the new-chat notification sound.
+	var audioCtx = null;
+
 	function newestMessageId( messages ) {
 		var maxId = null;
 		( messages || [] ).forEach( function ( m ) {
@@ -211,10 +219,20 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 
 		var status = convo ? convo.status : '';
 		var resolved = 'resolved' === status;
-		// 'waiting' (just handed off, not yet taken) reads as the human side
-		// of the toggle — the bot is not answering it either way.
-		var humanActive = 'human' === status || 'waiting' === status;
 		var botActive = 'bot' === status;
+
+		/*
+		 * Single toggle instead of two static buttons: it always offers the
+		 * OPPOSITE of the current state. 'waiting' (just handed off, not yet
+		 * taken) reads as the human side — the bot is not answering it either
+		 * way — so it offers "Assign to bot" same as 'human'. Hidden entirely
+		 * once resolved: the conversation is over, there is nothing to assign.
+		 */
+		var toggleMode = botActive ? 'human' : 'bot';
+		var toggleLabel = botActive ? 'Assign to human' : 'Assign to bot';
+		var assignToggleHtml = resolved
+			? ''
+			: '<button type="button" class="button db-chat-inbox-assign-btn" data-action="assign" data-mode="' + toggleMode + '">' + esc( toggleLabel ) + '</button>';
 
 		var bubbles = buildBubblesHtml();
 
@@ -225,11 +243,9 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			'<span class="db-chat-inbox-badge db-chat-inbox-badge--' + esc( status ) + '">' + esc( STATUS_LABELS[ status ] || status ) + '</span>' +
 			'</div>' +
 			'<div class="db-chat-inbox-detail-actions">' +
-			'<div class="db-chat-inbox-assign" role="group" aria-label="Assign conversation">' +
-			'<button type="button" class="button db-chat-inbox-assign-btn' + ( humanActive ? ' button-primary is-active' : '' ) + '" data-action="assign" data-mode="human" aria-pressed="' + ( humanActive ? 'true' : 'false' ) + '"' + ( resolved ? ' disabled' : '' ) + '>Assign to human</button>' +
-			'<button type="button" class="button db-chat-inbox-assign-btn' + ( botActive ? ' button-primary is-active' : '' ) + '" data-action="assign" data-mode="bot" aria-pressed="' + ( botActive ? 'true' : 'false' ) + '"' + ( resolved ? ' disabled' : '' ) + '>Assign to bot</button>' +
-			'</div>' +
+			assignToggleHtml +
 			'<button type="button" class="button" data-action="resolve"' + ( resolved ? ' disabled' : '' ) + '>Resolve</button>' +
+			'<button type="button" class="button db-chat-inbox-delete-btn" data-action="delete">Delete</button>' +
 			'</div>' +
 			'</div>' +
 			contactBlock( convo ) +
@@ -248,7 +264,9 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	function loadList() {
 		return api( '/list' ).then( function ( data ) {
 			state.conversations = data.conversations || [];
+			detectNewWaiting( state.conversations );
 			renderList();
+			updateMenuBadge();
 		} );
 	}
 
@@ -306,6 +324,85 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			} );
 	}
 
+	/**
+	 * Best-effort two-tone beep for a newly-arrived waiting conversation.
+	 * Lazily creates the AudioContext (admin has already interacted with the
+	 * page by the time any poll runs) and never lets a WebAudio failure
+	 * (blocked autoplay, unsupported browser, etc.) break polling.
+	 */
+	function playNewChatSound() {
+		try {
+			var Ctx = window.AudioContext || window.webkitAudioContext;
+			if ( ! Ctx ) {
+				return;
+			}
+			if ( ! audioCtx ) {
+				audioCtx = new Ctx();
+			}
+			if ( 'suspended' === audioCtx.state && audioCtx.resume ) {
+				audioCtx.resume();
+			}
+			var ctx = audioCtx;
+			var now = ctx.currentTime;
+			[ [ 880, now, 0.08 ], [ 1175, now + 0.09, 0.07 ] ].forEach( function ( tone ) {
+				var osc = ctx.createOscillator();
+				var gain = ctx.createGain();
+				osc.type = 'sine';
+				osc.frequency.setValueAtTime( tone[ 0 ], tone[ 1 ] );
+				gain.gain.setValueAtTime( 0.0001, tone[ 1 ] );
+				gain.gain.exponentialRampToValueAtTime( 0.2, tone[ 1 ] + 0.01 );
+				gain.gain.exponentialRampToValueAtTime( 0.0001, tone[ 1 ] + tone[ 2 ] );
+				osc.connect( gain );
+				gain.connect( ctx.destination );
+				osc.start( tone[ 1 ] );
+				osc.stop( tone[ 1 ] + tone[ 2 ] + 0.02 );
+			} );
+		} catch ( e ) {
+			// Audio is best-effort only: never let it break the inbox.
+		}
+	}
+
+	/**
+	 * Compare this poll's rows against the previous poll's known ids. Plays
+	 * the notification sound when a conversation with status 'waiting' shows
+	 * up whose id was not present last time — i.e. a brand new handoff, not a
+	 * status change on a conversation the admin already knows about. No-op
+	 * (just seeds knownIds) on the very first load.
+	 */
+	function detectNewWaiting( rows ) {
+		var nextKnown = {};
+		var isNew = false;
+
+		rows.forEach( function ( row ) {
+			var id = String( row.id );
+			nextKnown[ id ] = true;
+			if ( null !== knownIds && 'waiting' === row.status && ! knownIds[ id ] ) {
+				isNew = true;
+			}
+		} );
+
+		knownIds = nextKnown;
+
+		if ( isNew ) {
+			playNewChatSound();
+		}
+	}
+
+	/** Best-effort: keep the wp-admin left-menu unread bubble in sync live. */
+	function updateMenuBadge() {
+		try {
+			var count = state.conversations.filter( function ( row ) {
+				return 'waiting' === row.status;
+			} ).length;
+			var badge = document.querySelector( '#toplevel_page_db-chat-inbox .pending-count' );
+			if ( badge ) {
+				badge.textContent = String( count );
+			}
+		} catch ( e ) {
+			// Best-effort only.
+		}
+	}
+
 	function selectConversation( id ) {
 		state.selectedId = id;
 		renderList();
@@ -328,6 +425,24 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 		}
 		var action = btn.getAttribute( 'data-action' );
 		var id = state.selectedId;
+
+		if ( 'delete' === action ) {
+			if ( ! window.confirm( 'Delete this conversation permanently? This cannot be undone.' ) ) {
+				return;
+			}
+			btn.disabled = true;
+			api( '/delete', { method: 'POST', body: JSON.stringify( { id: id } ) } )
+				.then( function () {
+					state.selectedId = null;
+					renderDetail();
+					return loadList();
+				} )
+				.catch( function ( err ) {
+					window.alert( err.message || 'Could not delete this conversation.' );
+					btn.disabled = false;
+				} );
+			return;
+		}
 
 		var request;
 		if ( 'assign' === action ) {

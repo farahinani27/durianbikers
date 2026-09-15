@@ -32,7 +32,21 @@ final class DB_Chat_Inbox_Admin {
 		if ( ! $this->enabled() ) {
 			return;
 		}
-		add_menu_page( 'Chatbot Inbox', 'Chatbot Inbox', self::CAP, 'db-chat-inbox', array( $this, 'render_page' ), 'dashicons-format-chat', 58 );
+		add_menu_page( 'Chatbot Inbox', $this->menu_title(), self::CAP, 'db-chat-inbox', array( $this, 'render_page' ), 'dashicons-format-chat', 58 );
+	}
+
+	/**
+	 * Menu title, with the standard WP unread-bubble markup appended when
+	 * there is at least one conversation waiting on a human. Computed once at
+	 * admin_menu time (a single cheap COUNT query), same as core menus
+	 * (Comments, Plugins) do it.
+	 */
+	private function menu_title() {
+		$waiting = DB_Chat_Conversation_Store::count_waiting();
+		if ( $waiting <= 0 ) {
+			return 'Chatbot Inbox';
+		}
+		return 'Chatbot Inbox <span class="awaiting-mod"><span class="pending-count">' . (int) $waiting . '</span></span>';
 	}
 
 	public function assets( $hook ) {
@@ -114,6 +128,15 @@ final class DB_Chat_Inbox_Admin {
 				'methods'             => 'POST',
 				'permission_callback' => $perm,
 				'callback'            => array( $this, 'r_resolve' ),
+			)
+		);
+		register_rest_route(
+			self::NS,
+			'/inbox/delete',
+			array(
+				'methods'             => 'POST',
+				'permission_callback' => $perm,
+				'callback'            => array( $this, 'r_delete' ),
 			)
 		);
 	}
@@ -201,5 +224,16 @@ final class DB_Chat_Inbox_Admin {
 		DB_Chat_Conversation_Store::add_message( $id, 'system', 'Conversation resolved.' );
 		DB_Chat_Conversation_Store::set_status( $id, DB_Chat_Conversation_Store::STATUS_RESOLVED );
 		return rest_ensure_response( array( 'ok' => true ) );
+	}
+
+	/** Permanently delete a conversation and its messages. Confirmed client-side. */
+	public function r_delete( WP_REST_Request $req ) {
+		$id = (int) $req->get_param( 'id' );
+		$c  = DB_Chat_Conversation_Store::get( $id );
+		if ( ! $c ) {
+			return new WP_Error( 'not_found', 'No such conversation', array( 'status' => 404 ) );
+		}
+		DB_Chat_Conversation_Store::delete_conversation( $id );
+		return rest_ensure_response( array( 'deleted' => true ) );
 	}
 }

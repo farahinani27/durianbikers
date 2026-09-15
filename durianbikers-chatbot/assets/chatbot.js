@@ -278,6 +278,16 @@ products.
 	var pollIdleTimer = null;
 	// 'bot' | 'waiting' | 'human' | 'resolved' | null (unknown / not started)
 	var currentStatus = null;
+	// True once fetchNewMessages() has completed at least one round since the
+	// current startPolling() call. The FIRST round after (re)starting polling
+	// backfills whatever history is already sitting on the server (e.g. after
+	// a page reload) and must render silently — only messages that show up on
+	// a later round are genuinely new arrivals worth a sound.
+	var pollBackfilled = true;
+	// Lazily-created WebAudio context for the inbound-message notification.
+	// Never built until a user gesture (opening the widget, submitting the
+	// handoff form) primes it — see primeAudioContext().
+	var audioCtx = null;
 
 	// Seeded once, synchronously, so the very first /session call already
 	// carries the id if this tab (or a previous one, via localStorage) has
@@ -919,6 +929,22 @@ products.
 		// another message.
 		currentStatus = data.handoff.status || currentStatus;
 
+		if ('resolved' === currentStatus) {
+			// A reopened widget must never resume a resolved thread: forget
+			// the conversation entirely (mirrors the live-poll resolved
+			// branch in fetchNewMessages()) so the next message starts a
+			// brand new one. The server enforces this too (see
+			// class-chat-endpoint.php), but a reload should not even try.
+			conversationId = null;
+			lastMessageId = 0;
+			currentStatus = null;
+			try {
+				window.localStorage.removeItem(CONVERSATION_ID_KEY);
+			} catch (e) { /* storage unavailable: memory only */ }
+			setHumanHandoffButtonVisible(true);
+			return;
+		}
+
 		setHumanHandoffButtonVisible(currentStatus !== 'waiting' && currentStatus !== 'human');
 		if (conversationId && (currentStatus === 'waiting' || currentStatus === 'human')) {
 			startPolling();
@@ -1315,6 +1341,11 @@ products.
 			return;
 		}
 
+		// Called synchronously from the Send button's click handler: a real
+		// user gesture, so this is where the notification AudioContext gets
+		// primed for the polling that submitHandoff() itself starts below.
+		primeAudioContext();
+
 		var body = { conversation_id: conversationId };
 		if (contact) {
 			body.contact_name = contact.name || '';
@@ -1378,12 +1409,70 @@ products.
 	}
 
 	/**
+	 * Create (or resume) the notification AudioContext. MUST be called
+	 * synchronously from inside a real user-gesture handler — browsers block
+	 * audio otherwise. The customer has always interacted by the time either
+	 * caller runs (opened the widget / submitted the handoff form), so
+	 * calling this at the top of openPanel() and submitHandoff() is enough to
+	 * keep the context alive for the poll-driven tones that follow later.
+	 * Best-effort: never throws, never blocks the caller.
+	 */
+	function primeAudioContext() {
+		try {
+			var Ctx = window.AudioContext || window.webkitAudioContext;
+			if (!Ctx) {
+				return;
+			}
+			if (!audioCtx) {
+				audioCtx = new Ctx();
+			}
+			if ('suspended' === audioCtx.state && audioCtx.resume) {
+				audioCtx.resume();
+			}
+		} catch (e) { /* audio is best-effort only */ }
+	}
+
+	/**
+	 * Subtle single-tone chime for a new inbound team/system message. Quieter
+	 * and shorter than the staff inbox's alert beep on purpose — this plays
+	 * for a customer, not a notification the admin needs to act on. No-op if
+	 * primeAudioContext() was never able to create a context (no gesture yet,
+	 * unsupported browser, blocked autoplay).
+	 */
+	function playInboundTone() {
+		try {
+			if (!audioCtx) {
+				return;
+			}
+			var ctx = audioCtx;
+			var now = ctx.currentTime;
+			var osc = ctx.createOscillator();
+			var gain = ctx.createGain();
+			osc.type = 'sine';
+			osc.frequency.setValueAtTime(660, now);
+			gain.gain.setValueAtTime(0.0001, now);
+			gain.gain.exponentialRampToValueAtTime(0.1, now + 0.01);
+			gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+			osc.connect(gain);
+			gain.connect(ctx.destination);
+			osc.start(now);
+			osc.stop(now + 0.14);
+		} catch (e) { /* audio is best-effort only */ }
+	}
+
+	/**
 	 * `agent` → a "Team" bubble, reusing the same avatar/body/caption shape
 	 * as a bot message so it sits visually consistent with the rest of the
 	 * transcript. `system` → the subtle centered note. Anything else, or an
 	 * empty body, renders nothing.
+	 *
+	 * @param {object}  m              Message row from GET /messages.
+	 * @param {boolean} suppressSound  True on the first poll round after
+	 *                                 (re)starting polling — that round is a
+	 *                                 history backfill, not a new arrival, and
+	 *                                 must render silently.
 	 */
-	function renderTeamMessage(m) {
+	function renderTeamMessage(m, suppressSound) {
 		if (!m || typeof m !== 'object') {
 			return;
 		}
@@ -1393,6 +1482,9 @@ products.
 		}
 		if (m.sender === 'system') {
 			renderSystemNote(body);
+			if (!suppressSound) {
+				playInboundTone();
+			}
 			return;
 		}
 		if (m.sender !== 'agent') {
@@ -1407,6 +1499,9 @@ products.
 		wrap.appendChild(msgBody);
 		els.log.appendChild(wrap);
 		scrollToEnd();
+		if (!suppressSound) {
+			playInboundTone();
+		}
 	}
 
 	/**
@@ -1420,6 +1515,10 @@ products.
 		if (pollTimer || !handoffEnabled || !conversationId) {
 			return;
 		}
+		// The next fetchNewMessages() round is a backfill (history that was
+		// already sitting on the server, e.g. `since=0` on first load): it
+		// must render without a sound. See pollBackfilled's declaration.
+		pollBackfilled = true;
 		var ms = Math.max(2000, (pollSeconds || 5) * 1000);
 		pollTimer = window.setInterval(fetchNewMessages, ms);
 		armPollIdleTimeout();
@@ -1467,8 +1566,13 @@ products.
 			if (!d) {
 				return;
 			}
+			// Only the FIRST round after (re)starting polling is a backfill;
+			// flip it before rendering so a message added by a retry of this
+			// very round is never silently miscounted as backfill again.
+			var isBackfill = pollBackfilled;
+			pollBackfilled = false;
 			(Array.isArray(d.messages) ? d.messages : []).forEach(function (m) {
-				renderTeamMessage(m);
+				renderTeamMessage(m, isBackfill);
 				var mid = parseInt(m && m.id, 10);
 				if (!isNaN(mid) && mid > lastMessageId) {
 					lastMessageId = mid;
@@ -2513,6 +2617,15 @@ products.
 		}
 		isOpen = true;
 		lastFocused = document.activeElement;
+
+		// Launcher click is a real user gesture: prime the notification
+		// AudioContext here so a later poll-driven tone is not blocked. Gated
+		// on handoffEnabled so a production site with the feature off keeps
+		// doing exactly what it always did here — no new AudioContext, no
+		// behaviour change at all.
+		if (handoffEnabled) {
+			primeAudioContext();
+		}
 
 		// Kick the session nonce off first so the round-trip overlaps the
 		// open animation. Failures surface at send time, not here.

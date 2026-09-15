@@ -343,6 +343,40 @@ final class DB_Chat_Conversation_Store {
 		) ?: array();
 	}
 
+	/** @return int Number of conversations currently STATUS_WAITING. */
+	public static function count_waiting() {
+		global $wpdb;
+		return (int) $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT COUNT(*) FROM ' . self::conversations_table() . ' WHERE status = %s',
+				self::STATUS_WAITING
+			)
+		);
+	}
+
+	/**
+	 * Hard-delete one conversation and its messages. Unlike purge() (age +
+	 * status gated, batch), this removes a single conversation by id
+	 * regardless of status — used by the inbox's per-conversation Delete
+	 * button, which is a deliberate, explicit operator action.
+	 *
+	 * @param int $conversation_id
+	 * @return bool True if a conversation row was deleted.
+	 */
+	public static function delete_conversation( $conversation_id ) {
+		global $wpdb;
+
+		$conversation_id = (int) $conversation_id;
+		if ( $conversation_id <= 0 ) {
+			return false;
+		}
+
+		$wpdb->delete( self::messages_table(), array( 'conversation_id' => $conversation_id ), array( '%d' ) );
+		$deleted = $wpdb->delete( self::conversations_table(), array( 'id' => $conversation_id ), array( '%d' ) );
+
+		return (bool) $deleted;
+	}
+
 	/**
 	 * Delete resolved or abandoned-bot conversations (and their messages) whose
 	 * last activity is older than $days. Returns the number of conversations removed.
