@@ -1185,6 +1185,7 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
 
 .db-chat-contact-input {
     box-sizing: border-box;
+    display: block;
     width: 100%;
     padding: 8px 12px;
     border: 1px solid var(--db-chat-border);
@@ -1196,8 +1197,25 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     line-height: 1.4;
 }
 
+/* Three stacked fields (name / email / phone) instead of the old single
+   field — a little breathing room between them. */
+.db-chat-contact-input + .db-chat-contact-input {
+    margin-top: 8px;
+}
+
 .db-chat-contact-input:focus {
     border-color: var(--db-chat-brand);
+}
+
+.db-chat-contact-email.is-invalid {
+    border-color: var(--db-chat-error-ink);
+}
+
+.db-chat-contact-error {
+    margin: 6px 0 0;
+    font-size: var(--db-chat-size-caption);
+    line-height: 1.4;
+    color: var(--db-chat-error-ink);
 }
 
 .db-chat-contact-actions {
@@ -1207,7 +1225,7 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
 }
 
 .db-chat-contact-send,
-.db-chat-contact-skip {
+.db-chat-contact-cancel {
     flex: 0 0 auto;
     padding: 7px 14px;
     border-radius: 999px;
@@ -1228,13 +1246,18 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     background: var(--db-chat-brand-hover);
 }
 
-.db-chat-contact-skip {
+.db-chat-contact-send:disabled {
+    opacity: 0.6;
+    cursor: default;
+}
+
+.db-chat-contact-cancel {
     border: 1px solid var(--db-chat-border);
     background: var(--db-chat-surface);
     color: var(--db-chat-ink-muted);
 }
 
-.db-chat-contact-skip:hover {
+.db-chat-contact-cancel:hover {
     border-color: var(--db-chat-ink-muted);
     color: var(--db-chat-ink);
 }

@@ -88,10 +88,43 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 	}
 
 	function lastPreview( row ) {
+		if ( row.contact_email ) {
+			return row.contact_email;
+		}
+		if ( row.contact_phone ) {
+			return row.contact_phone;
+		}
 		if ( row.contact_value ) {
 			return row.contact_value;
 		}
 		return row.page_url ? row.page_url : '(no contact given)';
+	}
+
+	/** Small "Customer contact" block for the detail view: only the fields
+	 *  that are actually present, name/email/phone from the Sep 2026
+	 *  contact-capture form. Falls back to the older single contact_value
+	 *  field for conversations captured before it existed. */
+	function contactBlock( convo ) {
+		if ( ! convo ) {
+			return '';
+		}
+		var rows = [];
+		if ( convo.contact_name ) {
+			rows.push( '<div class="db-chat-inbox-contact-row"><span class="db-chat-inbox-contact-label">Name</span><span class="db-chat-inbox-contact-value">' + esc( convo.contact_name ) + '</span></div>' );
+		}
+		if ( convo.contact_email ) {
+			rows.push( '<div class="db-chat-inbox-contact-row"><span class="db-chat-inbox-contact-label">Email</span><span class="db-chat-inbox-contact-value">' + esc( convo.contact_email ) + '</span></div>' );
+		}
+		if ( convo.contact_phone ) {
+			rows.push( '<div class="db-chat-inbox-contact-row"><span class="db-chat-inbox-contact-label">Phone</span><span class="db-chat-inbox-contact-value">' + esc( convo.contact_phone ) + '</span></div>' );
+		}
+		if ( ! rows.length && convo.contact_value ) {
+			rows.push( '<div class="db-chat-inbox-contact-row"><span class="db-chat-inbox-contact-label">' + esc( convo.contact_type || 'Contact' ) + '</span><span class="db-chat-inbox-contact-value">' + esc( convo.contact_value ) + '</span></div>' );
+		}
+		if ( ! rows.length ) {
+			return '';
+		}
+		return '<div class="db-chat-inbox-contact"><div class="db-chat-inbox-contact-heading">Customer contact</div>' + rows.join( '' ) + '</div>';
 	}
 
 	function renderList() {
@@ -155,6 +188,7 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 			'<button type="button" class="button" data-action="resolve"' + ( resolved ? ' disabled' : '' ) + '>Resolve</button>' +
 			'</div>' +
 			'</div>' +
+			contactBlock( convo ) +
 			'<div class="db-chat-inbox-transcript">' + ( bubbles || '<div class="db-chat-inbox-placeholder">No messages yet.</div>' ) + '</div>' +
 			'<form class="db-chat-inbox-reply">' +
 			'<textarea name="body" placeholder="Type a reply…" rows="3"' + ( resolved ? ' disabled' : '' ) + '></textarea>' +

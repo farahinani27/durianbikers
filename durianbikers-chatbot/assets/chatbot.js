@@ -217,6 +217,10 @@ products.
 	// opens the chat and walks away does not poll forever.
 	var CONVERSATION_ID_KEY = 'dbchat_cid';
 	var POLL_IDLE_MS = 10 * 60 * 1000;
+	// Basic shape check for the contact-step email field. Deliberately loose
+	// (matches the backend's sanitize_email() intent, not full RFC 5322) —
+	// good enough to catch typos without rejecting a real address.
+	var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 	// Header name is contract, not decoration — read it from the localized
 	// object so a backend rename cannot silently send every request into the
 	// shared rate-limit bucket. Fallback matches the route as built.
@@ -1165,9 +1169,11 @@ products.
 	}
 
 	/**
-	 * Contact-capture step: an inline optional field plus Send/Skip, appended
-	 * to the transcript. Either action POSTs /handoff — Skip just omits
-	 * contact_type/contact_value. Guarded against opening twice at once.
+	 * Contact-capture step: Name (optional), Email (REQUIRED), Phone
+	 * (optional), plus Send/Cancel, appended to the transcript. Send
+	 * validates the email client-side before POSTing /handoff; Cancel closes
+	 * the step and returns to normal chat WITHOUT calling /handoff at all.
+	 * Guarded against opening twice at once.
 	 */
 	function openContactStep() {
 		if (!handoffEnabled || els.contactStep) {
@@ -1179,41 +1185,103 @@ products.
 		var body = el('div', 'db-chat-msg-body');
 
 		var box = el('div', 'db-chat-contact-step');
-		box.appendChild(el('p', 'db-chat-contact-label', 'Leave your email or WhatsApp number so we can reply (optional)'));
+		box.appendChild(el('p', 'db-chat-contact-label', 'Leave your details so we can reply if we miss you (email required)'));
 
-		var input = document.createElement('input');
-		input.type = 'text';
-		input.className = 'db-chat-contact-input';
-		input.setAttribute('placeholder', 'Email or WhatsApp number');
-		input.setAttribute('autocomplete', 'off');
-		box.appendChild(input);
+		var nameInput = document.createElement('input');
+		nameInput.type = 'text';
+		nameInput.className = 'db-chat-contact-input db-chat-contact-name';
+		nameInput.setAttribute('placeholder', 'Your name');
+		nameInput.setAttribute('autocomplete', 'off');
+		box.appendChild(nameInput);
+
+		var emailInput = document.createElement('input');
+		emailInput.type = 'email';
+		emailInput.className = 'db-chat-contact-input db-chat-contact-email';
+		emailInput.setAttribute('placeholder', 'you@example.com');
+		emailInput.setAttribute('autocomplete', 'off');
+		box.appendChild(emailInput);
+
+		var emailError = el('p', 'db-chat-contact-error', '');
+		emailError.setAttribute('role', 'alert');
+		emailError.hidden = true;
+		box.appendChild(emailError);
+
+		var phoneInput = document.createElement('input');
+		phoneInput.type = 'text';
+		phoneInput.className = 'db-chat-contact-input db-chat-contact-phone';
+		phoneInput.setAttribute('placeholder', 'Phone number');
+		phoneInput.setAttribute('autocomplete', 'off');
+		box.appendChild(phoneInput);
+
+		function showEmailError(text) {
+			emailError.textContent = text;
+			emailError.hidden = false;
+			emailInput.classList.add('is-invalid');
+		}
+		function clearEmailError() {
+			if (emailError.hidden) {
+				return;
+			}
+			emailError.hidden = true;
+			emailError.textContent = '';
+			emailInput.classList.remove('is-invalid');
+		}
+		emailInput.addEventListener('input', clearEmailError);
 
 		var actions = el('div', 'db-chat-contact-actions');
 		var sendBtn = el('button', 'db-chat-contact-send', 'Send');
 		sendBtn.type = 'button';
-		var skipBtn = el('button', 'db-chat-contact-skip', 'Skip');
-		skipBtn.type = 'button';
+		var cancelBtn = el('button', 'db-chat-contact-cancel', 'Cancel');
+		cancelBtn.type = 'button';
 
-		function finish(value) {
+		function close() {
 			wrap.remove();
 			els.contactStep = null;
-			submitHandoff(value);
 		}
-		sendBtn.addEventListener('click', function () {
-			finish(input.value);
-		});
-		skipBtn.addEventListener('click', function () {
-			finish('');
-		});
-		input.addEventListener('keydown', function (event) {
-			if (event.key === 'Enter') {
-				event.preventDefault();
-				finish(input.value);
+
+		function attemptSend() {
+			var email = trimmed(emailInput.value);
+			if (!email || !EMAIL_RE.test(email)) {
+				showEmailError('Please enter a valid email so we can reply.');
+				try {
+					emailInput.focus();
+				} catch (e) { /* not focusable: harmless */ }
+				return;
 			}
+			clearEmailError();
+			sendBtn.disabled = true;
+			submitHandoff({
+				name: trimmed(nameInput.value),
+				email: email,
+				phone: trimmed(phoneInput.value)
+			}, {
+				onInvalidEmail: function () {
+					sendBtn.disabled = false;
+					showEmailError('Please enter a valid email so we can reply.');
+					try {
+						emailInput.focus();
+					} catch (e) { /* not focusable: harmless */ }
+				},
+				onSuccess: close,
+				onOtherFailure: function () {
+					sendBtn.disabled = false;
+				}
+			});
+		}
+
+		sendBtn.addEventListener('click', attemptSend);
+		cancelBtn.addEventListener('click', close);
+		[nameInput, emailInput, phoneInput].forEach(function (input) {
+			input.addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					attemptSend();
+				}
+			});
 		});
 
 		actions.appendChild(sendBtn);
-		actions.appendChild(skipBtn);
+		actions.appendChild(cancelBtn);
 		box.appendChild(actions);
 
 		body.appendChild(box);
@@ -1222,26 +1290,30 @@ products.
 		els.contactStep = wrap;
 		scrollToEnd();
 		try {
-			input.focus();
+			nameInput.focus();
 		} catch (e) { /* not focusable yet: harmless */ }
 	}
 
 	/**
-	 * POST /handoff. Same header discipline as /chat (authHeaders, same
-	 * nonce, same token header, same credentials mode). On success the
-	 * conversation is with a human: stop offering the button, show the
-	 * confirmation line, and start polling for replies.
+	 * POST /handoff with the captured contact details. Same header discipline
+	 * as /chat (authHeaders, same nonce, same token header, same credentials
+	 * mode). On success the conversation is with a human: stop offering the
+	 * button, show the confirmation line, and start polling for replies. A
+	 * 400 db_chat_email_required (the backend re-validating the same rule)
+	 * routes back to the caller's onInvalidEmail rather than the generic
+	 * network-failure notice.
 	 */
-	function submitHandoff(rawValue) {
+	function submitHandoff(contact, callbacks) {
+		callbacks = callbacks || {};
 		if (!handoffEnabled || !conversationId) {
 			return;
 		}
 
-		var value = trimmed(rawValue);
 		var body = { conversation_id: conversationId };
-		if (value) {
-			body.contact_type = value.indexOf('@') !== -1 ? 'email' : 'whatsapp';
-			body.contact_value = value;
+		if (contact) {
+			body.contact_name = contact.name || '';
+			body.contact_email = contact.email || '';
+			body.contact_phone = contact.phone || '';
 		}
 
 		fetchNonce(false).then(function (nonce) {
@@ -1254,17 +1326,36 @@ products.
 		}).then(function (response) {
 			return response.json().catch(function () {
 				return null;
+			}).then(function (data) {
+				return { ok: response.ok, data: data };
 			});
-		}).then(function (data) {
+		}).then(function (result) {
+			if (!result.ok) {
+				var code = result.data && (result.data.code || (result.data.data && result.data.data.code));
+				if ('db_chat_email_required' === code) {
+					if (typeof callbacks.onInvalidEmail === 'function') {
+						callbacks.onInvalidEmail();
+					}
+					return;
+				}
+				throw new Error((result.data && result.data.message) || 'handoff_failed');
+			}
+			var data = result.data;
 			currentStatus = data && typeof data.status === 'string' ? data.status : 'waiting';
 			setHumanHandoffButtonVisible(false);
 			renderSystemNote('A team member will reply here shortly.');
 			startPolling();
+			if (typeof callbacks.onSuccess === 'function') {
+				callbacks.onSuccess();
+			}
 		}).catch(function () {
 			// Transient failure: leave the button available so the customer
 			// can simply try again rather than land on a dead end.
 			setHumanHandoffButtonVisible(true);
 			addNotice(TEXT.network, true);
+			if (typeof callbacks.onOtherFailure === 'function') {
+				callbacks.onOtherFailure();
+			}
 		});
 	}
 

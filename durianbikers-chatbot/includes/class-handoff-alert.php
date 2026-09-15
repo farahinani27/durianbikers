@@ -32,8 +32,22 @@ final class DB_Chat_Handoff_Alert {
 			}
 		}
 
+		$contact_lines = array();
+		if ( ! empty( $conv['contact_name'] ) ) {
+			$contact_lines[] = sprintf( 'Name: %s', $conv['contact_name'] );
+		}
+		if ( ! empty( $conv['contact_email'] ) ) {
+			$contact_lines[] = sprintf( 'Email: %s', $conv['contact_email'] );
+		}
+		if ( ! empty( $conv['contact_phone'] ) ) {
+			$contact_lines[] = sprintf( 'Phone: %s', $conv['contact_phone'] );
+		}
+
 		$contact = '';
-		if ( ! empty( $conv['contact_value'] ) ) {
+		if ( ! empty( $contact_lines ) ) {
+			$contact = "\n" . implode( "\n", $contact_lines );
+		} elseif ( ! empty( $conv['contact_value'] ) ) {
+			// Fallback for the older single-field contact (pre-contact_email).
 			$contact = sprintf( "\nContact (%s): %s", $conv['contact_type'], $conv['contact_value'] );
 		}
 

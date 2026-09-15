@@ -136,6 +136,40 @@ hyphen-separated, no BEM, no build step.
 	gap: 8px;
 }
 
+/* Name/email/phone captured at handoff — sits between the head bar and the
+   transcript, only rendered when at least one field is present. */
+.db-chat-inbox-contact {
+	padding: 10px 16px;
+	border-bottom: 1px solid #f0f0f1;
+	background: #f6f7f7;
+}
+
+.db-chat-inbox-contact-heading {
+	font-size: 11px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	color: #646970;
+	margin-bottom: 4px;
+}
+
+.db-chat-inbox-contact-row {
+	display: flex;
+	gap: 8px;
+	font-size: 13px;
+	line-height: 1.6;
+}
+
+.db-chat-inbox-contact-label {
+	flex: 0 0 50px;
+	color: #646970;
+}
+
+.db-chat-inbox-contact-value {
+	word-break: break-word;
+	user-select: text;
+}
+
 .db-chat-inbox-transcript {
 	flex: 1;
 	overflow-y: auto;

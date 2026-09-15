@@ -58,7 +58,19 @@ final class DB_Chat_Handoff_Endpoint {
 			}
 		}
 
+		$name  = sanitize_text_field( (string) $request->get_param( 'contact_name' ) );
+		$email = sanitize_email( (string) $request->get_param( 'contact_email' ) );
+		$phone = preg_replace( '/[^0-9+ ]/', '', (string) $request->get_param( 'contact_phone' ) );
+
+		// Require a valid email on a FRESH handoff only — an already-waiting or
+		// human conversation re-calling handoff must stay a no-op, not an
+		// error, exactly as it behaved before this field existed.
+		if ( ! $already && '' === $email ) {
+			return new WP_Error( 'db_chat_email_required', 'A valid email is required.', array( 'status' => 400 ) );
+		}
+
 		if ( ! $already ) {
+			DB_Chat_Conversation_Store::set_contact_details( (int) $conv['id'], $name, $email, $phone );
 			DB_Chat_Conversation_Store::set_status( (int) $conv['id'], DB_Chat_Conversation_Store::STATUS_WAITING );
 			DB_Chat_Conversation_Store::add_message( (int) $conv['id'], 'system', 'Conversation handed to a team member.' );
 

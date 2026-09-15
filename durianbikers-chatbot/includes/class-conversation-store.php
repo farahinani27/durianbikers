@@ -13,7 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class DB_Chat_Conversation_Store {
 
-	const SCHEMA_VERSION = 1;
+	const SCHEMA_VERSION = 2;
 
 	const STATUS_BOT      = 'bot';
 	const STATUS_WAITING  = 'waiting';
@@ -59,6 +59,9 @@ final class DB_Chat_Conversation_Store {
 				assigned_user_id BIGINT UNSIGNED NULL,
 				contact_type VARCHAR(16) NULL,
 				contact_value VARCHAR(191) NULL,
+				contact_name VARCHAR(191) NULL,
+				contact_email VARCHAR(191) NULL,
+				contact_phone VARCHAR(64) NULL,
 				lang VARCHAR(8) NULL,
 				page_url VARCHAR(255) NULL,
 				created_at DATETIME NOT NULL,
@@ -259,6 +262,28 @@ final class DB_Chat_Conversation_Store {
 			),
 			array( 'id' => (int) $conversation_id ),
 			array( '%s', '%s', '%s' ),
+			array( '%d' )
+		);
+	}
+
+	/**
+	 * Store the full contact-capture form (name optional, email required by
+	 * the endpoint, phone optional) gathered at handoff time. Separate from
+	 * the older set_contact() (single email-or-whatsapp field), which stays
+	 * in place but unused going forward.
+	 */
+	public static function set_contact_details( $conversation_id, $name, $email, $phone ) {
+		global $wpdb;
+		$wpdb->update(
+			self::conversations_table(),
+			array(
+				'contact_name'  => substr( (string) $name, 0, 191 ),
+				'contact_email' => substr( (string) $email, 0, 191 ),
+				'contact_phone' => substr( (string) $phone, 0, 64 ),
+				'updated_at'    => current_time( 'mysql', true ),
+			),
+			array( 'id' => (int) $conversation_id ),
+			array( '%s', '%s', '%s', '%s' ),
 			array( '%d' )
 		);
 	}
