@@ -339,6 +339,7 @@ class DB_Chat_Chat_Endpoint {
 
 			$payload['handoff']['enabled']     = true;
 			$payload['handoff']['pollSeconds'] = max( 2, (int) get_option( 'db_chat_handoff_poll_seconds', 5 ) );
+			$payload['handoff']['status']      = $conversation['status'];
 		}
 
 		$response = new WP_REST_Response( $payload );

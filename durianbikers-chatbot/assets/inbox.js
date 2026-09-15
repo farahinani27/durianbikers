@@ -16,8 +16,10 @@ logged-in admin session.
 Layout: a left list of conversations (auto-refreshed every ~5s) and a right
 pane with the selected conversation's transcript, a reply box, and
 Take / Resolve buttons. Selecting a row stops it from being blown away by
-the list auto-refresh; the transcript itself is only reloaded on demand
-(select / reply / take / resolve), not on the 5s timer.
+the list auto-refresh. The open conversation's transcript is ALSO polled
+every ~5s (see pollOpenConversation()): it re-renders and auto-scrolls only
+when the newest message id actually changed, so an agent mid-read (or
+mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 */
 
 ( function () {
@@ -43,10 +45,27 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 		messages: [],
 	};
 
+	// Newest message id we've actually rendered, keyed by conversation id.
+	// Lets pollOpenConversation() tell "nothing new" apart from "something
+	// arrived" without re-rendering (and yanking scroll / the reply
+	// textarea) on every 5s tick.
+	var lastSeenMessageId = {};
+
 	var mount = null;
 	var listEl = null;
 	var detailEl = null;
 	var pollTimer = null;
+
+	function newestMessageId( messages ) {
+		var maxId = null;
+		( messages || [] ).forEach( function ( m ) {
+			var id = parseInt( m && m.id, 10 );
+			if ( ! isNaN( id ) && ( null === maxId || id > maxId ) ) {
+				maxId = id;
+			}
+		} );
+		return maxId;
+	}
 
 	function api( path, opts ) {
 		opts = opts || {};
@@ -153,6 +172,33 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 		listEl.innerHTML = html;
 	}
 
+	function buildBubblesHtml() {
+		return state.messages
+			.map( function ( m ) {
+				return (
+					'<div class="db-chat-inbox-msg db-chat-inbox-msg--' + esc( m.sender ) + '">' +
+					'<div class="db-chat-inbox-msg-meta">' + esc( m.sender ) + ' &middot; ' + esc( fmtTime( m.created_at ) ) + '</div>' +
+					'<div class="db-chat-inbox-msg-body">' + esc( m.body ) + '</div>' +
+					'</div>'
+				);
+			} )
+			.join( '' );
+	}
+
+	/** Re-render ONLY the transcript bubbles inside the already-mounted
+	 *  detail pane, and scroll it to the bottom. Used by the 5s poll so a
+	 *  newly-arrived message shows up without touching the status badge,
+	 *  Take/Resolve buttons, or the reply textarea (content/focus) around
+	 *  it. No-op if the detail pane isn't showing this conversation. */
+	function renderTranscript() {
+		var transcriptEl = detailEl.querySelector( '.db-chat-inbox-transcript' );
+		if ( ! transcriptEl ) {
+			return;
+		}
+		transcriptEl.innerHTML = buildBubblesHtml() || '<div class="db-chat-inbox-placeholder">No messages yet.</div>';
+		transcriptEl.scrollTop = transcriptEl.scrollHeight;
+	}
+
 	function renderDetail() {
 		if ( ! state.selectedId ) {
 			detailEl.innerHTML = '<div class="db-chat-inbox-placeholder">Select a conversation on the left.</div>';
@@ -166,16 +212,7 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 		var status = convo ? convo.status : '';
 		var resolved = 'resolved' === status;
 
-		var bubbles = state.messages
-			.map( function ( m ) {
-				return (
-					'<div class="db-chat-inbox-msg db-chat-inbox-msg--' + esc( m.sender ) + '">' +
-					'<div class="db-chat-inbox-msg-meta">' + esc( m.sender ) + ' &middot; ' + esc( fmtTime( m.created_at ) ) + '</div>' +
-					'<div class="db-chat-inbox-msg-body">' + esc( m.body ) + '</div>' +
-					'</div>'
-				);
-			} )
-			.join( '' );
+		var bubbles = buildBubblesHtml();
 
 		detailEl.innerHTML =
 			'<div class="db-chat-inbox-detail-head">' +
@@ -211,6 +248,8 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 	function loadConversation( id ) {
 		return api( '/conversation?id=' + encodeURIComponent( id ) ).then( function ( data ) {
 			state.messages = data.messages || [];
+			// Baseline for the poll's "did anything new arrive" check below.
+			lastSeenMessageId[ id ] = newestMessageId( state.messages );
 			// Keep the row list's status in sync with what we just fetched.
 			state.conversations = state.conversations.map( function ( row ) {
 				return String( row.id ) === String( id ) ? data.conversation : row;
@@ -218,6 +257,46 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 			renderList();
 			renderDetail();
 		} );
+	}
+
+	/** Called on every ~5s poll tick alongside loadList(). Refreshes the
+	 *  currently-open conversation's messages and, ONLY if the newest
+	 *  message id actually changed (a new agent/customer/system message
+	 *  arrived), re-renders the transcript and scrolls to the bottom. When
+	 *  nothing changed it does nothing further — no re-render, no scroll,
+	 *  and the reply textarea (content, focus, cursor position) is left
+	 *  completely alone. No-op when no conversation is open. */
+	function pollOpenConversation() {
+		if ( ! state.selectedId ) {
+			return;
+		}
+		var id = state.selectedId;
+		api( '/conversation?id=' + encodeURIComponent( id ) )
+			.then( function ( data ) {
+				// The agent may have selected a different (or no) conversation
+				// while this request was in flight — don't apply stale data.
+				if ( String( state.selectedId ) !== String( id ) ) {
+					return;
+				}
+
+				var messages = data.messages || [];
+				state.messages = messages;
+				state.conversations = state.conversations.map( function ( row ) {
+					return String( row.id ) === String( id ) ? data.conversation : row;
+				} );
+
+				var newestId = newestMessageId( messages );
+				var previous = Object.prototype.hasOwnProperty.call( lastSeenMessageId, id ) ? lastSeenMessageId[ id ] : null;
+
+				if ( newestId !== previous ) {
+					lastSeenMessageId[ id ] = newestId;
+					renderTranscript();
+				}
+			} )
+			.catch( function () {
+				// Transient polling failure: silently try again next tick,
+				// same as the widget's own message poll does.
+			} );
 	}
 
 	function selectConversation( id ) {
@@ -313,7 +392,10 @@ the list auto-refresh; the transcript itself is only reloaded on demand
 		renderDetail();
 		loadList();
 
-		pollTimer = window.setInterval( loadList, 5000 );
+		pollTimer = window.setInterval( function () {
+			loadList();
+			pollOpenConversation();
+		}, 5000 );
 	}
 
 	if ( 'loading' === document.readyState ) {

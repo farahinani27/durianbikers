@@ -913,6 +913,12 @@ products.
 			pollSeconds = seconds;
 		}
 
+		// Backend now round-trips the conversation's current status here too,
+		// so a page reload mid-handoff (currentStatus starts out null) knows
+		// to resume polling instead of going silent until the customer sends
+		// another message.
+		currentStatus = data.handoff.status || currentStatus;
+
 		setHumanHandoffButtonVisible(currentStatus !== 'waiting' && currentStatus !== 'human');
 		if (conversationId && (currentStatus === 'waiting' || currentStatus === 'human')) {
 			startPolling();
