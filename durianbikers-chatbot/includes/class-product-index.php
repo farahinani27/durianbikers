@@ -37,6 +37,17 @@ class DB_Chat_Product_Index {
 	/** Results returned per search. */
 	const SEARCH_LIMIT = 12;
 
+	/**
+	 * Candidate pool size when a price ceiling or "cheapest" sort is active.
+	 *
+	 * A bare relevance search only pulls SEARCH_LIMIT rows, which — on a
+	 * catalogue with thousands of unpriced import artifacts — can be filled
+	 * entirely by products that have no readable price. Querying for a wider,
+	 * price-ordered pool means the real priced matches are found instead of
+	 * lost behind an all-unpriced top-SEARCH_LIMIT.
+	 */
+	const PRICE_SEARCH_LIMIT = 48;
+
 	/** Hard safety cap on a single encoded tool_result payload. */
 	const MAX_PAYLOAD_CHARS = 40000;
 
@@ -263,9 +274,20 @@ class DB_Chat_Product_Index {
 		$brand         = isset( $args['brand'] ) && is_scalar( $args['brand'] ) ? sanitize_text_field( (string) $args['brand'] ) : '';
 		$in_stock_only = ! empty( $args['in_stock_only'] );
 
+		/*
+		 * Optional price constraint. When set, the query itself is asked for
+		 * priced, in-range products (see run_query()) instead of relying on a
+		 * post-filter over a relevance-truncated top-N — see
+		 * class-lookup-engine.php's ceiling handling for why that matters.
+		 * Left null/false, nothing below changes: the normal path is
+		 * byte-for-byte what it was before.
+		 */
+		$max_price     = isset( $args['max_price'] ) && is_numeric( $args['max_price'] ) ? (float) $args['max_price'] : null;
+		$sort_cheapest = ! empty( $args['sort_cheapest'] );
+
 		$query = trim( mb_substr( $query, 0, 200 ) );
 
-		$products      = $this->run_query( $query, $category, $brand, $in_stock_only );
+		$products      = $this->run_query( $query, $category, $brand, $in_stock_only, $max_price, $sort_cheapest );
 		$used_fallback = false;
 
 		/*
@@ -277,14 +299,14 @@ class DB_Chat_Product_Index {
 			$fallback = $this->longest_token( $query );
 
 			if ( '' !== $fallback && $fallback !== $query ) {
-				$products      = $this->run_query( $fallback, $category, $brand, $in_stock_only );
+				$products      = $this->run_query( $fallback, $category, $brand, $in_stock_only, $max_price, $sort_cheapest );
 				$used_fallback = true;
 			}
 		}
 
 		// Last resort: drop the filters, keep the query.
 		if ( empty( $products ) && ( '' !== $category || '' !== $brand ) ) {
-			$products = $this->run_query( $query, '', '', $in_stock_only );
+			$products = $this->run_query( $query, '', '', $in_stock_only, $max_price, $sort_cheapest );
 		}
 
 		/*
@@ -346,25 +368,40 @@ class DB_Chat_Product_Index {
 	/**
 	 * Run one wc_get_products() query.
 	 *
-	 * @param string $query         Search string.
-	 * @param string $category      Category name or slug.
-	 * @param string $brand         Brand name or slug.
-	 * @param bool   $in_stock_only Restrict to in-stock.
+	 * @param string     $query         Search string.
+	 * @param string     $category      Category name or slug.
+	 * @param string     $brand         Brand name or slug.
+	 * @param bool       $in_stock_only Restrict to in-stock.
+	 * @param float|null $max_price     Optional price ceiling ("under RM x").
+	 * @param bool       $sort_cheapest Optional; order by price ascending and
+	 *                                  require a readable price, even with no
+	 *                                  ceiling ("cheapest x").
 	 * @return WC_Product[]
 	 */
-	private function run_query( $query, $category, $brand, $in_stock_only ) {
+	private function run_query( $query, $category, $brand, $in_stock_only, $max_price = null, $sort_cheapest = false ) {
 		if ( ! function_exists( 'wc_get_products' ) ) {
 			return array();
 		}
 
+		// Guard: nothing below changes unless a price constraint is active.
+		$has_price_constraint = ( null !== $max_price ) || $sort_cheapest;
+
 		$args = array(
 			'status'     => 'publish',
 			'visibility' => 'visible',
-			'limit'      => self::SEARCH_LIMIT,
+			'limit'      => $has_price_constraint ? self::PRICE_SEARCH_LIMIT : self::SEARCH_LIMIT,
 			'return'     => 'objects',
 			'orderby'    => '' !== $query ? 'relevance' : 'title',
 			'order'      => 'ASC',
 		);
+
+		if ( $has_price_constraint ) {
+			// Sort by price so the products that actually satisfy the
+			// constraint are the ones kept once the wider pool above is
+			// trimmed back down by the caller.
+			$args['orderby'] = 'price';
+			$args['order']   = 'ASC';
+		}
 
 		if ( '' !== $query ) {
 			$args['s'] = $query;
@@ -410,6 +447,37 @@ class DB_Chat_Product_Index {
 			add_filter( 'woocommerce_product_data_store_cpt_get_products_query', $filter, 99 );
 		}
 
+		$price_filter = null;
+
+		if ( $has_price_constraint ) {
+			/*
+			 * Same documented data-store filter used for brand above, this
+			 * time to require a real, in-range _price. A ceiling ("under RM
+			 * x") requires price <= x; a bare "cheapest" with no ceiling
+			 * still requires price > 0, so unpriced import artifacts (see
+			 * class-lookup-engine.php) never crowd out real matches. Products
+			 * with no _price row have nothing to compare and are naturally
+			 * excluded either way. try/finally removes it exactly like the
+			 * brand filter, so it can never leak into another query.
+			 */
+			$price_filter = static function ( $wp_query_args ) use ( $max_price ) {
+				if ( ! isset( $wp_query_args['meta_query'] ) || ! is_array( $wp_query_args['meta_query'] ) ) {
+					$wp_query_args['meta_query'] = array();
+				}
+
+				$wp_query_args['meta_query'][] = array(
+					'key'     => '_price',
+					'value'   => null !== $max_price ? $max_price : 0,
+					'type'    => 'NUMERIC',
+					'compare' => null !== $max_price ? '<=' : '>',
+				);
+
+				return $wp_query_args;
+			};
+
+			add_filter( 'woocommerce_product_data_store_cpt_get_products_query', $price_filter, 99 );
+		}
+
 		try {
 			$products = wc_get_products( $args );
 		} catch ( Throwable $e ) {
@@ -418,6 +486,10 @@ class DB_Chat_Product_Index {
 		} finally {
 			if ( null !== $filter ) {
 				remove_filter( 'woocommerce_product_data_store_cpt_get_products_query', $filter, 99 );
+			}
+
+			if ( null !== $price_filter ) {
+				remove_filter( 'woocommerce_product_data_store_cpt_get_products_query', $price_filter, 99 );
 			}
 		}
 

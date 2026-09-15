@@ -2262,6 +2262,25 @@ class DB_Chat_Lookup_Engine {
 		}
 
 		/*
+		 * PUSH THE PRICE CONSTRAINT INTO THE QUERY. A bare "helmet" search can
+		 * match hundreds of products; wc_get_products() returns only the top
+		 * SEARCH_LIMIT by relevance. When many of those top matches are
+		 * unpriced import artifacts (see the post-filter below), they fill the
+		 * relevance-truncated result set and crowd out real, priced matches
+		 * further down — "under RM 500" then finds nothing even though priced
+		 * sub-500 products exist. Telling search_products() about the ceiling
+		 * (or the "cheapest" sort) lets it query for priced, in-range products
+		 * directly instead of post-filtering a truncated set.
+		 */
+		if ( null !== $filters['ceiling'] ) {
+			$args['max_price'] = (float) $filters['ceiling'];
+		}
+
+		if ( $filters['cheapest'] ) {
+			$args['sort_cheapest'] = true;
+		}
+
+		/*
 		 * search_products() already retries once on the longest single token
 		 * when a multi-word query returns nothing, and drops the taxonomy
 		 * filters as a last resort. That retry is inherited on purpose rather
