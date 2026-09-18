@@ -152,6 +152,177 @@ class DB_Chat_Cart_Writer {
 	}
 
 	/**
+	 * Read the cart. Whitelisted fields only — no raw meta, no SKU.
+	 *
+	 * @return array<string,mixed>
+	 */
+	public function contents() {
+		if ( ! $this->load_cart() ) {
+			return array(
+				'items'    => array(),
+				'count'    => 0,
+				'total'    => '',
+				'cart_url' => (string) ( function_exists( 'wc_get_cart_url' ) ? wc_get_cart_url() : '' ),
+			);
+		}
+
+		$items = array();
+
+		foreach ( WC()->cart->get_cart() as $key => $item ) {
+			$line_product = isset( $item['data'] ) && $item['data'] instanceof WC_Product ? $item['data'] : null;
+
+			if ( ! $line_product instanceof WC_Product ) {
+				continue;
+			}
+
+			$product_id   = (int) ( $item['product_id'] ?? 0 );
+			$variation_id = (int) ( $item['variation_id'] ?? 0 );
+			$quantity     = (int) ( $item['quantity'] ?? 0 );
+
+			$parent = wc_get_product( $product_id );
+			$name   = $parent instanceof WC_Product
+				? wp_strip_all_tags( (string) $parent->get_name() )
+				: wp_strip_all_tags( (string) $line_product->get_name() );
+
+			$label = ( $variation_id > 0 && $line_product instanceof WC_Product_Variation )
+				? $this->variation_label( $line_product )
+				: '';
+
+			$items[] = array(
+				'key'          => (string) $key,
+				'name'         => $name,
+				'label'        => $label,
+				'qty'          => $quantity,
+				'line_price'   => $this->plain( (string) WC()->cart->get_product_subtotal( $line_product, $quantity ) ),
+				'product_id'   => $product_id,
+				'variation_id' => $variation_id,
+			);
+		}
+
+		return array(
+			'items'    => $items,
+			'count'    => (int) WC()->cart->get_cart_contents_count(),
+			'total'    => $this->plain( (string) WC()->cart->get_cart_total() ),
+			'cart_url' => (string) wc_get_cart_url(),
+		);
+	}
+
+	/**
+	 * Change the quantity of an existing cart line. Never touches price.
+	 *
+	 * Re-validates the line's product/variation against the NEW quantity
+	 * before applying it — an increase that would go out of stock or over
+	 * the per-add ceiling is refused exactly as it would be on `add()`. A
+	 * quantity of zero removes the line instead of failing.
+	 *
+	 * @param string $cart_item_key Key from `contents()`/`WC()->cart->get_cart()`.
+	 * @param int    $quantity      New quantity; 0 removes.
+	 * @return array<string,mixed>
+	 */
+	public function update( $cart_item_key, $quantity ) {
+		$cart_item_key = (string) $cart_item_key;
+		$quantity      = (int) $quantity;
+
+		if ( '' === $cart_item_key ) {
+			return $this->failure( 'db_chat_no_cart_item', 'I could not find that item in your cart.' );
+		}
+
+		if ( ! $this->load_cart() ) {
+			return $this->failure( 'db_chat_no_cart', 'Your cart is not available right now.' );
+		}
+
+		$cart = WC()->cart->get_cart();
+
+		if ( ! isset( $cart[ $cart_item_key ] ) ) {
+			return $this->failure( 'db_chat_no_cart_item', 'I could not find that item in your cart.' );
+		}
+
+		if ( $quantity < 0 ) {
+			return $this->failure( 'db_chat_bad_quantity', 'That is not a quantity I can set.' );
+		}
+
+		if ( 0 === $quantity ) {
+			return $this->remove( $cart_item_key );
+		}
+
+		$item         = $cart[ $cart_item_key ];
+		$product_id   = (int) ( $item['product_id'] ?? 0 );
+		$variation_id = (int) ( $item['variation_id'] ?? 0 );
+
+		$check = $this->validate( $product_id, $variation_id, $quantity );
+
+		if ( is_wp_error( $check ) ) {
+			return $this->failure( $check->get_error_code(), $check->get_error_message() );
+		}
+
+		try {
+			$updated = WC()->cart->set_quantity( $cart_item_key, $quantity, true );
+		} catch ( Throwable $e ) {
+			DB_Chat_Plugin::log_error( 'Cart update failed: ' . $e->getMessage() );
+
+			return $this->failure( 'db_chat_cart_failed', 'I could not update your cart.' );
+		}
+
+		if ( ! $updated ) {
+			return $this->failure( 'db_chat_cart_refused', 'That change could not be made to your cart.' );
+		}
+
+		return array(
+			'ok'         => true,
+			'code'       => '',
+			'message'    => '',
+			'cart_url'   => (string) wc_get_cart_url(),
+			'cart_total' => $this->plain( (string) WC()->cart->get_cart_total() ),
+			'item_count' => (int) WC()->cart->get_cart_contents_count(),
+		);
+	}
+
+	/**
+	 * Remove a cart line entirely.
+	 *
+	 * @param string $cart_item_key Key from `contents()`/`WC()->cart->get_cart()`.
+	 * @return array<string,mixed>
+	 */
+	public function remove( $cart_item_key ) {
+		$cart_item_key = (string) $cart_item_key;
+
+		if ( '' === $cart_item_key ) {
+			return $this->failure( 'db_chat_no_cart_item', 'I could not find that item in your cart.' );
+		}
+
+		if ( ! $this->load_cart() ) {
+			return $this->failure( 'db_chat_no_cart', 'Your cart is not available right now.' );
+		}
+
+		$cart = WC()->cart->get_cart();
+
+		if ( ! isset( $cart[ $cart_item_key ] ) ) {
+			return $this->failure( 'db_chat_no_cart_item', 'I could not find that item in your cart.' );
+		}
+
+		try {
+			$removed = WC()->cart->remove_cart_item( $cart_item_key );
+		} catch ( Throwable $e ) {
+			DB_Chat_Plugin::log_error( 'Cart remove failed: ' . $e->getMessage() );
+
+			return $this->failure( 'db_chat_cart_failed', 'I could not remove that from your cart.' );
+		}
+
+		if ( ! $removed ) {
+			return $this->failure( 'db_chat_cart_refused', 'That item could not be removed from your cart.' );
+		}
+
+		return array(
+			'ok'         => true,
+			'code'       => '',
+			'message'    => '',
+			'cart_url'   => (string) wc_get_cart_url(),
+			'cart_total' => $this->plain( (string) WC()->cart->get_cart_total() ),
+			'item_count' => (int) WC()->cart->get_cart_contents_count(),
+		);
+	}
+
+	/**
 	 * Every rule, applied to freshly read WooCommerce data.
 	 *
 	 * @param int $product_id   Parent product.
