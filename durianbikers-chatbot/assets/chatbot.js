@@ -191,6 +191,7 @@ products.
 	var MAX_HISTORY_SENT = 10;   // REST contract: history array max 10 entries
 	var MAX_PRODUCTS = 4;
 	var MAX_PAGES = 2;           // REST contract: `pages` is 0–2 entries
+	var MAX_CART_ITEMS = 20;     // defensive cap; a real cart is never this long
 	var MAX_SUGGESTIONS = 4;     // starter chips shown at open
 	/*
 		Follow-up chips (the guided product finder's next step) get a slightly
@@ -1282,6 +1283,92 @@ products.
 	}
 
 	/**
+	 * Inline cart-change CONFIRM CARD, rendered into the transcript when a
+	 * `/chat` response carries a `proposal` object (Phase 2 cart tools —
+	 * propose/commit). Same message-row shape as the escalate prompt above
+	 * (spacer + body), and reuses its `.db-chat-escalate` box + button
+	 * markup rather than inventing new CSS, plus the two-button row from the
+	 * contact step (`.db-chat-contact-actions` / `.db-chat-contact-cancel`)
+	 * for the "No" side.
+	 *
+	 * The Yes/No buttons send their OWN VISIBLE TEXT as the next chat
+	 * message — never a hidden value — exactly like buildChip() sends a
+	 * chip's own label. That is what lets the server's DB_Chat_Confirm read
+	 * the customer's literal words ("Yes, add it" / "No") for the commit
+	 * gate; a button that displayed one string but sent another would show
+	 * the transcript lying about what the customer said.
+	 *
+	 * Defensive: a missing/malformed `proposal`, or one with no name or an
+	 * action outside add/update/remove, renders nothing.
+	 */
+	function addCartConfirm(proposal) {
+		if (!proposal || typeof proposal !== 'object') {
+			return;
+		}
+		if (typeof proposal.name !== 'string' || !proposal.name.trim()) {
+			return;
+		}
+		var action = proposal.action;
+		if (action !== 'add' && action !== 'update' && action !== 'remove') {
+			return;
+		}
+
+		var name = proposal.name.trim();
+		var label = typeof proposal.label === 'string' ? proposal.label.trim() : '';
+		var price = typeof proposal.price === 'string' ? proposal.price.trim() : '';
+		var qty = typeof proposal.qty === 'number' && proposal.qty >= 0 && Math.floor(proposal.qty) === proposal.qty
+			? proposal.qty
+			: 0;
+
+		var itemText = name + (label ? ' (' + label + ')' : '');
+		var summary;
+		var yesLabel;
+
+		if (action === 'add') {
+			summary = 'Add ' + (qty > 0 ? qty : 1) + ' × ' + itemText + (price ? ' — ' + price : '') + '?';
+			yesLabel = 'Yes, add it';
+		} else if (action === 'update') {
+			summary = 'Update ' + itemText + ' to qty ' + qty + (price ? ' (' + price + ')' : '') + '?';
+			yesLabel = 'Yes, update it';
+		} else {
+			summary = 'Remove ' + itemText + ' from your cart?';
+			yesLabel = 'Yes, remove it';
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-escalate');
+		box.appendChild(el('p', 'db-chat-escalate-text', summary));
+
+		var actions = el('div', 'db-chat-contact-actions');
+
+		var yes = el('button', 'db-chat-escalate-btn', yesLabel);
+		yes.type = 'button';
+		yes.addEventListener('click', function () {
+			box.remove();
+			// The literal button text IS the message — same rule as chips.
+			send(yesLabel);
+		});
+		actions.appendChild(yes);
+
+		var no = el('button', 'db-chat-contact-cancel', 'No');
+		no.type = 'button';
+		no.addEventListener('click', function () {
+			box.remove();
+			send('No');
+		});
+		actions.appendChild(no);
+
+		box.appendChild(actions);
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
 	 * Contact-capture step: Name (optional), Email (REQUIRED), Phone
 	 * (optional), plus Send/Cancel, appended to the transcript. Send
 	 * validates the email client-side before POSTing /handoff; Cancel closes
@@ -2049,6 +2136,114 @@ products.
 	}
 
 	/**
+	 * One line of the cart summary below. Reuses the product-card row
+	 * markup (`.db-chat-product` / `.db-chat-product-body` /
+	 * `.db-chat-product-name` / `.db-chat-product-meta` /
+	 * `.db-chat-product-price`) with no thumbnail and no "This one" button —
+	 * a cart line has neither an image nor a pick action, it is view-only.
+	 */
+	function buildCartItemRow(item, qty) {
+		var row = el('li', 'db-chat-product');
+		var body = el('div', 'db-chat-product-body');
+
+		var label = typeof item.label === 'string' ? item.label.trim() : '';
+		var nameText = qty + ' × ' + item.name.trim() + (label ? ' (' + label + ')' : '');
+		body.appendChild(el('p', 'db-chat-product-name', nameText));
+
+		if (typeof item.line_price === 'string' && item.line_price.trim()) {
+			var meta = el('div', 'db-chat-product-meta');
+			// Pre-formatted MYR string from WooCommerce, same rule as product
+			// cards: never built here.
+			meta.appendChild(el('span', 'db-chat-product-price', item.line_price.trim()));
+			body.appendChild(meta);
+		}
+
+		row.appendChild(body);
+		return row;
+	}
+
+	/**
+	 * Compact cart SUMMARY, rendered into the transcript when a `/chat`
+	 * response carries a `cart` object with an `items` array (from a
+	 * committed change or a `view_cart` tool call — see class-chat-endpoint
+	 * `handle_request()`). Reuses the product-card container/list styles
+	 * (`.db-chat-products` / `.db-chat-product`) and the page-link pattern
+	 * (`.db-chat-page-link`, same-tab `<a>`, same as a product card's own
+	 * link) for the "View cart" link.
+	 *
+	 * IMPORTANT — shape guard: `cart` is NOT a new key. The older guided-buy
+	 * flow (class-lookup-engine.php `complete_purchase()`) has always sent
+	 * its OWN, differently-shaped `cart` object on a successful buy:
+	 * `{added, url, total, count}` — no `items`. That path is handled
+	 * separately above (the `data.cart.added` cart-fragment refresh) and
+	 * must keep working untouched. This function only ever renders when
+	 * `cart.items` is actually an array, which the legacy shape never has,
+	 * so the two never collide.
+	 */
+	function addCartSummary(cart) {
+		if (!cart || typeof cart !== 'object') {
+			return;
+		}
+		var items = Array.isArray(cart.items) ? cart.items : null;
+		if (!items) {
+			return;
+		}
+
+		var list = el('ul', 'db-chat-products');
+		list.setAttribute('aria-label', 'Your cart');
+		var count = 0;
+
+		items.forEach(function (item) {
+			if (count >= MAX_CART_ITEMS) {
+				return;
+			}
+			if (!item || typeof item !== 'object') {
+				return;
+			}
+			if (typeof item.name !== 'string' || !item.name.trim()) {
+				return;
+			}
+			var qty = typeof item.qty === 'number' && item.qty > 0 && Math.floor(item.qty) === item.qty
+				? item.qty
+				: 0;
+			if (!qty) {
+				return;
+			}
+			list.appendChild(buildCartItemRow(item, qty));
+			count += 1;
+		});
+
+		if (!count) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		// Blank spacer so the summary lines up under the bubble above it,
+		// same as product cards / page links / chips.
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+		body.appendChild(list);
+
+		if (typeof cart.total === 'string' && cart.total.trim()) {
+			body.appendChild(el('p', 'db-chat-product-price', 'Total: ' + cart.total.trim()));
+		}
+
+		var href = safeUrl(cart.cart_url);
+		if (href) {
+			// Same tab, same as a product card's own link — no target set.
+			var link = el('a', 'db-chat-page-link');
+			link.setAttribute('href', href);
+			link.appendChild(icon(ICONS.page, 'db-chat-page-icon'));
+			link.appendChild(el('span', 'db-chat-page-title', 'View cart'));
+			body.appendChild(link);
+		}
+
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
 	 * FOLLOW-UP CHIPS — the guided product finder's next step.
 	 *
 	 * Contract agreed with the backend (Aug 2026): `chips` is a flat array of
@@ -2665,6 +2860,15 @@ products.
 		// sits closest to the composer. Usually a finder step arrives with no
 		// products and no pages, but the order has to hold when it does.
 		addChips(data ? data.chips : null);
+
+		// Phase 2 cart tools (propose/commit/view_cart). Both keys are
+		// optional and absent on every response that never touched a cart
+		// tool this turn, so this is a no-op on the common path. Summary
+		// before confirm card: "here's your cart now" before "here's what
+		// I'm about to change next" reads in the right order when a commit
+		// and a fresh propose land in the same reply.
+		addCartSummary(data ? data.cart : null);
+		addCartConfirm(data ? data.proposal : null);
 
 		// The assistant just pointed at the button — make it easy to find.
 		if (replyOffersHandoff(reply, data)) {
