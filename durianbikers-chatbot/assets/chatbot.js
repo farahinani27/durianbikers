@@ -1319,6 +1319,7 @@ products.
 		var qty = typeof proposal.qty === 'number' && proposal.qty >= 0 && Math.floor(proposal.qty) === proposal.qty
 			? proposal.qty
 			: 0;
+		var proposalId = typeof proposal.proposal_id === 'string' ? proposal.proposal_id : '';
 
 		var itemText = name + (label ? ' (' + label + ')' : '');
 		var summary;
@@ -1348,8 +1349,11 @@ products.
 		yes.type = 'button';
 		yes.addEventListener('click', function () {
 			box.remove();
-			// The literal button text IS the message — same rule as chips.
-			send(yesLabel);
+			// The literal button text IS the message (same rule as chips). The
+			// structured signal routes the turn to a deterministic commit of
+			// THIS exact staged proposal — the server still re-checks the staged
+			// proposal and the literal message before it writes anything.
+			send(yesLabel, { cart_confirm: { decision: 'yes', proposal_id: proposalId } });
 		});
 		actions.appendChild(yes);
 
@@ -1357,7 +1361,7 @@ products.
 		no.type = 'button';
 		no.addEventListener('click', function () {
 			box.remove();
-			send('No');
+			send('No', { cart_confirm: { decision: 'no', proposal_id: proposalId } });
 		});
 		actions.appendChild(no);
 
@@ -2622,16 +2626,20 @@ products.
 	function postChat(message, nonce, extra) {
 		var headers = authHeaders(nonce, true);
 
-		var body = extra && extra.pick ? {
-			message: message,
-			history: history.slice(-MAX_HISTORY_SENT),
-			pending: pendingOrder,
-			pick: extra.pick
-		} : {
+		var body = {
 			message: message,
 			history: history.slice(-MAX_HISTORY_SENT),
 			pending: pendingOrder
 		};
+		if (extra && extra.pick) {
+			body.pick = extra.pick;
+		}
+		// The confirm-card decision. The server re-checks the staged proposal
+		// and the literal message before any write — this is only a routing
+		// signal, never trusted for the mutation itself.
+		if (extra && extra.cart_confirm) {
+			body.cart_confirm = extra.cart_confirm;
+		}
 		// Only ever present once GET /session has round-tripped one back
 		// (i.e. only when handoffEnabled). Off in production: this field is
 		// simply absent, same request body as before this feature existed.
@@ -2702,7 +2710,16 @@ products.
 		}
 
 		lastAttempt = message;
-		lastAttemptExtra = extra && extra.pick ? { pick: extra.pick } : null;
+		lastAttemptExtra = null;
+		if (extra && (extra.pick || extra.cart_confirm)) {
+			lastAttemptExtra = {};
+			if (extra.pick) {
+				lastAttemptExtra.pick = extra.pick;
+			}
+			if (extra.cart_confirm) {
+				lastAttemptExtra.cart_confirm = extra.cart_confirm;
+			}
+		}
 		var sentExtra = lastAttemptExtra;
 		// The customer's own words: the only thing the WhatsApp prefill may
 		// ever carry, and only if orders never came up.

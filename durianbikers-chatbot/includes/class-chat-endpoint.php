@@ -239,6 +239,19 @@ class DB_Chat_Chat_Endpoint {
 							return null === $value || is_array( $value );
 						},
 					),
+					/*
+					 * Confirm-card decision from the widget: { decision:
+					 * 'yes'|'no', proposal_id }. A claim from the browser —
+					 * read_cart_confirm() whitelists it and the actual write
+					 * re-checks the staged proposal and the literal message.
+					 */
+					'cart_confirm' => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_array( $value );
+						},
+					),
 				),
 			)
 		);
@@ -682,6 +695,32 @@ class DB_Chat_Chat_Endpoint {
 					)
 				);
 			}
+		}
+
+		/*
+		 * DETERMINISTIC CONFIRM. The widget's confirm-card buttons send a
+		 * structured cart_confirm signal (decision + the exact proposal_id from
+		 * the card). Handle it in code here, before either brain runs, so the
+		 * two-step's second step never depends on the model calling
+		 * commit_cart_change — Haiku frequently re-proposes instead of
+		 * committing. The commit still passes through commit_staged_proposal's
+		 * full gate (a proposal staged for THIS conversation, id match,
+		 * is_affirmative on the customer's literal message, cart-writer
+		 * re-validation), and the reply is built from the real committed result,
+		 * never claimed on a refusal or a failed write. Only reachable with
+		 * handoff on (a conversation exists), same as every other cart path.
+		 */
+		$cart_confirm = $this->read_cart_confirm( $request );
+
+		if ( null !== $cart_confirm && null !== $conversation ) {
+			$response_data = $this->handle_cart_confirmation(
+				$cart_confirm['decision'],
+				$cart_confirm['proposal_id'],
+				$message,
+				(string) $conversation['public_id']
+			);
+
+			return $this->finalize_response( $response_data, $conversation, false );
 		}
 
 		/*
@@ -1510,6 +1549,125 @@ class DB_Chat_Chat_Endpoint {
 	}
 
 	/**
+	 * Read the widget's structured confirm-card signal, if present and valid.
+	 *
+	 * The confirm card's buttons send cart_confirm = { decision:'yes'|'no',
+	 * proposal_id:<the staged id> }. Everything here is a claim from the
+	 * browser and treated as one: the decision is whitelisted to yes/no and the
+	 * id is sanitised. Nothing here is trusted for the actual write — that
+	 * re-checks the staged proposal and the customer's literal message inside
+	 * commit_staged_proposal.
+	 *
+	 * @param WP_REST_Request $request The request.
+	 * @return array{decision:string,proposal_id:string}|null Null when absent/invalid.
+	 */
+	private function read_cart_confirm( $request ) {
+		$raw = $request->get_param( 'cart_confirm' );
+
+		if ( ! is_array( $raw ) ) {
+			return null;
+		}
+
+		$decision = isset( $raw['decision'] ) && is_scalar( $raw['decision'] ) ? strtolower( trim( (string) $raw['decision'] ) ) : '';
+
+		if ( 'yes' !== $decision && 'no' !== $decision ) {
+			return null;
+		}
+
+		$proposal_id = isset( $raw['proposal_id'] ) && is_scalar( $raw['proposal_id'] ) ? trim( (string) $raw['proposal_id'] ) : '';
+
+		return array(
+			'decision'    => $decision,
+			'proposal_id' => $proposal_id,
+		);
+	}
+
+	/**
+	 * Apply a confirm-card decision deterministically, in code, and build the
+	 * reply from the real outcome — never a model-generated "done" that might
+	 * not match what actually happened.
+	 *
+	 * @param string $decision               'yes' to commit, 'no' to decline.
+	 * @param string $proposal_id            Proposal id from the card.
+	 * @param string $current_message        Customer's literal message THIS turn.
+	 * @param string $conversation_public_id Conversation public id; staging key.
+	 * @return array<string,mixed> finalize_response()-shaped data.
+	 */
+	private function handle_cart_confirmation( $decision, $proposal_id, $current_message, $conversation_public_id ) {
+		if ( 'no' === $decision ) {
+			DB_Chat_Cart_Proposal::clear( $conversation_public_id );
+
+			return array(
+				'reply'    => __( "No problem — I haven't changed your cart. Anything else I can help you find?", 'durianbikers-chatbot' ),
+				'products' => array(),
+				'pages'    => array(),
+			);
+		}
+
+		$result = $this->commit_staged_proposal( $conversation_public_id, $current_message, (string) $proposal_id );
+
+		if ( empty( $result['committed'] ) ) {
+			return array(
+				'reply'    => $this->cart_commit_failure_reply(
+					isset( $result['reason'] ) ? (string) $result['reason'] : 'write_failed',
+					isset( $result['message'] ) ? (string) $result['message'] : ''
+				),
+				'products' => array(),
+				'pages'    => array(),
+			);
+		}
+
+		$cart  = isset( $result['cart'] ) && is_array( $result['cart'] ) ? $result['cart'] : array();
+		$total = isset( $cart['total'] ) ? (string) $cart['total'] : '';
+
+		$reply = '' !== $total
+			? sprintf(
+				/* translators: %s: formatted cart total, e.g. RM653.00 */
+				__( 'Done — your cart is updated. Cart total: %s. Ready to check out whenever you are.', 'durianbikers-chatbot' ),
+				$total
+			)
+			: __( 'Done — your cart is updated. Ready to check out whenever you are.', 'durianbikers-chatbot' );
+
+		$data = array(
+			'reply'    => $reply,
+			'products' => array(),
+			'pages'    => array(),
+		);
+
+		if ( ! empty( $cart ) ) {
+			$data['cart'] = $cart;
+		}
+
+		return $data;
+	}
+
+	/**
+	 * Honest, customer-facing wording for a commit that did not go through.
+	 * Never implies the cart changed.
+	 *
+	 * @param string $reason  commit_staged_proposal reason code.
+	 * @param string $message Optional cart-writer message (e.g. a stock failure).
+	 * @return string
+	 */
+	private function cart_commit_failure_reply( $reason, $message ) {
+		switch ( $reason ) {
+			case 'not_confirmed':
+				return __( "No problem — I haven't added anything. Tell me if you'd like it after all.", 'durianbikers-chatbot' );
+			case 'nothing_staged':
+			case 'no_conversation':
+				return __( "Sorry — that offer has expired. Tell me the item again and I'll set it up.", 'durianbikers-chatbot' );
+			case 'not_in_cart':
+				return __( "That item isn't in your cart, so there was nothing to change.", 'durianbikers-chatbot' );
+			default:
+				if ( '' !== trim( (string) $message ) ) {
+					return (string) $message;
+				}
+
+				return __( "Sorry — I couldn't update your cart just now. Please try again in a moment.", 'durianbikers-chatbot' );
+		}
+	}
+
+	/**
 	 * commit_cart_change tool: the ONLY path that may write to the cart, and
 	 * only through the gate below.
 	 *
@@ -1519,6 +1677,27 @@ class DB_Chat_Chat_Endpoint {
 	 * @return array<string,mixed> {committed:bool, reason?, cart?}.
 	 */
 	private function tool_commit_cart_change( array $input, $conversation_public_id, $current_message ) {
+		$requested_id = isset( $input['proposal_id'] ) && is_scalar( $input['proposal_id'] ) ? trim( (string) $input['proposal_id'] ) : '';
+
+		return $this->commit_staged_proposal( (string) $conversation_public_id, (string) $current_message, $requested_id );
+	}
+
+	/**
+	 * Commit the staged proposal for a conversation, applying the same code gate
+	 * regardless of caller. Shared by the model's commit_cart_change tool and the
+	 * widget's deterministic confirm-card path (handle_cart_confirmation), so the
+	 * two-step's second step can never depend on the model choosing to call a
+	 * tool. Mutates a cart only when ALL hold: a proposal is staged for THIS
+	 * conversation, the requested id (if any) matches it, the customer's literal
+	 * message this turn is affirmative and not a refusal, and the cart-writer
+	 * re-validates against live WooCommerce.
+	 *
+	 * @param string $conversation_public_id Conversation public id; staging key.
+	 * @param string $current_message        Customer's literal message THIS turn.
+	 * @param string $requested_proposal_id  Proposal id to match, or '' for any.
+	 * @return array<string,mixed> {committed:bool, reason?, message?, cart?}.
+	 */
+	private function commit_staged_proposal( $conversation_public_id, $current_message, $requested_proposal_id ) {
 		if ( '' === trim( (string) $conversation_public_id ) ) {
 			return array( 'committed' => false, 'reason' => 'no_conversation' );
 		}
@@ -1530,7 +1709,7 @@ class DB_Chat_Chat_Endpoint {
 			return array( 'committed' => false, 'reason' => 'nothing_staged' );
 		}
 
-		$requested_id = isset( $input['proposal_id'] ) && is_scalar( $input['proposal_id'] ) ? trim( (string) $input['proposal_id'] ) : '';
+		$requested_id = (string) $requested_proposal_id;
 
 		if ( '' !== $requested_id && $requested_id !== (string) $proposal['proposal_id'] ) {
 			return array( 'committed' => false, 'reason' => 'nothing_staged' );
