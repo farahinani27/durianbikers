@@ -62,4 +62,55 @@ foreach ( glob( $dir . '/*.json' ) as $file ) {
 		}
 	}
 }
+
+/**
+ * CART-SAFETY hard-checks (Phase 2).
+ *
+ * Asserts the REAL commit-gate predicate from
+ * includes/class-chat-endpoint.php::tool_commit_cart_change() (~line 1545):
+ *
+ *     ( DB_Chat_Confirm::is_affirmative( $current_message ) && ! DB_Chat_Confirm::is_refusal( $current_message ) )
+ *
+ * against the DB_Chat_Confirm refusal/affirmative corpus (representative
+ * cases from tests/unit/test-confirm.php). This is not a mirror of the
+ * gate — it calls the real DB_Chat_Confirm class — so a regression in
+ * DB_Chat_Confirm itself (which would also break the live gate) fails
+ * here too.
+ *
+ * The property under test: predicate FALSE for every refusal / ambiguous /
+ * greeting message means the commit path takes the "not_confirmed" branch
+ * and never constructs a DB_Chat_Cart_Writer — zero mutation. Predicate
+ * TRUE only for genuine affirmatives. Per Controller Ruling P2-5, the
+ * "exactly one mutate call" half of the invariant (real cart-writer,
+ * snapshot/restore) is covered by the existing server smoke
+ * test-cart-tools.php and is not duplicated here.
+ */
+require __DIR__ . '/../includes/class-confirm.php';
+
+function db_chat_test_commit_gate( $message ) {
+	return DB_Chat_Confirm::is_affirmative( $message ) && ! DB_Chat_Confirm::is_refusal( $message );
+}
+
+// Refusals — including the traps (contain a 'yes'/confirm token). Gate must
+// be false: commit refuses, zero mutation.
+foreach ( array( 'no', 'nope', "don't", 'cancel', 'tak', 'tak nak', 'jangan', 'batal', 'tak mau', '不要', '不用', '不了' ) as $n ) {
+	t_ok( false === db_chat_test_commit_gate( $n ), "CART-SAFETY gate false for refusal: $n" );
+}
+
+// Ambiguous — no recognised word in either list. Gate must be false.
+foreach ( array( 'how much is it', 'what colours', 'maybe later', 'hmm', 'maybe' ) as $a ) {
+	t_ok( false === db_chat_test_commit_gate( $a ), "CART-SAFETY gate false for ambiguous: $a" );
+}
+
+// Greetings/questions that merely contain a confirm-like substring. Gate
+// must be false — these are not the customer saying yes to a cart commit.
+foreach ( array( '你好', '是吗', '这是什么颜色', '这个好看吗', '这个不错', 'not sure', 'add nothing thanks', 'not now', 'maybe not' ) as $g ) {
+	t_ok( false === db_chat_test_commit_gate( $g ), "CART-SAFETY gate false for greeting/trap: $g" );
+}
+
+// Genuine affirmatives. Gate must be true — commit proceeds to the writer.
+foreach ( array( 'yes', 'ya', 'ok add it', '好的', 'confirm', '加入', 'sure', 'go ahead', 'boleh', 'teruskan' ) as $y ) {
+	t_ok( true === db_chat_test_commit_gate( $y ), "CART-SAFETY gate true for affirmative: $y" );
+}
+
 t_done();
