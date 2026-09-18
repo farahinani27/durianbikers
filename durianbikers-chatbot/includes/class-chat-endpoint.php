@@ -725,7 +725,11 @@ class DB_Chat_Chat_Endpoint {
 		$result = $orchestrator->answer(
 			$message,
 			$history,
-			$this->get_tool_executor( null !== $conversation ? (int) $conversation['id'] : 0 ),
+			$this->get_tool_executor(
+				null !== $conversation ? (int) $conversation['id'] : 0,
+				$message,
+				null !== $conversation ? (string) $conversation['public_id'] : ''
+			),
 			$context,
 			$pages_ctx
 		);
@@ -739,6 +743,35 @@ class DB_Chat_Chat_Endpoint {
 			'products' => isset( $result['products'] ) && is_array( $result['products'] ) ? array_values( $result['products'] ) : array(),
 			'pages'    => isset( $result['pages'] ) && is_array( $result['pages'] ) ? array_values( $result['pages'] ) : array(),
 		);
+
+		/*
+		 * Surface the cart tools' results for the widget (Task 6): `proposal`
+		 * from the LAST propose_cart_change result this turn (so a confirm
+		 * card can be rendered), `cart` from a commit_cart_change or
+		 * view_cart result (so a cart summary can be rendered). Both are read
+		 * from the client's own record of every tool executor result this
+		 * turn — never re-derived from the reply text — and both are omitted
+		 * entirely when no such tool ran, exactly like the `chips`/`cart`
+		 * keys the lookup-engine path already adds conditionally.
+		 */
+		foreach ( $this->client->last_tool_results() as $tool_result ) {
+			if ( ! is_array( $tool_result ) ) {
+				continue;
+			}
+
+			if ( ! empty( $tool_result['proposal'] ) ) {
+				$response_data['proposal'] = $tool_result;
+			}
+
+			if ( array_key_exists( 'committed', $tool_result ) ) {
+				if ( isset( $tool_result['cart'] ) && is_array( $tool_result['cart'] ) ) {
+					$response_data['cart'] = $tool_result['cart'];
+				}
+			} elseif ( isset( $tool_result['items'], $tool_result['count'], $tool_result['cart_url'] ) ) {
+				// view_cart's DB_Chat_Cart_Writer::contents() shape.
+				$response_data['cart'] = $tool_result;
+			}
+		}
 
 		return $this->finalize_response( $response_data, $conversation, $escalate );
 	}
@@ -1192,11 +1225,12 @@ class DB_Chat_Chat_Endpoint {
 	/**
 	 * The callable the Anthropic client uses to run a tool.
 	 *
-	 * Dispatch is an explicit allowlist of exactly five tool names
+	 * Dispatch is an explicit allowlist of exactly eight tool names
 	 * (search_products, get_product, search_pages, get_my_orders,
-	 * request_human). Anything else returns an empty result rather than
-	 * reaching any store data — the client already rejects unknown names,
-	 * this is the second lock.
+	 * request_human, view_cart, propose_cart_change, commit_cart_change).
+	 * Anything else returns an empty result rather than reaching any store
+	 * data — the client already rejects unknown names, this is the second
+	 * lock.
 	 *
 	 * NOTE ON IDENTITY: nothing about the customer is captured into this
 	 * closure and nothing identifying is passed through $input. The order
@@ -1207,22 +1241,53 @@ class DB_Chat_Chat_Endpoint {
 	 * model's tool input — it is threaded in from handle_request()'s own
 	 * $conversation row.
 	 *
-	 * @param int $conversation_id Active conversation id (handoff tracking),
-	 *                             or 0 when handoff is off / no conversation
-	 *                             exists yet. Threaded through so a
-	 *                             request_human call reaches the right row.
+	 * THE CART SAFETY CORE. propose_cart_change and commit_cart_change are
+	 * keyed on $conversation_public_id (DB_Chat_Cart_Proposal's storage key),
+	 * never on anything the model supplies — same discipline as $conversation_id
+	 * above. commit_cart_change is the only one of the two that may write to
+	 * WooCommerce, and only when ALL of: (a) a proposal is staged for this
+	 * exact conversation, (b) $current_message — the CUSTOMER'S message from
+	 * THIS request, never anything the model said — reads as a clear
+	 * affirmative and NOT a refusal (DB_Chat_Confirm, refusal-first), and
+	 * (c) the cart-writer's own validate-on-write still passes at commit
+	 * time (stock can change between propose and commit). Any failure
+	 * returns committed:false with a reason and mutates nothing.
+	 *
+	 * @param int    $conversation_id        Active conversation id (handoff
+	 *                                       tracking), or 0 when handoff is
+	 *                                       off / no conversation exists yet.
+	 *                                       Threaded through so a
+	 *                                       request_human call reaches the
+	 *                                       right row.
+	 * @param string $current_message        The customer's sanitized message
+	 *                                       for THIS request. Used ONLY by
+	 *                                       commit_cart_change's confirmation
+	 *                                       gate. Defaults to '' so existing
+	 *                                       (Phase-1) callers keep working —
+	 *                                       with '' the gate can never read as
+	 *                                       an affirmative, so commit always
+	 *                                       refuses, which is the safe default.
+	 * @param string $conversation_public_id The conversation's public_id, used
+	 *                                       to key the staged proposal
+	 *                                       (DB_Chat_Cart_Proposal). Defaults
+	 *                                       to '' — the empty-id guard below
+	 *                                       then refuses to stage/commit at
+	 *                                       all, rather than collide across
+	 *                                       sessions on sha1( '' ).
 	 * @return callable fn( string $name, array $input ): array
 	 */
-	private function get_tool_executor( $conversation_id = 0 ) {
-		$products        = $this->product_index;
-		$pages           = $this->content_index;
-		$orders          = $this->order_lookup;
-		$conversation_id = (int) $conversation_id;
+	private function get_tool_executor( $conversation_id = 0, $current_message = '', $conversation_public_id = '' ) {
+		$products               = $this->product_index;
+		$pages                  = $this->content_index;
+		$orders                 = $this->order_lookup;
+		$conversation_id        = (int) $conversation_id;
+		$current_message        = (string) $current_message;
+		$conversation_public_id = (string) $conversation_public_id;
 
 		// Deliberately NOT static: it flags order/human tool use on $this so
 		// the response can be marked no-store, the log suppressed, and the
 		// turn escalated to a human.
-		return function ( $name, $input ) use ( $products, $pages, $orders, $conversation_id ) {
+		return function ( $name, $input ) use ( $products, $pages, $orders, $conversation_id, $current_message, $conversation_public_id ) {
 			$input = is_array( $input ) ? $input : array();
 
 			if ( DB_Chat_Claude_Client::TOOL_HUMAN === $name ) {
@@ -1271,6 +1336,18 @@ class DB_Chat_Chat_Endpoint {
 				return $products->get_product_detail( $input );
 			}
 
+			if ( DB_Chat_Claude_Client::TOOL_CART_VIEW === $name ) {
+				return $this->tool_view_cart();
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_CART_PROPOSE === $name ) {
+				return $this->tool_propose_cart_change( $input, $conversation_public_id );
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_CART_COMMIT === $name ) {
+				return $this->tool_commit_cart_change( $input, $conversation_public_id, $current_message );
+			}
+
 			return array(
 				'results'   => array(),
 				'count'     => 0,
@@ -1278,6 +1355,378 @@ class DB_Chat_Chat_Endpoint {
 				'notice'    => 'Unknown tool.',
 			);
 		};
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Cart tools (Phase 2) — the safety core
+	 *
+	 * view_cart is read-only. propose_cart_change validates via a dry run and
+	 * STAGES a proposal; it never calls a cart-writer mutating method.
+	 * commit_cart_change is the only one of the three that may write, and only
+	 * through the gate documented on get_tool_executor() above.
+	 *
+	 * The dry-run validation below deliberately does NOT call
+	 * DB_Chat_Cart_Writer::add()/update()/remove() to "check" something —
+	 * those methods mutate on success. It mirrors the same rules
+	 * (product published + purchasable, variation belongs to the product and
+	 * is in stock, quantity in range) using read-only WC_Product calls plus
+	 * the cart-writer's own read-only describe()/contents(), so the cart is
+	 * genuinely never touched until commit. The cart-writer's own validate()
+	 * runs again at commit time regardless — stock can change in the minutes
+	 * between propose and commit — so this is a helpful pre-check, not the
+	 * final word.
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * view_cart tool: read-only cart contents.
+	 *
+	 * @return array<string,mixed> DB_Chat_Cart_Writer::contents() shape.
+	 */
+	private function tool_view_cart() {
+		return ( new DB_Chat_Cart_Writer() )->contents();
+	}
+
+	/**
+	 * propose_cart_change tool: validate via a dry run and STAGE. Never
+	 * mutates the cart.
+	 *
+	 * @param array  $input                  { action, product_id, variation_id?, quantity? }.
+	 * @param string $conversation_public_id Conversation public id; staging key.
+	 * @return array<string,mixed> {proposal:true,...} on success, {ok:false,error,message} on failure.
+	 */
+	private function tool_propose_cart_change( array $input, $conversation_public_id ) {
+		// Empty-id guard (folded from Task 3 review): DB_Chat_Cart_Proposal
+		// keys on sha1( conversation_id ), so an empty id would collide
+		// across every anonymous session. Never stage against one.
+		if ( '' === trim( (string) $conversation_public_id ) ) {
+			return array(
+				'ok'      => false,
+				'error'   => 'no_conversation',
+				'message' => "I can't hold that change right now.",
+			);
+		}
+
+		$action       = isset( $input['action'] ) && is_scalar( $input['action'] ) ? strtolower( trim( (string) $input['action'] ) ) : '';
+		$product_id   = isset( $input['product_id'] ) ? absint( $input['product_id'] ) : 0;
+		$variation_id = isset( $input['variation_id'] ) ? absint( $input['variation_id'] ) : 0;
+		$has_quantity = isset( $input['quantity'] ) && is_scalar( $input['quantity'] );
+		$quantity     = $has_quantity ? (int) $input['quantity'] : null;
+
+		if ( ! in_array( $action, array( 'add', 'update', 'remove' ), true ) ) {
+			return array(
+				'ok'      => false,
+				'error'   => 'bad_action',
+				'message' => 'action must be add, update or remove.',
+			);
+		}
+
+		if ( $product_id <= 0 ) {
+			return array(
+				'ok'      => false,
+				'error'   => 'no_product',
+				'message' => 'I need a product to do that.',
+			);
+		}
+
+		$writer = new DB_Chat_Cart_Writer();
+
+		if ( 'add' === $action ) {
+			$quantity = $has_quantity ? $quantity : 1;
+
+			if ( $quantity <= 0 ) {
+				return array(
+					'ok'      => false,
+					'error'   => 'bad_quantity',
+					'message' => 'That is not a quantity I can add.',
+				);
+			}
+
+			$check = $this->dry_run_validate_write( $product_id, $variation_id, $quantity );
+
+			if ( is_wp_error( $check ) ) {
+				return array(
+					'ok'      => false,
+					'error'   => $check->get_error_code(),
+					'message' => $check->get_error_message(),
+				);
+			}
+
+			return $this->stage_proposal( $conversation_public_id, $writer, 'add', $product_id, $variation_id, $quantity );
+		}
+
+		// update / remove both act on an EXISTING cart line, located by
+		// product_id + variation_id from the live cart — never from a
+		// client-supplied cart_item_key, which DB_Chat_Cart_Proposal has no
+		// slot for anyway (ALLOWED_KEYS carries no cart_item_key).
+		$existing = $this->find_cart_line( $writer, $product_id, $variation_id );
+
+		if ( null === $existing ) {
+			return array(
+				'ok'      => false,
+				'error'   => 'not_in_cart',
+				'message' => "I don't see that item in your cart.",
+			);
+		}
+
+		if ( 'remove' === $action ) {
+			return $this->stage_proposal( $conversation_public_id, $writer, 'remove', $product_id, $variation_id, 0 );
+		}
+
+		// 'update'.
+		if ( ! $has_quantity ) {
+			return array(
+				'ok'      => false,
+				'error'   => 'no_quantity',
+				'message' => 'How many would you like?',
+			);
+		}
+
+		if ( $quantity < 0 ) {
+			return array(
+				'ok'      => false,
+				'error'   => 'bad_quantity',
+				'message' => 'That is not a quantity I can set.',
+			);
+		}
+
+		// 0 is a legal update quantity — it means "remove", exactly as
+		// DB_Chat_Cart_Writer::update() treats it. Anything above 0 gets the
+		// same stock dry run as add().
+		if ( $quantity > 0 ) {
+			$check = $this->dry_run_validate_write( $product_id, $variation_id, $quantity );
+
+			if ( is_wp_error( $check ) ) {
+				return array(
+					'ok'      => false,
+					'error'   => $check->get_error_code(),
+					'message' => $check->get_error_message(),
+				);
+			}
+		}
+
+		return $this->stage_proposal( $conversation_public_id, $writer, 'update', $product_id, $variation_id, $quantity );
+	}
+
+	/**
+	 * commit_cart_change tool: the ONLY path that may write to the cart, and
+	 * only through the gate below.
+	 *
+	 * @param array  $input                  { proposal_id? }.
+	 * @param string $conversation_public_id Conversation public id; staging key.
+	 * @param string $current_message        Customer's message THIS turn.
+	 * @return array<string,mixed> {committed:bool, reason?, cart?}.
+	 */
+	private function tool_commit_cart_change( array $input, $conversation_public_id, $current_message ) {
+		if ( '' === trim( (string) $conversation_public_id ) ) {
+			return array( 'committed' => false, 'reason' => 'no_conversation' );
+		}
+
+		// (1) A proposal must be staged for THIS conversation.
+		$proposal = DB_Chat_Cart_Proposal::get( $conversation_public_id );
+
+		if ( null === $proposal ) {
+			return array( 'committed' => false, 'reason' => 'nothing_staged' );
+		}
+
+		$requested_id = isset( $input['proposal_id'] ) && is_scalar( $input['proposal_id'] ) ? trim( (string) $input['proposal_id'] ) : '';
+
+		if ( '' !== $requested_id && $requested_id !== (string) $proposal['proposal_id'] ) {
+			return array( 'committed' => false, 'reason' => 'nothing_staged' );
+		}
+
+		// (2) THE GATE. The customer's own words this turn, re-checked here in
+		// code — never trusted from anything the model said or from the
+		// tool_use call itself. Refusal is checked (is_refusal(), which
+		// is_affirmative() already consults first) so nothing here can be
+		// weakened by a future change to that ordering; this is deliberate
+		// belt-and-braces, not redundant.
+		if ( ! DB_Chat_Confirm::is_affirmative( $current_message ) || DB_Chat_Confirm::is_refusal( $current_message ) ) {
+			DB_Chat_Cart_Proposal::clear( $conversation_public_id );
+
+			return array( 'committed' => false, 'reason' => 'not_confirmed' );
+		}
+
+		// (3) Write. The matching cart-writer method re-validates from fresh
+		// WooCommerce data regardless of what the dry run at propose-time
+		// found — stock can change in the minutes between propose and
+		// commit — and mutates nothing on failure.
+		$writer = new DB_Chat_Cart_Writer();
+		$action = isset( $proposal['action'] ) ? (string) $proposal['action'] : '';
+
+		if ( 'add' === $action ) {
+			$result = $writer->add( (int) $proposal['product_id'], (int) $proposal['variation_id'], (int) $proposal['quantity'] );
+		} elseif ( 'update' === $action || 'remove' === $action ) {
+			$line = $this->find_cart_line( $writer, (int) $proposal['product_id'], (int) $proposal['variation_id'] );
+
+			if ( null === $line ) {
+				DB_Chat_Cart_Proposal::clear( $conversation_public_id );
+
+				return array( 'committed' => false, 'reason' => 'not_in_cart' );
+			}
+
+			$result = ( 'remove' === $action )
+				? $writer->remove( $line['key'] )
+				: $writer->update( $line['key'], (int) $proposal['quantity'] );
+		} else {
+			DB_Chat_Cart_Proposal::clear( $conversation_public_id );
+
+			return array( 'committed' => false, 'reason' => 'invalid_proposal' );
+		}
+
+		DB_Chat_Cart_Proposal::clear( $conversation_public_id );
+
+		if ( empty( $result['ok'] ) ) {
+			return array(
+				'committed' => false,
+				'reason'    => ! empty( $result['code'] ) ? (string) $result['code'] : 'write_failed',
+				'message'   => isset( $result['message'] ) ? (string) $result['message'] : '',
+			);
+		}
+
+		return array(
+			'committed' => true,
+			// contents(), not the add/update/remove return shape: those return
+			// {ok,cart_url,cart_total,item_count} (no item list), while
+			// contents() gives the full {items,count,total,cart_url} the
+			// widget needs for a cart summary — and it is a read straight
+			// back from WooCommerce, so it reflects exactly what was just
+			// written.
+			'cart'      => $writer->contents(),
+		);
+	}
+
+	/**
+	 * Dry-run stock/purchasability check, WITHOUT calling any cart-writer
+	 * method that mutates. Mirrors DB_Chat_Cart_Writer's own (private)
+	 * validate()/validate_variation() rules using only read-only WC_Product
+	 * calls, so propose_cart_change can tell Claude why something won't work
+	 * before anything is staged.
+	 *
+	 * @param int $product_id   Parent product.
+	 * @param int $variation_id Variation, 0 for simple products.
+	 * @param int $quantity     Quantity being proposed.
+	 * @return true|WP_Error
+	 */
+	private function dry_run_validate_write( $product_id, $variation_id, $quantity ) {
+		if ( $quantity < 1 || $quantity > DB_Chat_Cart_Writer::MAX_QUANTITY ) {
+			return new WP_Error( 'bad_quantity', 'That is not a quantity I can add.' );
+		}
+
+		if ( ! function_exists( 'wc_get_product' ) ) {
+			return new WP_Error( 'no_cart', 'Your cart is not available right now.' );
+		}
+
+		$product = wc_get_product( $product_id );
+
+		if ( ! $product instanceof WC_Product || 'publish' !== $product->get_status() ) {
+			return new WP_Error( 'no_product', 'I cannot find that product any more.' );
+		}
+
+		if ( ! $product->is_purchasable() ) {
+			return new WP_Error( 'not_purchasable', 'That product cannot be bought online.' );
+		}
+
+		if ( $product instanceof WC_Product_Variable ) {
+			if ( $variation_id < 1 ) {
+				return new WP_Error( 'no_variation', 'I still need to know which option you want.' );
+			}
+
+			$variation = wc_get_product( $variation_id );
+
+			if ( ! $variation instanceof WC_Product_Variation ) {
+				return new WP_Error( 'no_variation', 'That option does not exist.' );
+			}
+
+			if ( (int) $variation->get_parent_id() !== (int) $product_id ) {
+				return new WP_Error( 'wrong_variation', 'That option does not belong to that product.' );
+			}
+
+			if ( ! $variation->is_in_stock() ) {
+				return new WP_Error( 'out_of_stock', 'That option is out of stock.' );
+			}
+
+			if ( ! $variation->has_enough_stock( $quantity ) ) {
+				return new WP_Error( 'not_enough_stock', 'We do not have that many in stock.' );
+			}
+
+			return true;
+		}
+
+		if ( ! $product->is_in_stock() ) {
+			return new WP_Error( 'out_of_stock', 'That is out of stock.' );
+		}
+
+		if ( ! $product->has_enough_stock( $quantity ) ) {
+			return new WP_Error( 'not_enough_stock', 'We do not have that many in stock.' );
+		}
+
+		return true;
+	}
+
+	/**
+	 * Locate an existing cart line by product_id + variation_id, re-read live
+	 * from DB_Chat_Cart_Writer::contents() — never trusted from a stored
+	 * proposal or client input.
+	 *
+	 * @param DB_Chat_Cart_Writer $writer       Cart writer.
+	 * @param int                  $product_id   Parent product.
+	 * @param int                  $variation_id Variation, 0 for simple products.
+	 * @return array<string,mixed>|null The matching contents() line, or null.
+	 */
+	private function find_cart_line( DB_Chat_Cart_Writer $writer, $product_id, $variation_id ) {
+		$contents = $writer->contents();
+
+		foreach ( $contents['items'] as $line ) {
+			if ( (int) $line['product_id'] === (int) $product_id && (int) $line['variation_id'] === (int) $variation_id ) {
+				return $line;
+			}
+		}
+
+		return null;
+	}
+
+	/**
+	 * Validate, describe and stage a proposal. Shared tail of the three
+	 * propose_cart_change branches (add/update/remove) so there is exactly
+	 * one call to DB_Chat_Cart_Proposal::stage().
+	 *
+	 * @param string               $conversation_public_id Staging key.
+	 * @param DB_Chat_Cart_Writer  $writer                  Cart writer.
+	 * @param string               $action                  add|update|remove.
+	 * @param int                  $product_id              Parent product.
+	 * @param int                  $variation_id            Variation, 0 for simple.
+	 * @param int                  $quantity                Proposed quantity.
+	 * @return array<string,mixed> {proposal:true,...}.
+	 */
+	private function stage_proposal( $conversation_public_id, DB_Chat_Cart_Writer $writer, $action, $product_id, $variation_id, $quantity ) {
+		$details = $writer->describe( $product_id, $variation_id );
+
+		$proposal_id = DB_Chat_Cart_Proposal::stage(
+			$conversation_public_id,
+			array(
+				'action'       => $action,
+				'product_id'   => $product_id,
+				'variation_id' => $variation_id,
+				'quantity'     => $quantity,
+				'name'         => $details['name'],
+				'label'        => $details['label'],
+				'price'        => $details['price'],
+			)
+		);
+
+		return array(
+			'proposal'     => true,
+			'action'       => $action,
+			'product_id'   => $product_id,
+			'variation_id' => $variation_id,
+			'name'         => $details['name'],
+			'label'        => $details['label'],
+			'qty'          => $quantity,
+			'price'        => $details['price'],
+			'proposal_id'  => $proposal_id,
+		);
 	}
 
 	/**

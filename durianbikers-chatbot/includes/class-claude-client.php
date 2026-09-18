@@ -92,6 +92,32 @@ class DB_Chat_Claude_Client {
 	const TOOL_HUMAN = 'request_human';
 
 	/**
+	 * Read-only: what is currently in the customer's cart.
+	 *
+	 * See DB_Chat_Cart_Writer::contents(). Never mutates.
+	 */
+	const TOOL_CART_VIEW = 'view_cart';
+
+	/**
+	 * PROPOSE a cart change for the customer to confirm. Validates and STAGES
+	 * a change (DB_Chat_Cart_Proposal::stage()) via a dry run; NEVER mutates
+	 * the cart. See class-chat-endpoint.php's executor for the code-enforced
+	 * two-step gate this tool is one half of.
+	 */
+	const TOOL_CART_PROPOSE = 'propose_cart_change';
+
+	/**
+	 * COMMIT the change staged by TOOL_CART_PROPOSE — the ONLY tool that may
+	 * mutate the cart, and only when a proposal is staged AND the customer's
+	 * current message is a clear, unambiguous affirmative
+	 * (DB_Chat_Confirm::is_affirmative()) that is not also a refusal
+	 * (DB_Chat_Confirm::is_refusal()). Every other path returns
+	 * committed:false and mutates nothing. This is the safety core of the
+	 * cart-write feature; do not weaken the gate in the executor.
+	 */
+	const TOOL_CART_COMMIT = 'commit_cart_change';
+
+	/**
 	 * Back-compat alias for the original single-tool constant.
 	 *
 	 * @deprecated Use TOOL_PRODUCTS.
@@ -264,7 +290,7 @@ class DB_Chat_Claude_Client {
 			if ( ( $round + 1 ) >= self::MAX_TOOL_ROUNDS ) {
 				$tool_results[] = array(
 					'type' => 'text',
-					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ' or ' . self::TOOL_PRODUCT . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human — you may still call ' . self::TOOL_HUMAN . ' on this round. Do not fill the gap with a guess.',
+					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ', ' . self::TOOL_CART_VIEW . ', ' . self::TOOL_CART_PROPOSE . ' or ' . self::TOOL_CART_COMMIT . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human — you may still call ' . self::TOOL_HUMAN . ' on this round. Do not fill the gap with a guess.',
 				);
 			}
 
@@ -404,9 +430,9 @@ class DB_Chat_Claude_Client {
 			'tool_use_id' => $id,
 		);
 
-		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT, self::TOOL_HUMAN ), true ) ) {
+		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT, self::TOOL_HUMAN, self::TOOL_CART_VIEW, self::TOOL_CART_PROPOSE, self::TOOL_CART_COMMIT ), true ) ) {
 			$block['is_error'] = true;
-			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ' and ' . self::TOOL_HUMAN . '.';
+			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ', ' . self::TOOL_HUMAN . ', ' . self::TOOL_CART_VIEW . ', ' . self::TOOL_CART_PROPOSE . ' and ' . self::TOOL_CART_COMMIT . '.';
 
 			return $block;
 		}
@@ -429,6 +455,13 @@ class DB_Chat_Claude_Client {
 			if ( self::TOOL_ORDERS === $name ) {
 				$block['is_error'] = true;
 				$block['content']  = 'The order lookup failed. Tell the customer you could not check their order right now and offer to pass it to a human. Do not guess the status of the order and do not ask them for personal details.';
+
+				return $block;
+			}
+
+			if ( in_array( $name, array( self::TOOL_CART_VIEW, self::TOOL_CART_PROPOSE, self::TOOL_CART_COMMIT ), true ) ) {
+				$block['is_error'] = true;
+				$block['content']  = 'The cart could not be reached. Nothing was changed. Tell the customer you could not check or update their cart right now and offer to pass it to a human.';
 
 				return $block;
 			}
@@ -524,11 +557,17 @@ class DB_Chat_Claude_Client {
 	/**
 	 * The tools exposed to the model.
 	 *
-	 * There are five. One reads published products, one reads a single
+	 * There are eight. One reads published products, one reads a single
 	 * product's sizes/stock/price, one reads a fixed allowlist of published
 	 * help pages, one reads the orders of the customer who is signed in to
-	 * THIS request — and only theirs — and the fifth hands the conversation
-	 * to a human team member.
+	 * THIS request — and only theirs — one hands the conversation to a human
+	 * team member, and three run the cart (Phase 2): view_cart is read-only;
+	 * propose_cart_change validates and STAGES a change without ever
+	 * mutating; commit_cart_change is the ONLY tool that may write to the
+	 * cart, and only through the code-enforced gate in
+	 * class-chat-endpoint.php's tool executor (a proposal must be staged AND
+	 * the customer's current message must be a clear, unambiguous
+	 * affirmative that is not also a refusal).
 	 *
 	 * The guarantee is structural, not a promise made in the prompt: the order
 	 * tool's input schema contains no customer identifier of any kind, so there
@@ -636,6 +675,48 @@ class DB_Chat_Claude_Client {
 						),
 					),
 					'required'   => array( 'reason' ),
+				),
+			),
+			array(
+				'name'         => self::TOOL_CART_VIEW,
+				'description'  => 'Show what is currently in the customer\'s cart (items, sizes, quantities, line prices, total). Read-only. Use when they ask "what\'s in my cart" or before checkout.',
+				'input_schema' => array( 'type' => 'object', 'properties' => new stdClass() ),
+			),
+			array(
+				'name'         => self::TOOL_CART_PROPOSE,
+				'description'  => 'PROPOSE a cart change for the customer to confirm — this does NOT change the cart. action is "add", "update" (change quantity) or "remove". Give product_id from a search result, variation_id for a sized item, and quantity. The customer will see a confirm card; only call commit_cart_change AFTER they clearly say yes.',
+				'input_schema' => array(
+					'type'       => 'object',
+					'properties' => array(
+						'action'       => array(
+							'type' => 'string',
+							'enum' => array( 'add', 'update', 'remove' ),
+						),
+						'product_id'   => array( 'type' => 'integer' ),
+						'variation_id' => array(
+							'type'        => 'integer',
+							'description' => 'The in-stock variation id (size), from get_product. Omit for a simple product.',
+						),
+						'quantity'     => array(
+							'type'        => 'integer',
+							'description' => 'How many (for add/update). Use 0 with update to remove.',
+						),
+					),
+					'required'   => array( 'action', 'product_id' ),
+				),
+			),
+			array(
+				'name'         => self::TOOL_CART_COMMIT,
+				'description'  => 'COMMIT the change you proposed with propose_cart_change — ONLY after the customer has clearly confirmed (said yes) in their latest message. The system re-checks their words and will refuse if they declined. Returns the updated cart.',
+				'input_schema' => array(
+					'type'       => 'object',
+					'properties' => array(
+						'proposal_id' => array(
+							'type'        => 'string',
+							'description' => 'The proposal_id returned by propose_cart_change.',
+						),
+					),
+					'required'   => array(),
 				),
 			),
 		);
