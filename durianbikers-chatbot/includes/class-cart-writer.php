@@ -141,6 +141,8 @@ class DB_Chat_Cart_Writer {
 			return $this->failure( 'db_chat_cart_refused', 'That item could not be added to your cart.' );
 		}
 
+		$this->persist_session();
+
 		return array(
 			'ok'         => true,
 			'code'       => '',
@@ -267,6 +269,8 @@ class DB_Chat_Cart_Writer {
 			return $this->failure( 'db_chat_cart_refused', 'That change could not be made to your cart.' );
 		}
 
+		$this->persist_session();
+
 		return array(
 			'ok'         => true,
 			'code'       => '',
@@ -311,6 +315,8 @@ class DB_Chat_Cart_Writer {
 		if ( ! $removed ) {
 			return $this->failure( 'db_chat_cart_refused', 'That item could not be removed from your cart.' );
 		}
+
+		$this->persist_session();
 
 		return array(
 			'ok'         => true,
@@ -478,6 +484,36 @@ class DB_Chat_Cart_Writer {
 		}
 
 		return null !== WC()->cart;
+	}
+
+	/**
+	 * Emit the WooCommerce customer session cookie for this request.
+	 *
+	 * A REST request mutates the cart in-process and WooCommerce writes the
+	 * cart to its session row on `shutdown`. WooCommerce also tries to emit
+	 * the session cookie on `shutdown` — but by then the REST response has
+	 * already been sent and `headers_sent()` is true, so a guest's browser
+	 * never receives the cookie and the mutated cart never reaches the
+	 * front-end cart page or checkout. Emitting the cookie here, during the
+	 * REST callback (before the response is serialised), is what carries a
+	 * guest cart forward. Logged-in customers are unaffected either way —
+	 * their cart also persists through the user-meta persistent cart — and
+	 * `wc_setcookie()` no-ops safely if headers have somehow already gone.
+	 *
+	 * Call only after a successful mutation, never on a read.
+	 *
+	 * @return void
+	 */
+	private function persist_session() {
+		if ( ! function_exists( 'WC' ) ) {
+			return;
+		}
+
+		$session = WC()->session;
+
+		if ( $session && is_callable( array( $session, 'set_customer_session_cookie' ) ) ) {
+			$session->set_customer_session_cookie( true );
+		}
 	}
 
 	/**
