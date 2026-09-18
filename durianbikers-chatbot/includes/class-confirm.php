@@ -28,11 +28,19 @@ final class DB_Chat_Confirm {
 	 * before the confirm words below are — the same particle-negation trap
 	 * the lookup engine's comment documents at line ~4384.
 	 *
+	 * 'not', 'nothing', 'none' are additions (not in the lookup engine's
+	 * list): fix-round-1 closed a false-affirmative gap where "not sure"
+	 * matched confirm word "sure" and "add nothing thanks" matched confirm
+	 * word "add", with nothing to stop it since neither list had a
+	 * negation word for plain English "not". Checked first, same as every
+	 * other decline word, so they cannot weaken refusal-first — they widen
+	 * it.
+	 *
 	 * @return string[]
 	 */
 	private static function decline_terms() {
 		return array(
-			'no', 'nope', 'nah', 'cancel', 'stop', 'nevermind', 'dont', "don't",
+			'no', 'nope', 'nah', 'cancel', 'stop', 'nevermind', 'dont', "don't", 'not', 'nothing', 'none',
 			'tidak', 'tak', 'jangan', 'batal', 'belum', 'usah',
 		);
 	}
@@ -66,13 +74,39 @@ final class DB_Chat_Confirm {
 	}
 
 	/**
-	 * Chinese confirm substrings, ported from class-lookup-engine.php
-	 * chinese_terms()['confirm'].
+	 * Chinese confirm PHRASES (two or more characters) — matched as a
+	 * substring anywhere in the message, ported from
+	 * class-lookup-engine.php chinese_terms()['confirm'] plus a few
+	 * phrases (好啊, 是的, 对啊, 加入, 我要) added in fix-round-1 to keep
+	 * coverage after the bare single characters below were demoted.
+	 *
+	 * Deliberately excludes the bare single characters 好/是/对/要 that
+	 * upstream's chinese_terms()['confirm'] matches as a substring:
+	 * fix-round-1 found those false-positive on ordinary greetings and
+	 * questions that merely contain the character — 你好 ("hello") reads
+	 * as "好", 是吗 ("really?") and 这是什么颜色 ("what colour is this?")
+	 * read as "是", 这个好看吗 ("does this look good?") reads as "好" —
+	 * none of which is a customer saying yes to a cart commit.
 	 *
 	 * @return string[]
 	 */
-	private static function chinese_confirm_terms() {
-		return array( '确认', '確認', '好的', '可以', '没错', '沒錯', '对', '對', '是', '好', '要' );
+	private static function chinese_confirm_phrases() {
+		return array( '确认', '確認', '好的', '好啊', '是的', '对啊', '没错', '沒錯', '可以', '加入', '我要', '行' );
+	}
+
+	/**
+	 * Chinese bare single-character confirmations. Only counted when the
+	 * ENTIRE message (punctuation/whitespace stripped) is nothing but one
+	 * of these — the same "bare reply" discipline
+	 * class-lookup-engine.php's bare_reply_language() uses for short
+	 * yes/no replies — never as a substring inside a longer sentence,
+	 * which is what let 你好/是吗/这是什么颜色/这个好看吗 false-positive
+	 * before fix-round-1.
+	 *
+	 * @return string[]
+	 */
+	private static function chinese_confirm_bare_singles() {
+		return array( '好', '是', '对', '對', '要' );
 	}
 
 	/**
@@ -155,13 +189,15 @@ final class DB_Chat_Confirm {
 		}
 
 		if ( self::is_chinese( $t ) ) {
-			foreach ( self::chinese_confirm_terms() as $term ) {
+			foreach ( self::chinese_confirm_phrases() as $term ) {
 				if ( false !== mb_strpos( $t, $term ) ) {
 					return true;
 				}
 			}
 
-			return false;
+			$plain = (string) preg_replace( '/[\s\p{P}]+/u', '', $t );
+
+			return in_array( $plain, self::chinese_confirm_bare_singles(), true );
 		}
 
 		$tokens = self::tokenize( $t );

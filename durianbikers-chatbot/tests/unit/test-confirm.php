@@ -15,4 +15,10 @@ foreach ( array( 'no', 'nope', "don't", 'cancel', 'tak', 'tak nak', 'jangan', 'b
 foreach ( array( 'how much is it', 'what colours', 'maybe later', 'hmm' ) as $a ) {
     t_ok( DB_Chat_Confirm::is_affirmative( $a ) === false, "ambiguous not-affirmative: $a" );
 }
+
+// Regression (fix round 1): greetings/questions/negations must never read as a yes.
+foreach ( array( '你好', '是吗', '这是什么颜色', '这个好看吗', '这个不错', 'not sure', 'add nothing thanks', 'not now', 'maybe not' ) as $x ) {
+    t_ok( DB_Chat_Confirm::is_affirmative( $x ) === false, "not a false-yes: $x" );
+}
+
 t_done();
