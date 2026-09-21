@@ -300,9 +300,16 @@ class DB_Chat_Claude_Client {
 			}
 
 			// Echo the assistant turn back verbatim; the API requires this.
+			// A tool_use called with no arguments comes back from the API as
+			// input {} but json_decode turns {} into an empty PHP array, which
+			// wp_json_encode would re-send as [] — and the API rejects that with
+			// "tool_use.input: Input should be an object". Coerce those empty
+			// inputs back to objects so the echoed history stays valid. Affects
+			// every no-argument tool (view_cart, get_checkout_summary,
+			// get_checkout_link, set_checkout_details).
 			$messages[] = array(
 				'role'    => 'assistant',
-				'content' => $content,
+				'content' => $this->normalize_tool_use_input( $content ),
 			);
 
 			$tool_results = array();
@@ -526,6 +533,34 @@ class DB_Chat_Claude_Client {
 	 */
 	public function last_tool_results() {
 		return $this->last_tool_results;
+	}
+
+	/**
+	 * Make an echoed assistant turn safe to re-send to the API.
+	 *
+	 * Every tool_use block whose input decoded to an EMPTY array (the API's
+	 * `{}` for a no-argument call) is coerced to a stdClass so wp_json_encode
+	 * re-serialises it as `{}` rather than `[]`. A non-empty (associative)
+	 * input already encodes as an object and is left untouched, as are text
+	 * blocks. Without this, any conversation whose history contains a
+	 * no-argument tool call is rejected with 400 tool_use.input: Input should
+	 * be an object — silently dropping the customer to the keyword fallback.
+	 *
+	 * @param array $content Assistant content blocks from the API response.
+	 * @return array
+	 */
+	private function normalize_tool_use_input( array $content ) {
+		foreach ( $content as $i => $block ) {
+			if ( is_array( $block )
+				&& isset( $block['type'], $block['input'] )
+				&& 'tool_use' === $block['type']
+				&& is_array( $block['input'] )
+				&& array() === $block['input'] ) {
+				$content[ $i ]['input'] = new stdClass();
+			}
+		}
+
+		return $content;
 	}
 
 	/**
