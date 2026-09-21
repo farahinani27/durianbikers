@@ -164,6 +164,52 @@ class DB_Chat_Chat_Endpoint {
 	private $tool_requested_human = false;
 
 	/**
+	 * Did ANY of the four checkout tools (Phase 3) run during THIS request?
+	 *
+	 * Request-scoped exactly like $order_tool_used above: reset at the top of
+	 * every handle_request(), set true inside the checkout branches of
+	 * get_tool_executor()'s closure. Drives whether the `checkout` response
+	 * key is attached at all — set whenever any checkout tool ran, per the
+	 * PII-boundary design (RULING A): mode/needs are cheap, stateless reads
+	 * and are always safe to include once the customer is in a checkout
+	 * conversation, even on a turn that only checked shipping.
+	 *
+	 * @var bool
+	 */
+	private $checkout_tool_used = false;
+
+	/**
+	 * The WIDGET-facing checkout summary payload for THIS request, or null
+	 * when get_checkout_summary has not run this turn.
+	 *
+	 * Set ONLY inside tool_checkout_summary(), which is the one place the
+	 * full DB_Chat_Checkout_Writer::summary() shape (items, address_line,
+	 * shipping, total, cart_url — real PII) is allowed to exist outside the
+	 * writer itself. It is read directly by handle_request() to build the
+	 * `checkout.summary` response key and is NEVER read from
+	 * last_tool_results() — that path is what Claude sees, and Claude must
+	 * never see an address or the item list. See the PII boundary note atop
+	 * class-checkout-writer.php.
+	 *
+	 * Request-scoped: reset to null at the top of every handle_request().
+	 *
+	 * @var array{items:array,shipping:string,total:string,address_line:string,cart_url:string}|null
+	 */
+	private $checkout_widget_summary = null;
+
+	/**
+	 * The checkout URL from THIS request's get_checkout_link call, or null
+	 * when that tool has not run this turn. Not PII (it is WooCommerce's
+	 * public checkout URL, identical for every customer) — kept as a
+	 * request-scoped property purely so handle_request() can attach the
+	 * `checkout_link` response key without re-deriving it from
+	 * last_tool_results().
+	 *
+	 * @var string|null
+	 */
+	private $checkout_link_url = null;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param DB_Chat_Product_Index      $product_index Product retrieval service.
@@ -611,8 +657,11 @@ class DB_Chat_Chat_Endpoint {
 		$this->prevent_caching( 'durianbikers chatbot: per-visitor reply, must never be cached' );
 
 		// Request-scoped flags; never carry a previous request's state.
-		$this->order_tool_used      = false;
-		$this->tool_requested_human = false;
+		$this->order_tool_used         = false;
+		$this->tool_requested_human    = false;
+		$this->checkout_tool_used      = false;
+		$this->checkout_widget_summary = null;
+		$this->checkout_link_url       = null;
 
 		// Declared here so finalize_response() has a stable value on every
 		// code path; the lookup branch below overwrites it once the engine
@@ -810,6 +859,30 @@ class DB_Chat_Chat_Endpoint {
 				// view_cart's DB_Chat_Cart_Writer::contents() shape.
 				$response_data['cart'] = $tool_result;
 			}
+		}
+
+		/*
+		 * Surface checkout state for the widget (Phase 3, Task 3). PII
+		 * BOUNDARY: `checkout.summary` comes from $this->checkout_widget_summary
+		 * — set only inside tool_checkout_summary() and NEVER read from
+		 * last_tool_results(), which is what Claude saw. mode/needs are cheap,
+		 * PII-free reads (is_user_logged_in(), has_required_for_checkout()'s
+		 * booleans) attached whenever ANY checkout tool ran this turn, even one
+		 * that produced no summary (e.g. check_shipping_country) — see the
+		 * $checkout_tool_used property doc for why that is deliberate.
+		 */
+		if ( $this->checkout_tool_used ) {
+			$checkout_status = ( new DB_Chat_Checkout_Writer() )->has_required_for_checkout();
+
+			$response_data['checkout'] = array(
+				'mode'    => is_user_logged_in() ? 'logged_in' : 'guest',
+				'needs'   => empty( $checkout_status['ok'] ) ? 'address' : '',
+				'summary' => $this->checkout_widget_summary,
+			);
+		}
+
+		if ( null !== $this->checkout_link_url ) {
+			$response_data['checkout_link'] = array( 'url' => $this->checkout_link_url );
 		}
 
 		return $this->finalize_response( $response_data, $conversation, $escalate );
@@ -1264,12 +1337,20 @@ class DB_Chat_Chat_Endpoint {
 	/**
 	 * The callable the Anthropic client uses to run a tool.
 	 *
-	 * Dispatch is an explicit allowlist of exactly eight tool names
+	 * Dispatch is an explicit allowlist of exactly twelve tool names
 	 * (search_products, get_product, search_pages, get_my_orders,
-	 * request_human, view_cart, propose_cart_change, commit_cart_change).
-	 * Anything else returns an empty result rather than reaching any store
-	 * data — the client already rejects unknown names, this is the second
-	 * lock.
+	 * request_human, view_cart, propose_cart_change, commit_cart_change,
+	 * set_checkout_details, get_checkout_summary, get_checkout_link,
+	 * check_shipping_country). Anything else returns an empty result rather
+	 * than reaching any store data — the client already rejects unknown
+	 * names, this is the second lock.
+	 *
+	 * CHECKOUT TOOLS (Phase 3) ARE READ-ONLY / STATUS-ONLY FROM HERE: none of
+	 * the four ever writes to WooCommerce. set_checkout_details only READS
+	 * has_required_for_checkout() to report which fields are set — the
+	 * actual write is Task 4's deterministic capture path, never this tool.
+	 * get_checkout_summary and get_checkout_link only read. See
+	 * tool_checkout_summary()'s doc for the PII boundary this enforces.
 	 *
 	 * NOTE ON IDENTITY: nothing about the customer is captured into this
 	 * closure and nothing identifying is passed through $input. The order
@@ -1387,6 +1468,33 @@ class DB_Chat_Chat_Endpoint {
 				return $this->tool_commit_cart_change( $input, $conversation_public_id, $current_message );
 			}
 
+			if ( DB_Chat_Claude_Client::TOOL_CHECKOUT_DETAILS === $name ) {
+				$this->checkout_tool_used = true;
+
+				return $this->tool_checkout_details_status();
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_CHECKOUT_SUMMARY === $name ) {
+				$this->checkout_tool_used = true;
+
+				return $this->tool_checkout_summary();
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_CHECKOUT_LINK === $name ) {
+				$this->checkout_tool_used = true;
+				$this->checkout_link_url  = function_exists( 'wc_get_checkout_url' ) ? (string) wc_get_checkout_url() : '';
+
+				return array( 'url' => $this->checkout_link_url );
+			}
+
+			if ( DB_Chat_Claude_Client::TOOL_SHIPPING_COUNTRY === $name ) {
+				$this->checkout_tool_used = true;
+
+				$w = new DB_Chat_Checkout_Writer();
+
+				return $w->shipping_country_served( isset( $input['country'] ) ? (string) $input['country'] : '' );
+			}
+
 			return array(
 				'results'   => array(),
 				'count'     => 0,
@@ -1425,6 +1533,88 @@ class DB_Chat_Chat_Endpoint {
 	 */
 	private function tool_view_cart() {
 		return ( new DB_Chat_Cart_Writer() )->contents();
+	}
+
+	/*
+	 * -----------------------------------------------------------------------
+	 * Checkout tools (Phase 3) — the PII boundary
+	 *
+	 * Both methods below return ONLY the Claude-safe shape documented on
+	 * DB_Chat_Claude_Client::TOOL_CHECKOUT_DETAILS / TOOL_CHECKOUT_SUMMARY.
+	 * tool_checkout_summary() is the one place that touches the full,
+	 * PII-bearing DB_Chat_Checkout_Writer::summary() shape (items,
+	 * address_line, shipping, total, cart_url); it stashes that on
+	 * $this->checkout_widget_summary for handle_request() to attach as the
+	 * `checkout.summary` response key, and returns Claude only counts/booleans
+	 * built from it. Never widen either return array to include a value.
+	 * -----------------------------------------------------------------------
+	 */
+
+	/**
+	 * set_checkout_details tool: report which required checkout fields are
+	 * now set. Reads only field NAMES (DB_Chat_Checkout_Writer::REQUIRED)
+	 * and booleans from has_required_for_checkout() — never a captured
+	 * value. The details themselves are written elsewhere (Task 4's
+	 * deterministic capture path), never by this tool.
+	 *
+	 * @return array{ok:bool,fields:array<string,bool>,missing:string[]}
+	 */
+	private function tool_checkout_details_status() {
+		$status  = ( new DB_Chat_Checkout_Writer() )->has_required_for_checkout();
+		$missing = isset( $status['missing'] ) && is_array( $status['missing'] ) ? array_values( $status['missing'] ) : array();
+
+		$fields = array();
+
+		foreach ( DB_Chat_Checkout_Writer::REQUIRED as $field ) {
+			$fields[ $field ] = ! in_array( $field, $missing, true );
+		}
+
+		return array(
+			'ok'      => ! empty( $status['ok'] ),
+			'fields'  => $fields,
+			'missing' => $missing,
+		);
+	}
+
+	/**
+	 * get_checkout_summary tool: Claude-safe counts/totals only. The full
+	 * summary (items, address_line, shipping, total, cart_url — real PII)
+	 * is stashed on $this->checkout_widget_summary for the WIDGET, via
+	 * handle_request()'s `checkout.summary` response key, and is
+	 * deliberately never part of the return value here — that return value
+	 * is what reaches Claude, through last_tool_results()/tool_result.
+	 *
+	 * @return array{ready:bool,item_count:int,has_address:bool,shipping:string,total:string}
+	 */
+	private function tool_checkout_summary() {
+		$writer  = new DB_Chat_Checkout_Writer();
+		$summary = $writer->summary();
+
+		$items        = isset( $summary['items'] ) && is_array( $summary['items'] ) ? $summary['items'] : array();
+		$shipping     = isset( $summary['shipping'] ) ? (string) $summary['shipping'] : '';
+		$total        = isset( $summary['total'] ) ? (string) $summary['total'] : '';
+		$address_line = isset( $summary['address_line'] ) ? (string) $summary['address_line'] : '';
+		$cart_url     = isset( $summary['cart_url'] ) ? (string) $summary['cart_url'] : '';
+
+		// WIDGET-ONLY. Never read this back into a tool result — see the
+		// property doc on $checkout_widget_summary.
+		$this->checkout_widget_summary = array(
+			'items'        => $items,
+			'shipping'     => $shipping,
+			'total'        => $total,
+			'address_line' => $address_line,
+			'cart_url'     => $cart_url,
+		);
+
+		$status = $writer->has_required_for_checkout();
+
+		return array(
+			'ready'       => ! empty( $status['ok'] ),
+			'item_count'  => count( $items ),
+			'has_address' => '' !== trim( $address_line ),
+			'shipping'    => $shipping,
+			'total'       => $total,
+		);
 	}
 
 	/**

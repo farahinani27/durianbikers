@@ -118,6 +118,37 @@ class DB_Chat_Claude_Client {
 	const TOOL_CART_COMMIT = 'commit_cart_change';
 
 	/**
+	 * Record that the customer's delivery details have been captured for
+	 * checkout (Phase 3). Takes NO fields as input — the details themselves
+	 * are captured deterministically outside the model (Task 4) and written
+	 * by DB_Chat_Checkout_Writer::set_details(), never by this tool. Reports
+	 * back only which required fields are now set, never a value. See
+	 * class-checkout-writer.php's PII boundary note.
+	 */
+	const TOOL_CHECKOUT_DETAILS = 'set_checkout_details';
+
+	/**
+	 * Read-only checkout summary for the model: item count, whether an
+	 * address is set, shipping and total. NEVER the itemised list or the
+	 * address string — those are widget-only, surfaced via the `checkout`
+	 * response key in class-chat-endpoint.php, and deliberately never pass
+	 * through this tool's result.
+	 */
+	const TOOL_CHECKOUT_SUMMARY = 'get_checkout_summary';
+
+	/**
+	 * The checkout page URL. Not PII — WooCommerce's own public checkout URL,
+	 * identical for every customer.
+	 */
+	const TOOL_CHECKOUT_LINK = 'get_checkout_link';
+
+	/**
+	 * Whether we ship to a given country (ISO-2), for the international /gb
+	 * store. Read-only.
+	 */
+	const TOOL_SHIPPING_COUNTRY = 'check_shipping_country';
+
+	/**
 	 * Back-compat alias for the original single-tool constant.
 	 *
 	 * @deprecated Use TOOL_PRODUCTS.
@@ -290,7 +321,7 @@ class DB_Chat_Claude_Client {
 			if ( ( $round + 1 ) >= self::MAX_TOOL_ROUNDS ) {
 				$tool_results[] = array(
 					'type' => 'text',
-					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ', ' . self::TOOL_CART_VIEW . ', ' . self::TOOL_CART_PROPOSE . ' or ' . self::TOOL_CART_COMMIT . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human — you may still call ' . self::TOOL_HUMAN . ' on this round. Do not fill the gap with a guess.',
+					'text' => 'You have now used your entire search budget for this reply. Answer the customer using only the results already provided. Do not call ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ', ' . self::TOOL_CART_VIEW . ', ' . self::TOOL_CART_PROPOSE . ', ' . self::TOOL_CART_COMMIT . ', ' . self::TOOL_CHECKOUT_DETAILS . ', ' . self::TOOL_CHECKOUT_SUMMARY . ', ' . self::TOOL_CHECKOUT_LINK . ' or ' . self::TOOL_SHIPPING_COUNTRY . ' again. If you still could not find a suitable product, the help pages you retrieved do not cover the question, or you did not retrieve the order, say so plainly and offer to pass the question to a human — you may still call ' . self::TOOL_HUMAN . ' on this round. Do not fill the gap with a guess.',
 				);
 			}
 
@@ -430,9 +461,9 @@ class DB_Chat_Claude_Client {
 			'tool_use_id' => $id,
 		);
 
-		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT, self::TOOL_HUMAN, self::TOOL_CART_VIEW, self::TOOL_CART_PROPOSE, self::TOOL_CART_COMMIT ), true ) ) {
+		if ( ! in_array( $name, array( self::TOOL_PRODUCTS, self::TOOL_PAGES, self::TOOL_ORDERS, self::TOOL_PRODUCT, self::TOOL_HUMAN, self::TOOL_CART_VIEW, self::TOOL_CART_PROPOSE, self::TOOL_CART_COMMIT, self::TOOL_CHECKOUT_DETAILS, self::TOOL_CHECKOUT_SUMMARY, self::TOOL_CHECKOUT_LINK, self::TOOL_SHIPPING_COUNTRY ), true ) ) {
 			$block['is_error'] = true;
-			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ', ' . self::TOOL_HUMAN . ', ' . self::TOOL_CART_VIEW . ', ' . self::TOOL_CART_PROPOSE . ' and ' . self::TOOL_CART_COMMIT . '.';
+			$block['content']  = 'Unknown tool. The only available tools are ' . self::TOOL_PRODUCTS . ', ' . self::TOOL_PAGES . ', ' . self::TOOL_ORDERS . ', ' . self::TOOL_PRODUCT . ', ' . self::TOOL_HUMAN . ', ' . self::TOOL_CART_VIEW . ', ' . self::TOOL_CART_PROPOSE . ', ' . self::TOOL_CART_COMMIT . ', ' . self::TOOL_CHECKOUT_DETAILS . ', ' . self::TOOL_CHECKOUT_SUMMARY . ', ' . self::TOOL_CHECKOUT_LINK . ' and ' . self::TOOL_SHIPPING_COUNTRY . '.';
 
 			return $block;
 		}
@@ -459,7 +490,7 @@ class DB_Chat_Claude_Client {
 				return $block;
 			}
 
-			if ( in_array( $name, array( self::TOOL_CART_VIEW, self::TOOL_CART_PROPOSE, self::TOOL_CART_COMMIT ), true ) ) {
+			if ( in_array( $name, array( self::TOOL_CART_VIEW, self::TOOL_CART_PROPOSE, self::TOOL_CART_COMMIT, self::TOOL_CHECKOUT_DETAILS, self::TOOL_CHECKOUT_SUMMARY, self::TOOL_CHECKOUT_LINK, self::TOOL_SHIPPING_COUNTRY ), true ) ) {
 				$block['is_error'] = true;
 				$block['content']  = 'The cart could not be reached. Nothing was changed. Tell the customer you could not check or update their cart right now and offer to pass it to a human.';
 
@@ -557,7 +588,7 @@ class DB_Chat_Claude_Client {
 	/**
 	 * The tools exposed to the model.
 	 *
-	 * There are eight. One reads published products, one reads a single
+	 * There are twelve. One reads published products, one reads a single
 	 * product's sizes/stock/price, one reads a fixed allowlist of published
 	 * help pages, one reads the orders of the customer who is signed in to
 	 * THIS request — and only theirs — one hands the conversation to a human
@@ -568,6 +599,16 @@ class DB_Chat_Claude_Client {
 	 * class-chat-endpoint.php's tool executor (a proposal must be staged AND
 	 * the customer's current message must be a clear, unambiguous
 	 * affirmative that is not also a refusal).
+	 *
+	 * The remaining four run checkout (Phase 3), all read-only from the
+	 * model's point of view: set_checkout_details reports which required
+	 * fields are now set (never a value — the fields themselves are written
+	 * deterministically, outside the model, see class-checkout-writer.php);
+	 * get_checkout_summary returns counts/totals only, never the itemised
+	 * list or the address string, which are widget-only (the `checkout`
+	 * response key in class-chat-endpoint.php); get_checkout_link returns
+	 * the public checkout URL; check_shipping_country reports whether a
+	 * country is served. None of the four ever mutates WooCommerce.
 	 *
 	 * The guarantee is structural, not a promise made in the prompt: the order
 	 * tool's input schema contains no customer identifier of any kind, so there
@@ -717,6 +758,35 @@ class DB_Chat_Claude_Client {
 						),
 					),
 					'required'   => array(),
+				),
+			),
+			array(
+				'name'         => self::TOOL_CHECKOUT_DETAILS,
+				'description'  => "Record that the customer's delivery details have been captured for checkout. You do NOT pass the details themselves — the customer enters them in a form or taps to confirm a saved address, and the system writes them to their checkout session. Call this to advance the flow; the result tells you which fields are now set and which are still missing.",
+				'input_schema' => array( 'type' => 'object', 'properties' => new stdClass() ),
+			),
+			array(
+				'name'         => self::TOOL_CHECKOUT_SUMMARY,
+				'description'  => 'Get a short checkout summary (item count, whether a delivery address is set, shipping cost, total). The customer sees the itemised summary and address; you only see counts and totals.',
+				'input_schema' => array( 'type' => 'object', 'properties' => new stdClass() ),
+			),
+			array(
+				'name'         => self::TOOL_CHECKOUT_LINK,
+				'description'  => "Get the URL of the checkout page ('Proceed to payment'). The customer pays there; you never take payment. Only call once the summary is confirmed.",
+				'input_schema' => array( 'type' => 'object', 'properties' => new stdClass() ),
+			),
+			array(
+				'name'         => self::TOOL_SHIPPING_COUNTRY,
+				'description'  => 'Check whether we ship to a country before promising delivery (for the international /gb store).',
+				'input_schema' => array(
+					'type'       => 'object',
+					'properties' => array(
+						'country' => array(
+							'type'        => 'string',
+							'description' => 'ISO-2 country code, e.g. "GB", "MY", "AU".',
+						),
+					),
+					'required'   => array( 'country' ),
 				),
 			),
 		);

@@ -84,6 +84,7 @@ require_once DB_CHAT_PATH . 'includes/class-ai-budget.php';
 require_once DB_CHAT_PATH . 'includes/class-cart-writer.php';
 require_once DB_CHAT_PATH . 'includes/class-cart-proposal.php';
 require_once DB_CHAT_PATH . 'includes/class-confirm.php';
+require_once DB_CHAT_PATH . 'includes/class-checkout-writer.php';
 require_once DB_CHAT_PATH . 'includes/class-claude-client.php';
 require_once DB_CHAT_PATH . 'includes/class-pii.php';
 require_once DB_CHAT_PATH . 'includes/class-messages.php';
