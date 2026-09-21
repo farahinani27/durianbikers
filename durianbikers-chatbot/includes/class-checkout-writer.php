@@ -67,6 +67,30 @@ class DB_Chat_Checkout_Writer {
 	}
 
 	/**
+	 * Return the session-bound WC_Customer, loading the WooCommerce session
+	 * first if a REST request has not booted it yet.
+	 *
+	 * A REST request does not initialise WC()->customer the way a page load
+	 * does — it stays null until something calls wc_load_cart(), exactly like
+	 * WC()->cart (see DB_Chat_Cart_Writer::load_cart()). Without this, writing
+	 * checkout details silently no-ops for guests and the details never reach
+	 * the session, so the customer is asked for them again.
+	 *
+	 * @return WC_Customer|null
+	 */
+	private function ensure_customer() {
+		if ( ! function_exists( 'WC' ) ) {
+			return null;
+		}
+
+		if ( null === WC()->cart && function_exists( 'wc_load_cart' ) ) {
+			wc_load_cart();
+		}
+
+		return WC()->customer ? WC()->customer : null;
+	}
+
+	/**
 	 * Sanitise and write delivery details into the WooCommerce customer
 	 * session (billing and shipping), then save.
 	 *
@@ -80,14 +104,14 @@ class DB_Chat_Checkout_Writer {
 	public function set_details( array $raw ) {
 		$clean = self::sanitize_details( $raw );
 
-		if ( ! function_exists( 'WC' ) || ! WC()->customer ) {
+		$c = $this->ensure_customer();
+
+		if ( ! $c ) {
 			return array(
 				'ok'     => false,
 				'fields' => array_fill_keys( self::FIELDS, false ),
 			);
 		}
-
-		$c = WC()->customer;
 
 		foreach ( $clean as $f => $v ) {
 			if ( '' === $v ) {
@@ -131,7 +155,7 @@ class DB_Chat_Checkout_Writer {
 	 */
 	public function has_required_for_checkout() {
 		$missing = array();
-		$c       = function_exists( 'WC' ) ? WC()->customer : null;
+		$c       = $this->ensure_customer();
 
 		foreach ( self::REQUIRED as $f ) {
 			$getter = 'get_billing_' . $f;
