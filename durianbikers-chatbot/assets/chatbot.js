@@ -2187,6 +2187,42 @@ products.
 		els.launcher = launcher;
 		els.overlay = root.querySelector('.db-chat-overlay');
 
+		// Keep wheel scrolling INSIDE the panel: the conversation log scrolls,
+		// and the page behind never does. On mobile the body is already
+		// position:fixed-locked (see lockScroll); this covers desktop, where it
+		// is not. We drive the log's own scrollTop directly rather than relying
+		// on the browser to route a native wheel into the shadow-DOM log —
+		// that routing is unreliable across the shadow boundary and is what let
+		// the page "bleed" and swallow the conversation's own scrolling. Ctrl+
+		// wheel (pinch / browser zoom) is left alone.
+		els.panel.addEventListener('wheel', function (e) {
+			if (e.ctrlKey) {
+				return;
+			}
+			var log = els.log;
+			if (!log) {
+				return;
+			}
+			var delta = e.deltaY;
+			if (e.deltaMode === 1) {
+				delta *= 16;                 // lines → approx px
+			} else if (e.deltaMode === 2) {
+				delta *= log.clientHeight;   // pages → px
+			}
+			if (log.contains(e.target) && log.scrollHeight > log.clientHeight) {
+				// Instant, not the log's CSS smooth scroll — per-tick smooth
+				// animation makes wheel scrolling feel floaty and laggy.
+				var target = log.scrollTop + delta;
+				try {
+					log.scrollTo({ top: target, behavior: 'instant' });
+				} catch (err) {
+					log.scrollTop = target;
+				}
+			}
+			// The widget consumes the wheel either way, so the page stays put.
+			e.preventDefault();
+		}, { passive: false });
+
 		document.body.classList.add('db-chat-active');
 
 		var revealed = false;
