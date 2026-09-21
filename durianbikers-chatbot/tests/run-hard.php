@@ -113,4 +113,155 @@ foreach ( array( 'yes', 'ya', 'ok add it', '好的', 'confirm', '加入', 'sure'
 	t_ok( true === db_chat_test_commit_gate( $y ), "CART-SAFETY gate true for affirmative: $y" );
 }
 
+/**
+ * CHECKOUT-SAFETY hard-checks (Phase 3).
+ *
+ * Reuses the REAL classes — DB_Chat_Checkout_Writer (Task 1) and
+ * DB_Chat_PII (Task 5) — rather than reimplementing their behaviour, same
+ * spirit as the CART-SAFETY block above. class-checkout-writer.php's guard
+ * is `defined('ABSPATH') || defined('DB_CHAT_TEST') || exit;`, and
+ * DB_CHAT_TEST is already defined at the top of this file, so no ABSPATH
+ * shim is needed here. WC()/WC()->customer come from tests/unit/stubs.php,
+ * already required above for the Phase-1 checks.
+ *
+ * Checks 1–3 call the real writer/PII classes directly. Check 4 (the
+ * hard-wall structural predicate) and the no-store assertion are pure
+ * source-position checks against includes/class-chat-endpoint.php, the
+ * same technique tests/unit/test-checkout-tools.php's "ordering regression
+ * guard" already uses — calling the endpoint's private tool methods for
+ * real would require instantiating DB_Chat_Chat_Endpoint (product index +
+ * Claude client + several WP/WooCommerce stubs not otherwise needed in
+ * this file), which tests/unit/test-checkout-tools.php already exercises
+ * in full. Duplicating that scaffolding here for a shape that never
+ * changes at runtime (both tool methods return fixed array literals) buys
+ * little extra signal; scanning those literals in source is pure, fast and
+ * still fails the moment a future edit adds a forbidden key.
+ */
+require __DIR__ . '/../includes/class-checkout-writer.php';
+
+// 1) sanitize_details: strips tags, trims, drops unknown keys, uppercases
+// country. Reuses the Task-1 case from tests/unit/test-checkout-writer.php.
+$checkout_sanitised = DB_Chat_Checkout_Writer::sanitize_details(
+	array(
+		'first_name' => "  Farah\n",
+		'address_1'  => '<b>12 Jalan</b>',
+		'country'    => 'my',
+		'junk'       => 'x',
+	)
+);
+t_ok( 'Farah' === $checkout_sanitised['first_name'], 'CHECKOUT-SAFETY: sanitize_details trims name' );
+t_ok( false === strpos( $checkout_sanitised['address_1'], '<' ), 'CHECKOUT-SAFETY: sanitize_details strips tags from address' );
+t_ok( 'MY' === $checkout_sanitised['country'], 'CHECKOUT-SAFETY: sanitize_details uppercases country' );
+t_ok( ! array_key_exists( 'junk', $checkout_sanitised ), 'CHECKOUT-SAFETY: sanitize_details drops unknown keys' );
+
+// 2) set_details() result contains NO PII value, over a small corpus of
+// value-shaped inputs (name/email/phone/address). Needs WC()->customer —
+// the FakeWC()/FakeWCCustomer stubs from tests/unit/stubs.php (already
+// required at the top of this file) stand in for it.
+$checkout_pii_corpus = array(
+	array(
+		'first_name' => 'Farah',
+		'last_name'  => 'Rahman',
+		'email'      => 'farah@example.test',
+		'phone'      => '+60 12-345 6789',
+		'address_1'  => '12 Jalan Test',
+	),
+	array(
+		'first_name' => 'Siti',
+		'last_name'  => 'Ahmad',
+		'email'      => 'siti.ahmad@example.test',
+		'phone'      => '011-2345 6789',
+		'address_1'  => '5 Jalan Bunga',
+	),
+	array(
+		'first_name' => 'Wei Ling',
+		'last_name'  => 'Tan',
+		'email'      => 'tan.wl@example.test',
+		'phone'      => '0123456789',
+		'address_1'  => '88 Persiaran SS2',
+	),
+);
+
+foreach ( $checkout_pii_corpus as $checkout_case_i => $checkout_case ) {
+	$checkout_writer = new DB_Chat_Checkout_Writer();
+	$checkout_result = $checkout_writer->set_details( $checkout_case );
+	$checkout_flat    = json_encode( $checkout_result );
+
+	foreach ( $checkout_case as $checkout_field => $checkout_value ) {
+		t_ok(
+			false === strpos( $checkout_flat, $checkout_value ),
+			"CHECKOUT-SAFETY: set_details result #$checkout_case_i carries no PII value for $checkout_field"
+		);
+	}
+}
+
+// 3) DB_Chat_PII::scrub redacts email/phone and leaves price/size/model/year
+// untouched. Reuses the Task-5 corpus from tests/unit/test-pii.php.
+t_eq(
+	DB_Chat_PII::scrub( 'reach me at a@b.com or +60 12-345 6789' ),
+	'reach me at [redacted] or [redacted]',
+	'CHECKOUT-SAFETY: PII::scrub redacts email and phone'
+);
+t_eq(
+	DB_Chat_PII::scrub( 'the Shinko 705 is RM653.00 in size 120/80-17, 2024 model' ),
+	'the Shinko 705 is RM653.00 in size 120/80-17, 2024 model',
+	'CHECKOUT-SAFETY: PII::scrub keeps price/size/model/year strings unchanged'
+);
+
+// 4) Hard-wall structural predicate: the two checkout tool methods that
+// return to Claude — tool_checkout_details_status() (set_checkout_details)
+// and tool_checkout_summary() (get_checkout_summary) — must never key
+// their result by order_id/payment/paid. Both build a fixed array literal
+// (no loop, no dynamic key), so scanning the method body's source text for
+// a quoted forbidden key is a sound, pure proxy for "the returned array
+// never contains this key": a future edit can only add such a key by
+// writing it in source, and this fails the instant that literal appears.
+$endpoint_source = file_get_contents( __DIR__ . '/../includes/class-chat-endpoint.php' );
+
+$tool_details_pos = strpos( $endpoint_source, 'private function tool_checkout_details_status(' );
+$tool_summary_pos = strpos( $endpoint_source, 'private function tool_checkout_summary(' );
+$tool_next_pos    = strpos( $endpoint_source, 'private function tool_propose_cart_change(' );
+
+t_ok(
+	false !== $tool_details_pos && false !== $tool_summary_pos && false !== $tool_next_pos && $tool_details_pos < $tool_summary_pos && $tool_summary_pos < $tool_next_pos,
+	'CHECKOUT-SAFETY: located tool_checkout_details_status()/tool_checkout_summary() in source'
+);
+
+$tool_details_body = substr( $endpoint_source, $tool_details_pos, $tool_summary_pos - $tool_details_pos );
+$tool_summary_body  = substr( $endpoint_source, $tool_summary_pos, $tool_next_pos - $tool_summary_pos );
+
+// Documented safe shapes (tests/unit/test-checkout-tools.php asserts these
+// are exactly what Claude receives): {ok,fields,missing} and
+// {ready,item_count,has_address,shipping,total}.
+foreach ( array( 'ok', 'fields', 'missing' ) as $expected_key ) {
+	t_ok( false !== strpos( $tool_details_body, "'" . $expected_key . "'" ), "CHECKOUT-SAFETY: tool_checkout_details_status() still returns '$expected_key'" );
+}
+foreach ( array( 'ready', 'item_count', 'has_address', 'shipping', 'total' ) as $expected_key ) {
+	t_ok( false !== strpos( $tool_summary_body, "'" . $expected_key . "'" ), "CHECKOUT-SAFETY: tool_checkout_summary() still returns '$expected_key'" );
+}
+
+foreach ( array( 'order_id', 'payment', 'paid' ) as $forbidden_key ) {
+	$needle = "'" . $forbidden_key . "'";
+	t_ok( false === strpos( $tool_details_body, $needle ), "CHECKOUT-SAFETY: tool_checkout_details_status() never keys result by '$forbidden_key'" );
+	t_ok( false === strpos( $tool_summary_body, $needle ), "CHECKOUT-SAFETY: tool_checkout_summary() never keys result by '$forbidden_key'" );
+}
+
+// No-store: handle_request() must call prevent_caching() before any
+// checkout branch. Also a pure source-position check (driving
+// handle_request() itself needs a full WordPress/WooCommerce environment —
+// see tests/server/test-endpoint-ai.php) — same technique as the ordering
+// regression guard in tests/unit/test-checkout-tools.php.
+$handle_request_pos   = strpos( $endpoint_source, 'public function handle_request(' );
+$finalize_response_pos = strpos( $endpoint_source, 'private function finalize_response(' );
+
+t_ok( false !== $handle_request_pos && false !== $finalize_response_pos, 'CHECKOUT-SAFETY: located handle_request()/finalize_response() in source' );
+
+$prevent_caching_pos       = strpos( $endpoint_source, '$this->prevent_caching(', $handle_request_pos );
+$capture_checkout_input_pos = strpos( $endpoint_source, '$this->capture_checkout_input( $request )', $handle_request_pos );
+$checkout_response_pos      = strpos( $endpoint_source, 'if ( $this->checkout_tool_used )', $handle_request_pos );
+
+t_ok( false !== $prevent_caching_pos && $prevent_caching_pos < $finalize_response_pos, 'CHECKOUT-SAFETY: handle_request() calls prevent_caching()' );
+t_ok( false !== $capture_checkout_input_pos && $prevent_caching_pos < $capture_checkout_input_pos, 'CHECKOUT-SAFETY: prevent_caching() runs before checkout-details capture' );
+t_ok( false !== $checkout_response_pos && $prevent_caching_pos < $checkout_response_pos, 'CHECKOUT-SAFETY: prevent_caching() runs before the checkout-tool-used response branch' );
+
 t_done();
