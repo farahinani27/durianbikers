@@ -1104,6 +1104,29 @@ class DB_Chat_Product_Index {
 				$this->seen[ $alias ] = $product->get_id();
 			}
 		}
+
+		/*
+		 * MODEL-STEM ALIAS. Helmets (and many variant products) are stored one
+		 * row per colour — "MT Helmet ATOM 2 SV (PURE A1 GLOSS BLACK)" — but the
+		 * model talks about the MODEL, "MT Helmet ATOM 2 SV", so neither the full
+		 * name nor the (digits)-stripped alias above appears in the reply and no
+		 * card ever attaches for a helmet-model discussion. Register a stem alias
+		 * with everything from the first bracket onward removed, so a model
+		 * mention resolves to ONE representative colour's card (first colour to
+		 * register wins; the customer sees the other colours on the product
+		 * page). Only added when a bracket is actually present, so a bracket-free
+		 * model name like "Shinko 705" is untouched, and only when the stem is
+		 * long enough that it cannot false-match a stray phrase.
+		 */
+		$stem = preg_replace( '/\s*\(.*$/', '', $name );
+
+		if ( is_string( $stem ) && $stem !== $name ) {
+			$stem_key = $this->normalize( $stem );
+
+			if ( '' !== $stem_key && strlen( $stem_key ) >= 6 && ! isset( $this->seen[ $stem_key ] ) ) {
+				$this->seen[ $stem_key ] = $product->get_id();
+			}
+		}
 	}
 
 	/**
