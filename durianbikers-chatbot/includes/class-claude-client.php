@@ -220,6 +220,26 @@ class DB_Chat_Claude_Client {
 		return $model;
 	}
 
+	/**
+	 * The model to escalate to when the base model's answer fails grounding.
+	 *
+	 * Reads the db_chat_model_escalation option (default: the built-in
+	 * escalation model). Returns '' — meaning "no escalation, base model only"
+	 * — when the option is explicitly blank, malformed, or equal to the base
+	 * model (never escalate to the model we already ran).
+	 *
+	 * @return string
+	 */
+	public function escalation_model() {
+		$model = trim( (string) DB_Chat_Plugin::setting( DB_CHAT_OPT_ESCALATION_MODEL, DB_CHAT_DEFAULT_ESCALATION_MODEL ) );
+
+		if ( '' === $model || ! preg_match( '/^[A-Za-z0-9._\-]{1,64}$/', $model ) ) {
+			return '';
+		}
+
+		return $model === $this->get_model() ? '' : $model;
+	}
+
 	/*
 	 * -----------------------------------------------------------------------
 	 * Conversation
@@ -237,9 +257,18 @@ class DB_Chat_Claude_Client {
 	 *                                 search_pages to read anything.
 	 * @return string|WP_Error Assistant reply text, or WP_Error.
 	 */
-	public function chat( array $messages, $static_context, callable $tool_executor, $page_context = '' ) {
+	public function chat( array $messages, $static_context, callable $tool_executor, $page_context = '', $model_override = '' ) {
 		$this->last_usage        = self::empty_usage();
 		$this->last_tool_results = array();
+
+		// A caller (the orchestrator's tiered escalation) may run this turn on a
+		// specific model. Validated with the same conservative charset as
+		// get_model(); anything malformed silently falls back to the base model.
+		$model = $this->get_model();
+		if ( is_string( $model_override ) && '' !== trim( $model_override )
+			&& preg_match( '/^[A-Za-z0-9._\-]{1,64}$/', trim( $model_override ) ) ) {
+			$model = trim( $model_override );
+		}
 
 		if ( ! $this->has_api_key() ) {
 			return new WP_Error(
@@ -271,7 +300,7 @@ class DB_Chat_Claude_Client {
 		for ( $round = 0; $round <= self::MAX_TOOL_ROUNDS; $round++ ) {
 			$response = $this->request(
 				array(
-					'model'      => $this->get_model(),
+					'model'      => $model,
 					'max_tokens' => self::MAX_TOKENS,
 					'system'     => $this->cacheable_system( $system ),
 					'messages'   => $messages,

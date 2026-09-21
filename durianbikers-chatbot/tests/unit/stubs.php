@@ -6,16 +6,20 @@ if ( ! class_exists( 'WP_Error' ) ) {
 if ( ! function_exists( 'is_wp_error' ) ) { function is_wp_error( $t ) { return $t instanceof WP_Error; } }
 
 class FakeClient {
-	private $key; private $replies; private $tool_results;
-	public function __construct( $has_key, array $replies = array(), array $tool_results = array() ) {
+	private $key; private $replies; private $tool_results; private $escalation; private $tool_results_seq;
+	public function __construct( $has_key, array $replies = array(), array $tool_results = array(), $escalation = '', array $tool_results_seq = array() ) {
 		$this->key = (bool) $has_key; $this->replies = $replies; $this->tool_results = $tool_results;
+		$this->escalation = (string) $escalation; $this->tool_results_seq = $tool_results_seq;
 	}
 	public function has_api_key() { return $this->key; }
-	public function chat( $messages, $context, $executor, $pages = '' ) {
+	public function chat( $messages, $context, $executor, $pages = '', $model_override = '' ) {
+		// If a per-call tool-results sequence was given, advance it in step with replies.
+		if ( ! empty( $this->tool_results_seq ) ) { $this->tool_results = array_shift( $this->tool_results_seq ); }
 		return empty( $this->replies ) ? '' : array_shift( $this->replies );
 	}
 	public function last_tool_results() { return $this->tool_results; }
 	public function get_last_usage() { return array(); }
+	public function escalation_model() { return $this->escalation; }
 }
 class FakeLookup {
 	private $reply; public function __construct( $reply ) { $this->reply = $reply; }

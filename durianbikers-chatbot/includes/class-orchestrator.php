@@ -47,7 +47,33 @@ final class DB_Chat_Orchestrator {
 		$check = DB_Chat_Grounding::verify( $reply, $facts );
 
 		if ( empty( $check['ok'] ) ) {
-			// Never show an ungrounded price. Safe line + offer a human.
+			// TIERED BRAIN. The base model's answer isn't grounded — usually
+			// because it answered from memory instead of searching. Retry this
+			// ONE turn on the more capable escalation model, with the same
+			// tools, so it can search and answer from real data. Only turns
+			// that fail on the base model pay for the escalation.
+			$escalation = method_exists( $this->client, 'escalation_model' ) ? (string) $this->client->escalation_model() : '';
+
+			if ( '' !== $escalation ) {
+				$retry = $this->client->chat( $messages, (string) $context, $tool_executor, (string) $pages, $escalation );
+
+				if ( $this->budget ) {
+					$this->budget->record( $this->client->get_last_usage() );
+				}
+
+				if ( ! is_wp_error( $retry ) ) {
+					$retry   = (string) $retry;
+					$facts2  = DB_Chat_Grounding::collect_facts( $this->client->last_tool_results() );
+					$check2  = DB_Chat_Grounding::verify( $retry, $facts2 );
+
+					if ( ! empty( $check2['ok'] ) ) {
+						return $this->success_result( $retry, 'ok_escalated' );
+					}
+				}
+			}
+
+			// Base model (and the escalation model, if it was tried) both
+			// produced an ungrounded reply. Never show an ungrounded price.
 			return array(
 				'reply'     => $this->safe_line(),
 				'products'  => array(),
@@ -58,15 +84,27 @@ final class DB_Chat_Orchestrator {
 			);
 		}
 
+		return $this->success_result( $reply, 'ok' );
+	}
+
+	/**
+	 * Build the success shape shared by the base and escalated paths: attach
+	 * the product/page cards resolved from the (grounded) reply text.
+	 *
+	 * @param string $reply     The grounded reply.
+	 * @param string $grounding 'ok' or 'ok_escalated'.
+	 * @return array<string,mixed>
+	 */
+	private function success_result( $reply, $grounding ) {
 		$products = ( $this->products && method_exists( $this->products, 'match_in_text' ) ) ? $this->products->match_in_text( $reply ) : array();
 		$pages_o  = ( $this->pages_index && method_exists( $this->pages_index, 'match_in_text' ) ) ? $this->pages_index->match_in_text( $reply ) : array();
 
 		return array(
-			'reply'     => $reply,
+			'reply'     => (string) $reply,
 			'products'  => is_array( $products ) ? array_values( $products ) : array(),
 			'pages'     => is_array( $pages_o ) ? array_values( $pages_o ) : array(),
 			'source'    => 'ai',
-			'grounding' => 'ok',
+			'grounding' => (string) $grounding,
 			'escalate'  => false,
 		);
 	}

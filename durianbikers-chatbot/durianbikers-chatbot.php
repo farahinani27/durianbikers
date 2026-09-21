@@ -27,8 +27,16 @@ define( 'DB_CHAT_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DB_CHAT_URL', plugin_dir_url( __FILE__ ) );
 define( 'DB_CHAT_TEXTDOMAIN', 'durianbikers-chatbot' );
 
-/** Default model. Overridable from the settings screen. */
+/** Default (base) model. Overridable from the settings screen. */
 define( 'DB_CHAT_DEFAULT_MODEL', 'claude-haiku-4-5-20251001' );
+
+/**
+ * Escalation model for the tiered brain: when the base model's answer fails
+ * the grounding check (usually because it answered from memory instead of
+ * searching), that one turn is retried on this more capable model. Set the
+ * db_chat_model_escalation option to '' to disable tiering (base model only).
+ */
+define( 'DB_CHAT_DEFAULT_ESCALATION_MODEL', 'claude-sonnet-5' );
 
 /** REST route pieces, kept as constants so every class agrees on one string. */
 define( 'DB_CHAT_REST_NAMESPACE', 'durianbikers/v1' );
@@ -51,6 +59,7 @@ define( 'DB_CHAT_REST_ROUTE_SESSION', '/session' );
  */
 define( 'DB_CHAT_OPT_API_KEY', 'db_chat_api_key' );
 define( 'DB_CHAT_OPT_MODEL', 'db_chat_model' );
+define( 'DB_CHAT_OPT_ESCALATION_MODEL', 'db_chat_model_escalation' );
 define( 'DB_CHAT_OPT_ENABLED', 'db_chat_enabled' );
 define( 'DB_CHAT_OPT_GREETING', 'db_chat_greeting' );
 define( 'DB_CHAT_OPT_SUGGESTIONS', 'db_chat_suggestions' );
