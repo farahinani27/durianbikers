@@ -111,6 +111,16 @@ All in motormania-child/functions.php (self-contained — no includes):
 - The other 4 themes installed on the site — do not activate, modify,
   or delete without asking
 
+## Chat widgets
+
+- `durianbikers-chatbot` (our own AI chatbot) is LIVE site-wide and is the
+  only customer chat widget on the store.
+- `chatway-live-chat` (third-party live chat) was intentionally DEACTIVATED
+  on 2026-09-21 to avoid two chat widgets. Leave it deactivated — do NOT
+  reactivate it without asking. Deactivation only hides the widget; it does
+  not affect the Chatway account/subscription. Reverse with
+  `wp plugin activate chatway-live-chat` if ever needed.
+
 ## Current focus (Aug 2026)
 
 1. ✅ Live: durianbikers.com now serves the WooCommerce store over HTTPS
