@@ -29,3 +29,38 @@ class FakeBudget {
 	public function get_last_usage() { return array(); }
 }
 class FakeIndex { public function match_in_text( $reply ) { return array(); } }
+
+// --- Minimal stubs for DB_Chat_Checkout_Writer's WooCommerce surface ---
+if ( ! function_exists( 'wp_strip_all_tags' ) ) { function wp_strip_all_tags( $t ) { return is_string( $t ) ? trim( preg_replace( '/[\r\n\t]+/', ' ', strip_tags( (string) $t ) ) ) : ''; } }
+if ( ! function_exists( 'is_email' ) )          { function is_email( $t ) { return is_string( $t ) && (bool) filter_var( $t, FILTER_VALIDATE_EMAIL ); } }
+if ( ! function_exists( 'sanitize_email' ) )    { function sanitize_email( $t ) { return is_string( $t ) ? trim( $t ) : ''; } }
+
+if ( ! class_exists( 'FakeWCCustomer' ) ) {
+	class FakeWCCustomer {
+		private $data = array();
+		public function save() {}
+		public function __call( $name, $args ) {
+			if ( strpos( $name, 'set_' ) === 0 ) {
+				$this->data[ substr( $name, 4 ) ] = $args[0] ?? '';
+				return null;
+			}
+			if ( strpos( $name, 'get_' ) === 0 ) {
+				$key = substr( $name, 4 );
+				return $this->data[ $key ] ?? '';
+			}
+			return null;
+		}
+	}
+}
+
+if ( ! function_exists( 'WC' ) ) {
+	class FakeWC {
+		public $customer;
+		public function __construct() { $this->customer = new FakeWCCustomer(); }
+	}
+	function WC() {
+		static $wc;
+		if ( null === $wc ) { $wc = new FakeWC(); }
+		return $wc;
+	}
+}
