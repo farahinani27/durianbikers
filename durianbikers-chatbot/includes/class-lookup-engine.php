@@ -1648,6 +1648,40 @@ class DB_Chat_Lookup_Engine {
 	}
 
 	/**
+	 * Is this a care / cleaning / maintenance / how-to-look-after question — the
+	 * kind where recommending a consumable is genuinely helpful? Whole-word
+	 * match on care-action verbs (EN + Malay), so it does NOT fire on order,
+	 * policy, price or greeting messages. Public so the AI path can gate its
+	 * programmatic upsell on it, exactly as the keyword path gates on
+	 * last_was_advice().
+	 *
+	 * @param string $message Raw customer message.
+	 * @return bool
+	 */
+	public function is_care_question( $message ) {
+		$pad = ' ' . $this->normalize( $message ) . ' ';
+
+		$care = array(
+			'clean', 'cleaning', 'wash', 'washing', 'cuci', 'bersih', 'bersihkan',
+			'shampoo', 'degrease', 'degreaser', 'dirty', 'kotor',
+			'lube', 'lubricate', 'lubricant', 'oil', 'oiling', 'lumas', 'lumasi',
+			'grease', 'gris', 'minyak',
+			'polish', 'shine', 'wax', 'kilat', 'gilap',
+			'protect', 'protection', 'protectant', 'rust', 'karat',
+			'jaga', 'care', 'maintain', 'maintenance', 'service', 'senggara',
+			'penjagaan', 'condition',
+		);
+
+		foreach ( $care as $w ) {
+			if ( false !== strpos( $pad, ' ' . $w . ' ' ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
 	 * The intent a message resolves to. Public so it can be tested offline.
 	 *
 	 * @param string $message Raw customer message.

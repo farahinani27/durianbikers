@@ -878,6 +878,37 @@ class DB_Chat_Chat_Endpoint {
 		);
 
 		/*
+		 * PROGRAMMATIC UPSELL CARDS FOR AI CARE / HOW-TO ANSWERS.
+		 *
+		 * The orchestrator cards products only via match_in_text on the reply,
+		 * so a care/cleaning/maintenance answer that names no exact catalogue
+		 * product gets no product cards — Haiku answers these from general
+		 * knowledge, will not reliably call search_products mid-answer, and must
+		 * never invent a product. When the customer's MESSAGE is a care/how-to
+		 * question, attach REAL cards ourselves from a catalogue lookup keyed off
+		 * that message. Every card is a real published product with a real price
+		 * (nothing invented), and cards_for_query()'s relevance guard keeps a
+		 * fitment part off a care question. Gated on is_care_question() so it
+		 * never fires on order, policy, price or greeting turns. Mirrors the
+		 * keyword path's advice-card fallback.
+		 */
+		if ( empty( $response_data['products'] )
+			&& null !== $this->product_index
+			&& is_callable( array( $this->lookup_engine, 'is_care_question' ) )
+			&& $this->lookup_engine->is_care_question( $message )
+			&& is_callable( array( $this->lookup_engine, 'advice_search_query' ) ) ) {
+			$topic = $this->lookup_engine->advice_search_query( $message );
+
+			if ( ! empty( $topic['queries'] ) && ! empty( $topic['nouns'] ) ) {
+				$cards = $this->product_index->cards_for_query( $topic['queries'], $topic['nouns'], 2 );
+
+				if ( ! empty( $cards ) ) {
+					$response_data['products'] = array_values( $cards );
+				}
+			}
+		}
+
+		/*
 		 * Surface the cart tools' results for the widget (Task 6): `proposal`
 		 * from the LAST propose_cart_change result this turn (so a confirm
 		 * card can be rendered), `cart` from a commit_cart_change or
