@@ -147,4 +147,96 @@ class DB_Chat_Checkout_Writer {
 			'missing' => $missing,
 		);
 	}
+
+	/**
+	 * Everything the WIDGET needs to render a checkout confirmation card.
+	 *
+	 * Reuses `DB_Chat_Cart_Writer::contents()` for line items/total/cart_url,
+	 * then adds a shipping figure from WooCommerce's own totals calculation
+	 * and a single human-readable address line. This is a read for the
+	 * widget's UI, not for Claude's context — the endpoint keeps it out of
+	 * the AI-visible tool results (see the PII boundary note at the top of
+	 * this file).
+	 *
+	 * @return array{items:array,shipping:string,total:string,address_line:string,cart_url:string}
+	 */
+	public function summary() {
+		$cart = ( new DB_Chat_Cart_Writer() )->contents(); // items/count/total/cart_url
+
+		$shipping = '';
+
+		if ( function_exists( 'WC' ) && WC()->cart ) {
+			WC()->cart->calculate_shipping();
+			WC()->cart->calculate_totals();
+			$shipping = wp_strip_all_tags( (string) WC()->cart->get_cart_shipping_total() );
+		}
+
+		return array(
+			'items'        => isset( $cart['items'] ) ? $cart['items'] : array(),
+			'shipping'     => $shipping,
+			'total'        => isset( $cart['total'] ) ? (string) $cart['total'] : '',
+			'address_line' => $this->address_line(),
+			'cart_url'     => isset( $cart['cart_url'] ) ? (string) $cart['cart_url'] : '',
+		);
+	}
+
+	/**
+	 * Build one human-readable address line from `WC()->customer`'s shipping
+	 * fields, for the widget to display. Never returns a value elsewhere —
+	 * see the PII boundary note at the top of this file.
+	 *
+	 * @return string
+	 */
+	private function address_line() {
+		$c = function_exists( 'WC' ) ? WC()->customer : null;
+
+		if ( ! $c ) {
+			return '';
+		}
+
+		$parts = array_filter(
+			array(
+				trim( $c->get_shipping_first_name() . ' ' . $c->get_shipping_last_name() ),
+				$c->get_shipping_address_1(),
+				$c->get_shipping_city(),
+				$c->get_shipping_postcode(),
+				$c->get_shipping_country(),
+			)
+		);
+
+		return wp_strip_all_tags( implode( ', ', $parts ) );
+	}
+
+	/**
+	 * Whether at least one enabled shipping method serves the given country.
+	 *
+	 * @param string $country Two-letter-ish country code, any case/spacing.
+	 * @return array{served:bool,zone:string}
+	 */
+	public function shipping_country_served( $country ) {
+		$country = strtoupper( preg_replace( '/[^A-Za-z]/', '', (string) $country ) );
+
+		if ( '' === $country || ! class_exists( 'WC_Shipping_Zones' ) ) {
+			return array(
+				'served' => false,
+				'zone'   => '',
+			);
+		}
+
+		$package = array(
+			'destination' => array(
+				'country'  => $country,
+				'state'    => '',
+				'postcode' => '',
+			),
+		);
+
+		$zone    = WC_Shipping_Zones::get_zone_matching_package( $package );
+		$methods = $zone ? $zone->get_shipping_methods( true ) : array(); // enabled only
+
+		return array(
+			'served' => ! empty( $methods ),
+			'zone'   => $zone ? $zone->get_zone_name() : '',
+		);
+	}
 }

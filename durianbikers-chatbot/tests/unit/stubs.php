@@ -53,10 +53,50 @@ if ( ! class_exists( 'FakeWCCustomer' ) ) {
 	}
 }
 
+// --- Minimal stubs for DB_Chat_Checkout_Writer::summary()/shipping_country_served() ---
+// Deep real-WooCommerce cart totals/shipping-zone calc is exercised by the
+// server smoke test (Task 9), not here — these only need to prove the
+// method SHAPES and the unknown-country=false path.
+if ( ! function_exists( 'wc_get_cart_url' ) ) { function wc_get_cart_url() { return 'https://example.test/cart/'; } }
+
+if ( ! class_exists( 'FakeWCCart' ) ) {
+	class FakeWCCart {
+		public function calculate_shipping() {}
+		public function calculate_totals() {}
+		public function get_cart_shipping_total() { return 'RM10.00'; }
+		public function get_cart() { return array(); }
+		public function get_cart_contents_count() { return 0; }
+		public function get_cart_total() { return 'RM0.00'; }
+		public function get_product_subtotal( $product, $qty ) { return ''; }
+	}
+}
+
+if ( ! class_exists( 'FakeWCShippingZone' ) ) {
+	class FakeWCShippingZone {
+		public function get_shipping_methods( $enabled_only = false ) { return array(); }
+		public function get_zone_name() { return ''; }
+	}
+}
+
+if ( ! class_exists( 'WC_Shipping_Zones' ) ) {
+	class WC_Shipping_Zones {
+		// Stub: no configured zone ever matches in unit tests, so every
+		// country reads as "not served" — enough to prove shipping_country_served()'s
+		// unknown-country path without a real zone table.
+		public static function get_zone_matching_package( $package ) {
+			return new FakeWCShippingZone();
+		}
+	}
+}
+
 if ( ! function_exists( 'WC' ) ) {
 	class FakeWC {
 		public $customer;
-		public function __construct() { $this->customer = new FakeWCCustomer(); }
+		public $cart;
+		public function __construct() {
+			$this->customer = new FakeWCCustomer();
+			$this->cart     = new FakeWCCart();
+		}
 	}
 	function WC() {
 		static $wc;
