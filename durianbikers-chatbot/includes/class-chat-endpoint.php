@@ -878,19 +878,41 @@ class DB_Chat_Chat_Endpoint {
 		);
 
 		/*
-		 * PROGRAMMATIC UPSELL CARDS FOR AI CARE / HOW-TO ANSWERS.
+		 * PRODUCT CARDS FROM WHAT THE MODEL RETRIEVED THIS TURN.
 		 *
 		 * The orchestrator cards products only via match_in_text on the reply,
-		 * so a care/cleaning/maintenance answer that names no exact catalogue
-		 * product gets no product cards — Haiku answers these from general
-		 * knowledge, will not reliably call search_products mid-answer, and must
-		 * never invent a product. When the customer's MESSAGE is a care/how-to
-		 * question, attach REAL cards ourselves from a catalogue lookup keyed off
-		 * that message. Every card is a real published product with a real price
-		 * (nothing invented), and cards_for_query()'s relevance guard keeps a
-		 * fitment part off a care question. Gated on is_care_question() so it
-		 * never fires on order, policy, price or greeting turns. Mirrors the
-		 * keyword path's advice-card fallback.
+		 * so a product-discovery answer that names products generically ("MT
+		 * Helmet ATOM 2 SV" for a per-colour catalogue), vaguely, or — with
+		 * Haiku — names none at all, gets no cards even though the model DID
+		 * search and was shown real products. When match_in_text found nothing,
+		 * card the products the model actually retrieved this turn: real
+		 * published products, relevance-ranked, rebuilt from the live WC_Product
+		 * (never the model's text). Fires only when search_products returned
+		 * something, so it is inert on order/policy/greeting turns (those run
+		 * get_my_orders / search_pages, not search_products).
+		 */
+		if ( empty( $response_data['products'] ) && null !== $this->product_index ) {
+			$retrieved = $this->product_index->cards_from_tool_results(
+				$this->client->last_tool_results()
+			);
+
+			if ( ! empty( $retrieved ) ) {
+				$response_data['products'] = array_values( $retrieved );
+			}
+		}
+
+		/*
+		 * PROGRAMMATIC UPSELL CARDS FOR AI CARE / HOW-TO ANSWERS.
+		 *
+		 * Still nothing to show, and the customer's MESSAGE is a care/how-to
+		 * question the model answered from general knowledge WITHOUT searching
+		 * (Haiku will not reliably call search_products mid-answer, and must
+		 * never invent a product). Attach REAL cards from a catalogue lookup
+		 * keyed off that message. Every card is a real published product with a
+		 * real price (nothing invented), and cards_for_query()'s relevance guard
+		 * keeps a fitment part off a care question. Gated on is_care_question()
+		 * so it never fires on order, policy, price or greeting turns. Mirrors
+		 * the keyword path's advice-card fallback.
 		 */
 		if ( empty( $response_data['products'] )
 			&& null !== $this->product_index

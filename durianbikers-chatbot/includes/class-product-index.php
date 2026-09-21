@@ -1248,6 +1248,75 @@ class DB_Chat_Product_Index {
 	}
 
 	/**
+	 * Cards for the products the model actually RETRIEVED this turn.
+	 *
+	 * A product-discovery answer ("what full face helmets do you have") often
+	 * names products generically, vaguely, or — with Haiku — names none that
+	 * match the catalogue, so match_in_text() on the reply attaches no card even
+	 * though the model searched and was shown real products. This walks the
+	 * tool-result payloads from THIS turn (DB_Chat_Claude_Client::last_tool_results()),
+	 * collects the product ids that search_products returned — in the order they
+	 * were shown, which is relevance-ranked — and rebuilds a real card for each
+	 * from the live WC_Product. The model's own text, prices and URLs are never
+	 * trusted; every card is rebuilt from the product object, exactly like
+	 * match_in_text(). Deduped and capped.
+	 *
+	 * A search_products record is identified by the { id, name, permalink }
+	 * shape of format_for_model(); get_product's { name, url, variations } (no
+	 * id), pages, cart lines and checkout blobs are all skipped.
+	 *
+	 * @param array $tool_results The turn's tool-result payloads.
+	 * @param int   $limit        Max cards; 0 uses MAX_CARDS.
+	 * @return array<int,array>
+	 */
+	public function cards_from_tool_results( array $tool_results, $limit = 0 ) {
+		$limit = (int) $limit > 0 ? (int) $limit : self::MAX_CARDS;
+
+		$ids  = array();
+		$walk = function ( $node ) use ( &$walk, &$ids ) {
+			if ( ! is_array( $node ) ) {
+				return;
+			}
+
+			if ( isset( $node['id'], $node['name'], $node['permalink'] )
+				&& is_numeric( $node['id'] )
+				&& (int) $node['id'] > 0 ) {
+				$id = (int) $node['id'];
+
+				if ( ! in_array( $id, $ids, true ) ) {
+					$ids[] = $id;
+				}
+			}
+
+			foreach ( $node as $child ) {
+				if ( is_array( $child ) ) {
+					$walk( $child );
+				}
+			}
+		};
+
+		foreach ( $tool_results as $r ) {
+			$walk( $r );
+		}
+
+		$cards = array();
+
+		foreach ( $ids as $id ) {
+			if ( count( $cards ) >= $limit ) {
+				break;
+			}
+
+			$card = $this->format_card( $id );
+
+			if ( null !== $card ) {
+				$cards[] = $card;
+			}
+		}
+
+		return $cards;
+	}
+
+	/**
 	 * Real product cards for a topic query, for programmatic attachment to an AI
 	 * advice answer ("how do I care for my chain?" -> a chain lube/cleaner card).
 	 *
