@@ -222,4 +222,113 @@ foreach ( array( 'set_checkout_details', 'get_checkout_summary', 'get_checkout_l
 	t_ok( empty( $block['is_error'] ), "run_tool: $name is allowlisted (no is_error)" );
 }
 
+/*
+ * -----------------------------------------------------------------------
+ * Task 4: deterministic checkout-details capture from the widget.
+ *
+ * capture_checkout_input() is the ONE call site in handle_request() that
+ * may read checkout_details / checkout_confirm_address. It must (a) write
+ * any real form values ONLY to WC()->customer, via
+ * DB_Chat_Checkout_Writer::set_details(), and (b) hand handle_request()
+ * back nothing but a neutral marker string — never the typed PII — so that
+ * marker (not the customer's real form values) is what ends up stored to
+ * DB_Chat_Conversation_Store and passed to maybe_log()/Claude for this
+ * turn. Exercised via reflection on a fresh endpoint, exactly like the
+ * tool-executor tests above.
+ * -----------------------------------------------------------------------
+ */
+$read_details_method = new ReflectionMethod( $endpoint, 'read_checkout_details' );
+$read_details_method->setAccessible( true );
+
+$capture_method = new ReflectionMethod( $endpoint, 'capture_checkout_input' );
+$capture_method->setAccessible( true );
+
+// -- read_checkout_details(): shape whitelisting, no free text. --
+t_ok( null === $read_details_method->invoke( $endpoint, new FakeWPRequest() ), 'read_checkout_details: no param -> null' );
+t_ok( null === $read_details_method->invoke( $endpoint, new FakeWPRequest( array( 'checkout_details' => 'not an array' ) ) ), 'read_checkout_details: non-array -> null' );
+t_ok( null === $read_details_method->invoke( $endpoint, new FakeWPRequest( array( 'checkout_details' => array() ) ) ), 'read_checkout_details: empty array -> null' );
+t_ok( null === $read_details_method->invoke( $endpoint, new FakeWPRequest( array( 'checkout_details' => array( 'evil_key' => 'x' ) ) ) ), 'read_checkout_details: no known field -> null' );
+
+$sanitised = $read_details_method->invoke(
+	$endpoint,
+	new FakeWPRequest(
+		array(
+			'checkout_details' => array(
+				'first_name' => 'Farah',
+				'email'      => 'farah@example.test',
+				'evil_key'   => '<script>x</script>',
+			),
+		)
+	)
+);
+t_ok( is_array( $sanitised ), 'read_checkout_details: known field -> sanitised map' );
+t_ok( $sanitised['first_name'] === 'Farah', 'read_checkout_details: keeps known field value' );
+t_ok( ! array_key_exists( 'evil_key', $sanitised ), 'read_checkout_details: drops unknown key' );
+
+// -- capture_checkout_input(): writer receives the PII, caller gets only a marker. --
+$ep_details   = new DB_Chat_Chat_Endpoint( $product_index, $client );
+$req_details  = new FakeWPRequest(
+	array(
+		'checkout_details' => array(
+			'first_name' => 'Siti',
+			'last_name'  => 'Rahman',
+			'email'      => 'siti@example.test',
+			'phone'      => '0123456789',
+			'address_1'  => '5 Jalan Bunga',
+			'city'       => 'Ipoh',
+			'postcode'   => '30000',
+			'country'    => 'MY',
+		),
+	)
+);
+$marker_details = $capture_method->invoke( $ep_details, $req_details );
+
+t_ok( '[checkout details provided]' === $marker_details, 'capture_checkout_input: returns the neutral marker for a form payload' );
+t_ok( WC()->customer->get_billing_first_name() === 'Siti', 'capture_checkout_input: writer wrote first_name to WC()->customer' );
+t_ok( WC()->customer->get_billing_email() === 'siti@example.test', 'capture_checkout_input: writer wrote email to WC()->customer' );
+t_ok( is_string( $marker_details ) && strpos( $marker_details, 'Siti' ) === false, 'capture_checkout_input: marker never contains the captured name' );
+t_ok( is_string( $marker_details ) && strpos( $marker_details, 'siti@example.test' ) === false, 'capture_checkout_input: marker never contains the captured email' );
+
+// -- Logged-in "deliver to saved address" tap: marker, no writer call needed. --
+$ep_confirm  = new DB_Chat_Chat_Endpoint( $product_index, $client );
+$req_confirm = new FakeWPRequest( array( 'checkout_confirm_address' => true ) );
+$marker_confirm = $capture_method->invoke( $ep_confirm, $req_confirm );
+
+t_ok( '[confirmed saved address]' === $marker_confirm, 'capture_checkout_input: saved-address tap -> its own neutral marker' );
+
+// -- Neither signal present this turn: leave $message alone (null, not a marker). --
+$ep_none  = new DB_Chat_Chat_Endpoint( $product_index, $client );
+$req_none = new FakeWPRequest( array( 'message' => 'do you have MT helmets?' ) );
+t_ok( null === $capture_method->invoke( $ep_none, $req_none ), 'capture_checkout_input: no checkout signal -> null (message untouched)' );
+
+// A false / empty checkout_confirm_address must not falsely mark the turn.
+$req_false = new FakeWPRequest( array( 'checkout_confirm_address' => false ) );
+t_ok( null === $capture_method->invoke( $ep_none, $req_false ), 'capture_checkout_input: checkout_confirm_address=false -> null' );
+
+/*
+ * -----------------------------------------------------------------------
+ * Ordering regression guard: capture_checkout_input() MUST be called
+ * before the handoff conversation's customer add_message() AND before
+ * every maybe_log() call in handle_request() — otherwise the raw PII
+ * would already be committed to the conversation store / logs before the
+ * marker replacement ever runs. A pure source-position check, because
+ * driving handle_request() itself needs a full WordPress/WooCommerce
+ * environment (see tests/server/test-endpoint-ai.php).
+ * -----------------------------------------------------------------------
+ */
+$source              = file_get_contents( __DIR__ . '/../../includes/class-chat-endpoint.php' );
+$handle_request_start = strpos( $source, 'function handle_request(' );
+$handle_request_end   = strpos( $source, 'function finalize_response(' );
+t_ok( false !== $handle_request_start && false !== $handle_request_end, 'ordering guard: located handle_request()/finalize_response() in source' );
+
+// Patterns match only the real call sites (e.g. "$this->maybe_log("), never
+// the prose in the surrounding comments that also mentions these names.
+$capture_pos = strpos( $source, '$this->capture_checkout_input( $request )', $handle_request_start );
+$add_message_pos = strpos( $source, "add_message( (int) \$conversation['id'], 'customer'", $handle_request_start );
+$maybe_log_pos = strpos( $source, '$this->maybe_log( $message, isset(', $handle_request_start );
+
+t_ok( false !== $capture_pos && $capture_pos < $handle_request_end, 'ordering guard: capture_checkout_input() is called inside handle_request()' );
+t_ok( false !== $add_message_pos && $capture_pos < $add_message_pos, 'ordering guard: capture runs BEFORE the customer add_message() call' );
+t_ok( false !== $maybe_log_pos && $capture_pos < $maybe_log_pos, 'ordering guard: capture runs BEFORE the first maybe_log() call' );
+
 t_done();

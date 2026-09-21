@@ -298,6 +298,30 @@ class DB_Chat_Chat_Endpoint {
 							return null === $value || is_array( $value );
 						},
 					),
+					/*
+					 * Phase 3, Task 4: the guest checkout form's field map, OR a
+					 * logged-in customer's "Deliver to saved address" tap-confirm.
+					 * Both are raw claims from the browser — read_checkout_details()
+					 * whitelists checkout_details field-by-field against
+					 * DB_Chat_Checkout_Writer::FIELDS, and checkout_confirm_address
+					 * only ever gates a boolean branch, never carries a value
+					 * anywhere. See capture_checkout_input()'s doc for why the raw
+					 * values must never reach $message.
+					 */
+					'checkout_details'         => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_array( $value );
+						},
+					),
+					'checkout_confirm_address' => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_bool( $value ) || is_array( $value );
+						},
+					),
 				),
 			)
 		);
@@ -695,6 +719,27 @@ class DB_Chat_Chat_Endpoint {
 
 		$message = $this->sanitize_message( $request->get_param( 'message' ) );
 		$history = $this->sanitize_history( $request->get_param( 'history' ) );
+
+		/*
+		 * DETERMINISTIC CHECKOUT CAPTURE (Phase 3, Task 4). Like cart_confirm
+		 * below, the widget's checkout form / "deliver to saved address" tap
+		 * sends a structured signal handled here in code, never by the model.
+		 *
+		 * MUST run here, before the handoff conversation's
+		 * add_message( ..., 'customer', $message ) below (only reachable when
+		 * a conversation exists) AND before maybe_log( $message, ... ) further
+		 * down (which runs on every AI/lookup turn, conversation or not) — so
+		 * this cannot be gated on $conversation the way cart_confirm is.
+		 * capture_checkout_input() returns a neutral marker whenever it wrote
+		 * anything, and that marker unconditionally replaces $message before
+		 * either sink can see the raw form values. See that method's doc for
+		 * the PII boundary this enforces.
+		 */
+		$checkout_marker = $this->capture_checkout_input( $request );
+
+		if ( null !== $checkout_marker ) {
+			$message = $checkout_marker;
+		}
 
 		/*
 		 * HANDOFF GATE. Off by default (db_chat_handoff_enabled = '0'), in
@@ -1770,6 +1815,96 @@ class DB_Chat_Chat_Endpoint {
 			'decision'    => $decision,
 			'proposal_id' => $proposal_id,
 		);
+	}
+
+	/**
+	 * Read the widget's guest checkout form payload, if present and it names
+	 * at least one field DB_Chat_Checkout_Writer knows about.
+	 *
+	 * A claim from the browser, like read_cart_confirm() above: this only
+	 * whitelists the SHAPE (array, known keys). The actual sanitising
+	 * (tag-stripping, length caps, email/country validation) is delegated to
+	 * DB_Chat_Checkout_Writer::sanitize_details(), the single place that
+	 * logic lives, so this method never invents its own notion of a "clean"
+	 * value. Never returns free text — either the sanitised fixed-shape map,
+	 * or null.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return array<string,string>|null Sanitised field map (every
+	 *                                    DB_Chat_Checkout_Writer::FIELDS key
+	 *                                    present), or null when the payload
+	 *                                    was absent, not an array, empty, or
+	 *                                    named no known field.
+	 */
+	private function read_checkout_details( $request ) {
+		$raw = $request->get_param( 'checkout_details' );
+
+		if ( ! is_array( $raw ) || empty( $raw ) ) {
+			return null;
+		}
+
+		$has_known_field = false;
+
+		foreach ( DB_Chat_Checkout_Writer::FIELDS as $field ) {
+			if ( array_key_exists( $field, $raw ) ) {
+				$has_known_field = true;
+				break;
+			}
+		}
+
+		if ( ! $has_known_field ) {
+			return null;
+		}
+
+		return DB_Chat_Checkout_Writer::sanitize_details( $raw );
+	}
+
+	/**
+	 * Deterministically capture checkout PII from the widget and report back
+	 * only the neutral marker that must replace $message this turn — never
+	 * the values.
+	 *
+	 * THE PII BOUNDARY: this is the one call site in handle_request() that
+	 * may read `checkout_details` / `checkout_confirm_address`. A guest
+	 * form payload is sanitised by read_checkout_details() and written
+	 * straight to WC()->customer via
+	 * `( new DB_Chat_Checkout_Writer() )->set_details()`, which itself
+	 * returns only booleans and field names (see class-checkout-writer.php's
+	 * top-of-file doc) — nothing captured here is ever assigned back to a
+	 * variable this method returns. A logged-in customer's
+	 * "Deliver to saved address" tap needs no write at all: their saved
+	 * billing/shipping is already in WC()->customer, so this just
+	 * acknowledges the tap with a marker.
+	 *
+	 * The caller (handle_request()) MUST replace $message with the returned
+	 * marker whenever it is non-null, and MUST do so before the customer
+	 * turn is added to DB_Chat_Conversation_Store, before maybe_log(), and
+	 * before the orchestrator/lookup engine ever sees $message — otherwise
+	 * the typed PII leaks into conversation history, debug logs, or Claude's
+	 * context. See the call site's comment for why that ordering cannot be
+	 * gated on a conversation existing.
+	 *
+	 * @param WP_REST_Request $request Request.
+	 * @return string|null Neutral marker text, or null when neither signal
+	 *                      was present this turn (caller leaves $message
+	 *                      untouched).
+	 */
+	private function capture_checkout_input( $request ) {
+		$details = $this->read_checkout_details( $request );
+
+		if ( null !== $details ) {
+			( new DB_Chat_Checkout_Writer() )->set_details( $details );
+
+			return '[checkout details provided]';
+		}
+
+		$confirm_address = $request->get_param( 'checkout_confirm_address' );
+
+		if ( ! empty( $confirm_address ) ) {
+			return '[confirmed saved address]';
+		}
+
+		return null;
 	}
 
 	/**

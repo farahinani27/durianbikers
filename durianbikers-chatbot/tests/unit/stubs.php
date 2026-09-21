@@ -89,6 +89,21 @@ if ( ! class_exists( 'WC_Shipping_Zones' ) ) {
 	}
 }
 
+// --- Minimal stand-in for WP_REST_Request, just enough for get_param() ---
+// (no such class exists outside a real WP install; the unit tests call
+// private methods that only ever call $request->get_param(...)).
+if ( ! class_exists( 'FakeWPRequest' ) ) {
+	class FakeWPRequest {
+		private $params;
+		public function __construct( array $params = array() ) {
+			$this->params = $params;
+		}
+		public function get_param( $key ) {
+			return $this->params[ $key ] ?? null;
+		}
+	}
+}
+
 if ( ! function_exists( 'WC' ) ) {
 	class FakeWC {
 		public $customer;
