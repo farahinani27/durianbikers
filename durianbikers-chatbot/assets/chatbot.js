@@ -1373,6 +1373,272 @@ products.
 	}
 
 	/**
+	 * PHASE 3 CHECKOUT — response keys `checkout` / `checkout_link` (see
+	 * task-7-brief). Nothing here is persisted to sessionStorage: `checkout`,
+	 * `checkout_link`, the form field values and `address_line` never touch
+	 * `transcript`/`saveState` (mirrors the Phase 2 `proposal`/`cart` rule —
+	 * see `handleResponse`/`saveState`). A stale checkout step must never
+	 * reappear after a reload.
+	 *
+	 * `checkout = { mode: 'guest'|'logged_in', needs: 'address'|'', summary }`
+	 * `checkout_link = { url }`
+	 */
+
+	/**
+	 * Guest hybrid-capture form: first/last name, phone, email, address_1,
+	 * city, postcode, country, plus Send/Cancel — same markup/approach as
+	 * `openContactStep`/`submitHandoff`. Field VALUES go ONLY into the
+	 * `checkout_details` extra on `send()`; the message text sent alongside
+	 * is always the neutral string below, so no address text ever lands in
+	 * the visible transcript or the `history` array POSTed back to the
+	 * server. Guarded against opening twice at once.
+	 */
+	function openCheckoutForm() {
+		if (els.checkoutStep) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-contact-step');
+		box.appendChild(el('p', 'db-chat-contact-label', 'Where should we deliver your order?'));
+
+		var fields = [
+			{ key: 'first_name', placeholder: 'First name', type: 'text' },
+			{ key: 'last_name', placeholder: 'Last name', type: 'text' },
+			{ key: 'phone', placeholder: 'Phone number', type: 'text' },
+			{ key: 'email', placeholder: 'you@example.com', type: 'email' },
+			{ key: 'address_1', placeholder: 'Street address', type: 'text' },
+			{ key: 'city', placeholder: 'City', type: 'text' },
+			{ key: 'postcode', placeholder: 'Postcode', type: 'text' },
+			{ key: 'country', placeholder: 'Country', type: 'text' }
+		];
+		var inputs = {};
+		fields.forEach(function (field) {
+			var input = document.createElement('input');
+			input.type = field.type;
+			input.className = 'db-chat-contact-input';
+			input.setAttribute('placeholder', field.placeholder);
+			input.setAttribute('autocomplete', 'off');
+			box.appendChild(input);
+			inputs[field.key] = input;
+		});
+
+		var actions = el('div', 'db-chat-contact-actions');
+		var sendBtn = el('button', 'db-chat-contact-send', 'Send');
+		sendBtn.type = 'button';
+		var cancelBtn = el('button', 'db-chat-contact-cancel', 'Cancel');
+		cancelBtn.type = 'button';
+
+		function close() {
+			wrap.remove();
+			els.checkoutStep = null;
+		}
+
+		function attemptSend() {
+			var details = {};
+			fields.forEach(function (field) {
+				details[field.key] = trimmed(inputs[field.key].value);
+			});
+			sendBtn.disabled = true;
+			close();
+			// Neutral message text ONLY — see the function doc comment above.
+			// The actual address travels solely in `checkout_details`.
+			send('Here are my delivery details', { checkout_details: details });
+		}
+
+		sendBtn.addEventListener('click', attemptSend);
+		cancelBtn.addEventListener('click', function () {
+			close();
+			send('I’ll enter my delivery details later');
+		});
+		Object.keys(inputs).forEach(function (key) {
+			inputs[key].addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					attemptSend();
+				}
+			});
+		});
+
+		actions.appendChild(sendBtn);
+		actions.appendChild(cancelBtn);
+		box.appendChild(actions);
+
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		els.checkoutStep = wrap;
+		scrollToEnd();
+		try {
+			inputs.first_name.focus();
+		} catch (e) { /* not focusable yet: harmless */ }
+	}
+
+	/**
+	 * Logged-in tap-confirm: "Deliver to <address_line>?" with a ✓ (ask the
+	 * server to use the saved address — no PII in the message itself) and a
+	 * ✗ (ask to use a different one, also no PII). `addressLine` is rendered
+	 * with `el()`/textContent only, exactly like every other server string.
+	 */
+	function addCheckoutConfirm(addressLine) {
+		var text = 'Deliver to ' + (addressLine ? addressLine : 'your saved address') + '?';
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-escalate');
+		box.appendChild(el('p', 'db-chat-escalate-text', text));
+
+		var actions = el('div', 'db-chat-contact-actions');
+
+		var yes = el('button', 'db-chat-escalate-btn', '✓ Yes, use it');
+		yes.type = 'button';
+		yes.addEventListener('click', function () {
+			box.remove();
+			send('Yes, use my saved address', { checkout_confirm_address: true });
+		});
+		actions.appendChild(yes);
+
+		var no = el('button', 'db-chat-contact-cancel', '✗ Use a different address');
+		no.type = 'button';
+		no.addEventListener('click', function () {
+			box.remove();
+			send('I’d like to use a different address');
+		});
+		actions.appendChild(no);
+
+		box.appendChild(actions);
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
+	 * Itemised checkout SUMMARY card: each item (name, label, qty,
+	 * line_price — same row builder as the cart summary), shipping, total,
+	 * and the delivery address, with an "all correct?" line. Rendered via
+	 * `el()`/textContent only; never written to `transcript`/`saveState`.
+	 */
+	function addCheckoutSummary(summary) {
+		if (!summary || typeof summary !== 'object') {
+			return;
+		}
+		var items = Array.isArray(summary.items) ? summary.items : null;
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+		var rendered = false;
+
+		if (items) {
+			var list = el('ul', 'db-chat-products');
+			list.setAttribute('aria-label', 'Order summary');
+			var count = 0;
+			items.forEach(function (item) {
+				if (count >= MAX_CART_ITEMS) {
+					return;
+				}
+				if (!item || typeof item !== 'object') {
+					return;
+				}
+				if (typeof item.name !== 'string' || !item.name.trim()) {
+					return;
+				}
+				var qty = typeof item.qty === 'number' && item.qty > 0 && Math.floor(item.qty) === item.qty
+					? item.qty
+					: 0;
+				if (!qty) {
+					return;
+				}
+				list.appendChild(buildCartItemRow(item, qty));
+				count += 1;
+			});
+			if (count) {
+				body.appendChild(list);
+				rendered = true;
+			}
+		}
+
+		if (typeof summary.shipping === 'string' && summary.shipping.trim()) {
+			body.appendChild(el('p', 'db-chat-product-price', 'Shipping: ' + summary.shipping.trim()));
+			rendered = true;
+		}
+		if (typeof summary.total === 'string' && summary.total.trim()) {
+			body.appendChild(el('p', 'db-chat-product-price', 'Total: ' + summary.total.trim()));
+			rendered = true;
+		}
+		if (typeof summary.address_line === 'string' && summary.address_line.trim()) {
+			body.appendChild(el('p', 'db-chat-escalate-text', 'Deliver to: ' + summary.address_line.trim()));
+			rendered = true;
+		}
+
+		if (!rendered) {
+			return;
+		}
+
+		body.appendChild(el('p', 'db-chat-escalate-text', 'Is everything above correct?'));
+
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
+	 * "Proceed to payment" — the terminal action of the checkout flow. A
+	 * plain same-tab link (no `target`) to the WooCommerce checkout page, so
+	 * back/forward behaves normally. No auto-advance: the customer taps it.
+	 */
+	function addCheckoutLink(checkoutLink) {
+		if (!checkoutLink || typeof checkoutLink !== 'object') {
+			return;
+		}
+		var href = safeUrl(checkoutLink.url);
+		if (!href) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var link = el('a', 'db-chat-escalate-btn', 'Proceed to payment');
+		link.setAttribute('href', href);
+		body.appendChild(link);
+
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
+	 * Dispatches the `checkout` response key to the right render path
+	 * (RULING A shape — see task-7-brief): the guest form, the logged-in
+	 * tap-confirm, and/or the summary card. `checkout_link` is handled
+	 * separately by `addCheckoutLink()`.
+	 */
+	function addCheckoutStep(checkout) {
+		if (!checkout || typeof checkout !== 'object') {
+			return;
+		}
+		if (checkout.needs === 'address') {
+			if (checkout.mode === 'guest') {
+				openCheckoutForm();
+			} else if (checkout.mode === 'logged_in') {
+				var addressLine = checkout.summary && typeof checkout.summary.address_line === 'string'
+					? checkout.summary.address_line.trim()
+					: '';
+				addCheckoutConfirm(addressLine);
+			}
+		}
+		addCheckoutSummary(checkout.summary);
+	}
+
+	/**
 	 * Contact-capture step: Name (optional), Email (REQUIRED), Phone
 	 * (optional), plus Send/Cancel, appended to the transcript. Send
 	 * validates the email client-side before POSTing /handoff; Cancel closes
@@ -2640,6 +2906,17 @@ products.
 		if (extra && extra.cart_confirm) {
 			body.cart_confirm = extra.cart_confirm;
 		}
+		// Checkout-form field values (Phase 3). These travel ONLY here, never
+		// in `message` or `history` — see the checkout-form submit handler,
+		// which always sends a neutral message string alongside this.
+		if (extra && extra.checkout_details) {
+			body.checkout_details = extra.checkout_details;
+		}
+		// The logged-in tap-confirm's "yes, use my saved address" signal. No
+		// PII of its own — the server already has the saved address.
+		if (extra && extra.checkout_confirm_address) {
+			body.checkout_confirm_address = extra.checkout_confirm_address;
+		}
 		// Only ever present once GET /session has round-tripped one back
 		// (i.e. only when handoffEnabled). Off in production: this field is
 		// simply absent, same request body as before this feature existed.
@@ -2711,13 +2988,19 @@ products.
 
 		lastAttempt = message;
 		lastAttemptExtra = null;
-		if (extra && (extra.pick || extra.cart_confirm)) {
+		if (extra && (extra.pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address)) {
 			lastAttemptExtra = {};
 			if (extra.pick) {
 				lastAttemptExtra.pick = extra.pick;
 			}
 			if (extra.cart_confirm) {
 				lastAttemptExtra.cart_confirm = extra.cart_confirm;
+			}
+			if (extra.checkout_details) {
+				lastAttemptExtra.checkout_details = extra.checkout_details;
+			}
+			if (extra.checkout_confirm_address) {
+				lastAttemptExtra.checkout_confirm_address = extra.checkout_confirm_address;
 			}
 		}
 		var sentExtra = lastAttemptExtra;
@@ -2886,6 +3169,13 @@ products.
 		// and a fresh propose land in the same reply.
 		addCartSummary(data ? data.cart : null);
 		addCartConfirm(data ? data.proposal : null);
+
+		// Phase 3 checkout (RULING A response-key shapes — see
+		// task-7-brief). Neither key is ever written to `transcript` or
+		// `saveState`: a stale checkout step/summary must not survive a
+		// reload, same rule as `proposal`/`cart` above.
+		addCheckoutStep(data ? data.checkout : null);
+		addCheckoutLink(data ? data.checkout_link : null);
 
 		// The assistant just pointed at the button — make it easy to find.
 		if (replyOffersHandoff(reply, data)) {
