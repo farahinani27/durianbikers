@@ -863,6 +863,39 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     color: var(--db-chat-brand-ink);
 }
 
+/* Size buttons for the "This one" -> pick-a-size step. Same pill as the
+   chips, wrapped in a row under the prompt. */
+.db-chat-size-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.db-chat-size-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    padding: 8px 16px;
+    border: 1px solid var(--db-chat-brand);
+    border-radius: 999px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-brand-hover);
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 600;
+    line-height: 1.3;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
+}
+
+.db-chat-size-btn:hover,
+.db-chat-size-btn:focus-visible {
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+}
+
 /* Follow-up chips (guided product finder). Same .db-chat-chip button as the
    starter row above — only the container differs, because these live INSIDE
    the transcript, under the reply they belong to, rather than in the pinned

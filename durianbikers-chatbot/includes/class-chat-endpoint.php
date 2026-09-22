@@ -278,6 +278,19 @@ class DB_Chat_Chat_Endpoint {
 							return null === $value || is_scalar( $value );
 						},
 					),
+					/*
+					 * A tapped size button from the size picker: { product_id,
+					 * variation_id }. Both are claims from the browser and are
+					 * re-validated (dry_run_validate_write) before anything is
+					 * staged — see handle_size_pick().
+					 */
+					'size_pick' => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_array( $value );
+						},
+					),
 					'pending' => array(
 						'required'          => false,
 						'default'           => null,
@@ -858,6 +871,40 @@ class DB_Chat_Chat_Endpoint {
 
 			if ( null !== $response_data ) {
 				return $this->finalize_response( $response_data, $conversation, false );
+			}
+		}
+
+		/*
+		 * DETERMINISTIC PRODUCT PICK -> SIZE -> ADD CONFIRM. Tapping a card's
+		 * "This one" (pick), and the size buttons that follow (size_pick), drive
+		 * straight to an add-to-cart confirm in CODE — no AI wording, and no
+		 * re-shown "This one" card for the product just chosen. A variable
+		 * product offers its in-stock sizes as buttons; a simple product (or one
+		 * size left) goes straight to the Yes/No add confirm. Needs a
+		 * conversation (the proposal staging key), so it is inert unless handoff
+		 * is on; the lookup engine handles `pick` its own way, so this is
+		 * AI-engine only. Any handler returning null (product gone, nothing in
+		 * stock, dry-run fails) falls through to the AI to explain.
+		 */
+		if ( null !== $conversation && DB_Chat_Plugin::ENGINE_LOOKUP !== db_chat()->get_engine() ) {
+			$size_pick = $this->read_size_pick( $request );
+
+			if ( null !== $size_pick ) {
+				$response_data = $this->handle_size_pick( $size_pick, (string) $conversation['public_id'] );
+
+				if ( null !== $response_data ) {
+					return $this->finalize_response( $response_data, $conversation, false );
+				}
+			}
+
+			$pick_id = self::pick_id( $request->get_param( 'pick' ) );
+
+			if ( $pick_id > 0 ) {
+				$response_data = $this->handle_product_pick( $pick_id, (string) $conversation['public_id'] );
+
+				if ( null !== $response_data ) {
+					return $this->finalize_response( $response_data, $conversation, false );
+				}
 			}
 		}
 
@@ -2401,6 +2448,128 @@ class DB_Chat_Chat_Endpoint {
 			'qty'          => $quantity,
 			'price'        => $details['price'],
 			'proposal_id'  => $proposal_id,
+		);
+	}
+
+	/**
+	 * Deterministic "This one" pick. A variable product with more than one
+	 * in-stock size returns a size picker (tappable buttons); a simple product,
+	 * or one with a single size left, goes straight to the add-to-cart confirm.
+	 * Returns null — deferring to the AI — when the product is gone, nothing is
+	 * in stock, or the dry run fails, so the model can explain.
+	 *
+	 * @param int    $product_id             The picked product.
+	 * @param string $conversation_public_id Proposal staging key.
+	 * @return array<string,mixed>|null finalize_response()-shaped data, or null.
+	 */
+	private function handle_product_pick( $product_id, $conversation_public_id ) {
+		if ( ! function_exists( 'wc_get_product' ) ) {
+			return null;
+		}
+
+		$product = wc_get_product( (int) $product_id );
+
+		if ( ! $product instanceof WC_Product
+			|| 'publish' !== $product->get_status()
+			|| ! $product->is_purchasable() ) {
+			return null;
+		}
+
+		$writer = new DB_Chat_Cart_Writer();
+
+		if ( $product instanceof WC_Product_Variable ) {
+			$variations = array_values( $writer->in_stock_variations( (int) $product_id ) );
+
+			if ( count( $variations ) > 1 ) {
+				return array(
+					'reply'       => __( 'Which size would you like?', 'durianbikers-chatbot' ),
+					'products'    => array(),
+					'pages'       => array(),
+					'size_picker' => array(
+						'product_id' => (int) $product_id,
+						'name'       => wp_strip_all_tags( (string) $product->get_name() ),
+						'sizes'      => $variations,
+					),
+				);
+			}
+
+			if ( 1 === count( $variations ) ) {
+				return $this->pick_proposal( $conversation_public_id, $writer, (int) $product_id, (int) $variations[0]['variation_id'] );
+			}
+
+			return null; // Nothing in stock — let the AI say so.
+		}
+
+		return $this->pick_proposal( $conversation_public_id, $writer, (int) $product_id, 0 );
+	}
+
+	/**
+	 * Read a tapped size button, if present and well-formed.
+	 *
+	 * @param WP_REST_Request $request The request.
+	 * @return array{product_id:int,variation_id:int}|null Null when absent/invalid.
+	 */
+	private function read_size_pick( $request ) {
+		$raw = $request->get_param( 'size_pick' );
+
+		if ( ! is_array( $raw ) ) {
+			return null;
+		}
+
+		$product_id   = isset( $raw['product_id'] ) ? absint( $raw['product_id'] ) : 0;
+		$variation_id = isset( $raw['variation_id'] ) ? absint( $raw['variation_id'] ) : 0;
+
+		if ( $product_id < 1 || $variation_id < 1 ) {
+			return null;
+		}
+
+		return array(
+			'product_id'   => $product_id,
+			'variation_id' => $variation_id,
+		);
+	}
+
+	/**
+	 * A tapped size: go straight to the add-to-cart confirm for that variation.
+	 *
+	 * @param array{product_id:int,variation_id:int} $size_pick The tapped size.
+	 * @param string                                 $conversation_public_id Staging key.
+	 * @return array<string,mixed>|null finalize_response()-shaped data, or null.
+	 */
+	private function handle_size_pick( $size_pick, $conversation_public_id ) {
+		return $this->pick_proposal(
+			$conversation_public_id,
+			new DB_Chat_Cart_Writer(),
+			(int) $size_pick['product_id'],
+			(int) $size_pick['variation_id']
+		);
+	}
+
+	/**
+	 * Dry-run, stage an add proposal, and shape it as a confirm-card response.
+	 * Returns null when the dry run fails, so the AI can explain the reason
+	 * (out of stock, not purchasable, etc.) instead of a dead confirm card.
+	 *
+	 * @param string              $conversation_public_id Staging key.
+	 * @param DB_Chat_Cart_Writer $writer                 Cart writer.
+	 * @param int                 $product_id             Parent product.
+	 * @param int                 $variation_id           Variation, 0 for simple.
+	 * @return array<string,mixed>|null finalize_response()-shaped data, or null.
+	 */
+	private function pick_proposal( $conversation_public_id, DB_Chat_Cart_Writer $writer, $product_id, $variation_id ) {
+		$check = $this->dry_run_validate_write( $product_id, $variation_id, 1 );
+
+		if ( is_wp_error( $check ) ) {
+			return null;
+		}
+
+		$proposal = $this->stage_proposal( $conversation_public_id, $writer, 'add', $product_id, $variation_id, 1 );
+
+		return array(
+			'reply'    => __( 'Want me to add this to your cart?', 'durianbikers-chatbot' ),
+			'products' => array(),
+			'pages'    => array(),
+			'proposal' => $proposal,
 		);
 	}
 

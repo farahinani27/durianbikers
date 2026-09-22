@@ -1378,6 +1378,62 @@ products.
 	}
 
 	/**
+	 * Size picker: tappable size buttons for a variable product the customer
+	 * chose with "This one". Tapping one routes a structured `size_pick` signal
+	 * (product_id + variation_id) that the server turns into an add-to-cart
+	 * confirm. Rendered via `el()`/textContent only; never persisted.
+	 */
+	function addSizePicker(sizePicker) {
+		if (!sizePicker || typeof sizePicker !== 'object') {
+			return;
+		}
+		var productId = parseInt(sizePicker.product_id, 10);
+		var sizes = Array.isArray(sizePicker.sizes) ? sizePicker.sizes : null;
+		if (!productId || !sizes || !sizes.length) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+		var box = el('div', 'db-chat-escalate');
+
+		var name = typeof sizePicker.name === 'string' ? sizePicker.name.trim() : '';
+		if (name) {
+			box.appendChild(el('p', 'db-chat-escalate-text', name));
+		}
+
+		var actions = el('div', 'db-chat-size-actions');
+		var count = 0;
+		sizes.forEach(function (s) {
+			if (count >= 12 || !s || typeof s !== 'object') {
+				return;
+			}
+			var vid = parseInt(s.variation_id, 10);
+			var label = typeof s.label === 'string' ? s.label.trim() : '';
+			if (!vid || !label) {
+				return;
+			}
+			var btn = el('button', 'db-chat-size-btn', label);
+			btn.type = 'button';
+			btn.addEventListener('click', function () {
+				send(label, { size_pick: { product_id: productId, variation_id: vid } });
+			});
+			actions.appendChild(btn);
+			count += 1;
+		});
+		if (!count) {
+			return;
+		}
+
+		box.appendChild(actions);
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+	}
+
+	/**
 	 * PHASE 3 CHECKOUT — response keys `checkout` / `checkout_link` (see
 	 * task-7-brief). Nothing here is persisted to sessionStorage: `checkout`,
 	 * `checkout_link`, the form field values and `address_line` never touch
@@ -3015,6 +3071,10 @@ products.
 		if (extra && extra.pick) {
 			body.pick = extra.pick;
 		}
+		// A tapped size button: routes to the deterministic add-to-cart confirm.
+		if (extra && extra.size_pick) {
+			body.size_pick = extra.size_pick;
+		}
 		// The confirm-card decision. The server re-checks the staged proposal
 		// and the literal message before any write — this is only a routing
 		// signal, never trusted for the mutation itself.
@@ -3118,7 +3178,7 @@ products.
 		// next send whatever it is.
 		if (awaitingCheckoutConfirm) {
 			awaitingCheckoutConfirm = false;
-			if (!extra || (!extra.pick && !extra.cart_confirm && !extra.checkout_details && !extra.checkout_confirm_address && !extra.checkout_confirm)) {
+			if (!extra || (!extra.pick && !extra.cart_confirm && !extra.checkout_details && !extra.checkout_confirm_address && !extra.checkout_confirm && !extra.size_pick)) {
 				extra = extra || {};
 				extra.checkout_confirm_context = true;
 			}
@@ -3126,10 +3186,13 @@ products.
 
 		lastAttempt = message;
 		lastAttemptExtra = null;
-		if (extra && (extra.pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address || extra.checkout_confirm || extra.checkout_confirm_context)) {
+		if (extra && (extra.pick || extra.size_pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address || extra.checkout_confirm || extra.checkout_confirm_context)) {
 			lastAttemptExtra = {};
 			if (extra.pick) {
 				lastAttemptExtra.pick = extra.pick;
+			}
+			if (extra.size_pick) {
+				lastAttemptExtra.size_pick = extra.size_pick;
 			}
 			if (extra.cart_confirm) {
 				lastAttemptExtra.cart_confirm = extra.cart_confirm;
@@ -3312,6 +3375,7 @@ products.
 		// I'm about to change next" reads in the right order when a commit
 		// and a fresh propose land in the same reply.
 		addCartSummary(data ? data.cart : null);
+		addSizePicker(data ? data.size_picker : null);
 		addCartConfirm(data ? data.proposal : null);
 
 		// Phase 3 checkout (RULING A response-key shapes — see
