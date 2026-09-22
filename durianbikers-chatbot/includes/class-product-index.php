@@ -755,10 +755,16 @@ class DB_Chat_Product_Index {
 				}
 				$label = isset( $v['label'] ) ? wp_strip_all_tags( (string) $v['label'] ) : '';
 				$out['variations'][] = array(
-					'label'    => $label,
-					'size'     => $label, // the variation label IS the size/option wording
-					'price'    => isset( $v['price'] ) ? (string) $v['price'] : '',
-					'in_stock' => true,
+					// The model needs this id to add a sized item: propose_cart_change
+					// takes variation_id, and its schema says it comes "from
+					// get_product". Without it here the model had no id to pass, so
+					// every sized add was rejected at validation. Server-validated
+					// on the way back in, so exposing it is safe.
+					'variation_id' => isset( $v['variation_id'] ) ? (int) $v['variation_id'] : 0,
+					'label'        => $label,
+					'size'         => $label, // the variation label IS the size/option wording
+					'price'        => isset( $v['price'] ) ? (string) $v['price'] : '',
+					'in_stock'     => true,
 				);
 			}
 			// Simple (non-variable) product: no variations — surface the base price as one entry.

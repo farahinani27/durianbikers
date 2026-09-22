@@ -129,8 +129,23 @@ class DB_Chat_Cart_Writer {
 			return $this->failure( 'db_chat_no_cart', 'Your cart is not available right now.' );
 		}
 
+		// A variable product needs its chosen attributes passed as the 4th
+		// argument — WooCommerce refuses the add (returns false, "please choose
+		// product options") when only the variation id is given and the
+		// attribute values are left for it to guess. Rebuild them from the
+		// variation object itself; never from anything the caller supplied.
+		$variation_attrs = array();
+
+		if ( $variation_id > 0 ) {
+			$variation_obj = wc_get_product( $variation_id );
+
+			if ( $variation_obj instanceof WC_Product_Variation ) {
+				$variation_attrs = $variation_obj->get_variation_attributes();
+			}
+		}
+
 		try {
-			$added = WC()->cart->add_to_cart( $product_id, $quantity, $variation_id );
+			$added = WC()->cart->add_to_cart( $product_id, $quantity, $variation_id, $variation_attrs );
 		} catch ( Throwable $e ) {
 			DB_Chat_Plugin::log_error( 'Cart add failed: ' . $e->getMessage() );
 
