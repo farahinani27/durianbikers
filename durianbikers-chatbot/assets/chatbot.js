@@ -239,6 +239,9 @@ products.
 	var history = [];
 	var isOpen = false;
 	var isSending = false;
+	// True while a checkout SUMMARY is on screen waiting to be confirmed, so a
+	// plain typed reply can be routed to the deterministic checkout confirm.
+	var awaitingCheckoutConfirm = false;
 	var lastAttempt = '';
 	var lastFocused = null;
 	var savedScrollY = 0;
@@ -1621,7 +1624,7 @@ products.
 	 * tap-confirm, and/or the summary card. `checkout_link` is handled
 	 * separately by `addCheckoutLink()`.
 	 */
-	function addCheckoutStep(checkout) {
+	function addCheckoutStep(checkout, hasLink) {
 		if (!checkout || typeof checkout !== 'object') {
 			return;
 		}
@@ -1636,6 +1639,38 @@ products.
 			}
 		}
 		addCheckoutSummary(checkout.summary);
+
+		// Address is complete and we are not already at the payment link: this
+		// is the confirm step. Offer an explicit button, and flag that a typed
+		// reply now should be read as the confirmation.
+		if (checkout.needs !== 'address' && !hasLink && checkout.summary) {
+			addCheckoutConfirmButton();
+			awaitingCheckoutConfirm = true;
+		}
+	}
+
+	/**
+	 * The checkout summary's explicit confirm control. Tapping it proceeds to
+	 * payment deterministically (server returns the checkout link); the server
+	 * never creates an order or takes payment — the customer completes that on
+	 * the WooCommerce checkout page.
+	 */
+	function addCheckoutConfirmButton() {
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var btn = el('button', 'db-chat-escalate-btn', 'Confirm & proceed to payment');
+		btn.type = 'button';
+		btn.addEventListener('click', function () {
+			awaitingCheckoutConfirm = false;
+			send('Yes, everything is correct', { checkout_confirm: true });
+		});
+
+		body.appendChild(btn);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
 	}
 
 	/**
@@ -2953,6 +2988,16 @@ products.
 		if (extra && extra.checkout_confirm_address) {
 			body.checkout_confirm_address = extra.checkout_confirm_address;
 		}
+		// Checkout confirmation: the summary card's "Confirm & proceed to
+		// payment" button, or the flag the widget adds when the customer types
+		// an answer while the summary is on screen. The server gates the actual
+		// proceed on the real checkout state — this is only a routing signal.
+		if (extra && extra.checkout_confirm) {
+			body.checkout_confirm = true;
+		}
+		if (extra && extra.checkout_confirm_context) {
+			body.checkout_confirm_context = true;
+		}
 		// Only ever present once GET /session has round-tripped one back
 		// (i.e. only when handoffEnabled). Off in production: this field is
 		// simply absent, same request body as before this feature existed.
@@ -3022,9 +3067,22 @@ products.
 			return;
 		}
 
+		// If the checkout summary is awaiting confirmation and the customer
+		// typed a plain reply (rather than tapping a card button), mark this
+		// text as that confirmation so the server can proceed to payment
+		// deterministically when it reads as a yes. One-shot: cleared on the
+		// next send whatever it is.
+		if (awaitingCheckoutConfirm) {
+			awaitingCheckoutConfirm = false;
+			if (!extra || (!extra.pick && !extra.cart_confirm && !extra.checkout_details && !extra.checkout_confirm_address && !extra.checkout_confirm)) {
+				extra = extra || {};
+				extra.checkout_confirm_context = true;
+			}
+		}
+
 		lastAttempt = message;
 		lastAttemptExtra = null;
-		if (extra && (extra.pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address)) {
+		if (extra && (extra.pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address || extra.checkout_confirm || extra.checkout_confirm_context)) {
 			lastAttemptExtra = {};
 			if (extra.pick) {
 				lastAttemptExtra.pick = extra.pick;
@@ -3037,6 +3095,12 @@ products.
 			}
 			if (extra.checkout_confirm_address) {
 				lastAttemptExtra.checkout_confirm_address = extra.checkout_confirm_address;
+			}
+			if (extra.checkout_confirm) {
+				lastAttemptExtra.checkout_confirm = true;
+			}
+			if (extra.checkout_confirm_context) {
+				lastAttemptExtra.checkout_confirm_context = true;
 			}
 		}
 		var sentExtra = lastAttemptExtra;
@@ -3210,7 +3274,7 @@ products.
 		// task-7-brief). Neither key is ever written to `transcript` or
 		// `saveState`: a stale checkout step/summary must not survive a
 		// reload, same rule as `proposal`/`cart` above.
-		addCheckoutStep(data ? data.checkout : null);
+		addCheckoutStep(data ? data.checkout : null, !!(data && data.checkout_link));
 		addCheckoutLink(data ? data.checkout_link : null);
 
 		// The assistant just pointed at the button — make it easy to find.

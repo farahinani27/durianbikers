@@ -322,6 +322,29 @@ class DB_Chat_Chat_Endpoint {
 							return null === $value || is_bool( $value ) || is_array( $value );
 						},
 					),
+					/*
+					 * Checkout confirmation. `checkout_confirm` is the summary
+					 * card's "Confirm & proceed to payment" button; the customer
+					 * confirming the summary in their own words instead sends
+					 * `checkout_confirm_context` alongside their text, which is
+					 * only honoured when that text reads as an affirmative. Both
+					 * gate a deterministic payment-link reply — see
+					 * handle_checkout_confirmation().
+					 */
+					'checkout_confirm'         => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_bool( $value );
+						},
+					),
+					'checkout_confirm_context' => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_bool( $value );
+						},
+					),
 				),
 			)
 		);
@@ -815,6 +838,27 @@ class DB_Chat_Chat_Endpoint {
 			);
 
 			return $this->finalize_response( $response_data, $conversation, false );
+		}
+
+		/*
+		 * DETERMINISTIC CHECKOUT CONFIRM. When the customer confirms the checkout
+		 * summary — the "Confirm & proceed to payment" button (checkout_confirm),
+		 * or an affirmative typed while the summary is on screen
+		 * (checkout_confirm_context) — hand back the WooCommerce payment link in
+		 * CODE, never through the model. Asked to confirm, the model restates the
+		 * order total; the grounding guard then discards that reply as an
+		 * ungrounded price and shows the safe hedge line, so every "yes" looped.
+		 * This stops at wc_get_checkout_url(): it never creates an order, takes
+		 * payment, or touches the gateway. handle_checkout_confirmation() returns
+		 * null when the address is incomplete or the cart is empty, so those fall
+		 * through to the AI, which asks for what is missing.
+		 */
+		if ( $this->read_checkout_confirm( $request, $message ) ) {
+			$response_data = $this->handle_checkout_confirmation();
+
+			if ( null !== $response_data ) {
+				return $this->finalize_response( $response_data, $conversation, false );
+			}
 		}
 
 		/*
@@ -1867,6 +1911,80 @@ class DB_Chat_Chat_Endpoint {
 		return array(
 			'decision'    => $decision,
 			'proposal_id' => $proposal_id,
+		);
+	}
+
+	/**
+	 * Is this turn a confirmation of the checkout summary? True for the summary
+	 * card's explicit "Confirm & proceed to payment" button (checkout_confirm),
+	 * and for a plain affirmative the customer typed while the summary was on
+	 * screen (checkout_confirm_context, set by the widget, AND the message
+	 * reading as a yes and not a refusal). Both are browser claims; the actual
+	 * proceed is gated again on the real checkout state in
+	 * handle_checkout_confirmation().
+	 *
+	 * @param WP_REST_Request $request The request.
+	 * @param string          $message The customer's literal message this turn.
+	 * @return bool
+	 */
+	private function read_checkout_confirm( $request, $message ) {
+		if ( true === $request->get_param( 'checkout_confirm' ) ) {
+			return true;
+		}
+
+		if ( true === $request->get_param( 'checkout_confirm_context' ) ) {
+			return DB_Chat_Confirm::is_affirmative( (string) $message )
+				&& ! DB_Chat_Confirm::is_refusal( (string) $message );
+		}
+
+		return false;
+	}
+
+	/**
+	 * Deterministic checkout confirmation: hand back the WooCommerce payment
+	 * link, built in code, never by the model. Returns null — deferring to the
+	 * AI — when there is nothing to check out or the required address is not yet
+	 * complete, so the model can ask for what is missing.
+	 *
+	 * SAFETY: the flow stops at wc_get_checkout_url(). Nothing here creates an
+	 * order, applies a coupon, chooses or submits payment, or touches the
+	 * gateway. The total shown is WooCommerce's own cart total, not a model
+	 * claim, so no grounding check is needed.
+	 *
+	 * @return array<string,mixed>|null finalize_response()-shaped data, or null.
+	 */
+	private function handle_checkout_confirmation() {
+		$cart = ( new DB_Chat_Cart_Writer() )->contents();
+
+		if ( empty( $cart['count'] ) ) {
+			return null; // Nothing to check out — let the AI handle it.
+		}
+
+		$writer = new DB_Chat_Checkout_Writer();
+		$status = $writer->has_required_for_checkout();
+
+		if ( empty( $status['ok'] ) ) {
+			return null; // Address incomplete — the AI asks for what is missing.
+		}
+
+		$url = function_exists( 'wc_get_checkout_url' ) ? (string) wc_get_checkout_url() : '';
+
+		if ( '' === $url ) {
+			return null;
+		}
+
+		$this->checkout_link_url = $url;
+
+		return array(
+			'reply'         => __( "Great — everything's confirmed. Tap 'Proceed to payment' below to complete your order securely on our checkout page.", 'durianbikers-chatbot' ),
+			'products'      => array(),
+			'pages'         => array(),
+			'checkout'      => array(
+				'mode'    => is_user_logged_in() ? 'logged_in' : 'guest',
+				'needs'   => '',
+				'summary' => $writer->summary(),
+			),
+			'checkout_link' => array( 'url' => $url ),
 		);
 	}
 
