@@ -217,6 +217,8 @@ products.
 	// ticking with the panel open and nobody replying, so a customer who
 	// opens the chat and walks away does not poll forever.
 	var CONVERSATION_ID_KEY = 'dbchat_cid';
+	// Per-viewer memory of whether the "Contact & help" extras are expanded.
+	var EXTRAS_KEY = 'dbchat_extras_open';
 	var POLL_IDLE_MS = 10 * 60 * 1000;
 	// Basic shape check for the contact-step email field. Deliberately loose
 	// (matches the backend's sanitize_email() intent, not full RFC 5322) —
@@ -2144,14 +2146,56 @@ products.
 		});
 
 		composer.appendChild(form);
+
+		// Contextual "Want me to bring in a team member?" — the bot offers it
+		// mid-conversation, so it stays OUTSIDE the collapsible and is never
+		// hidden when the bot raises it.
+		composer.appendChild(buildBotHandoffRow());
+
+		// COLLAPSIBLE CONTACT & HELP. The WhatsApp link and the staff "Talk to a
+		// human" button are persistent but space-hungry — together they ate
+		// roughly half the panel. Tuck them behind a toggle (collapsed by
+		// default) so the conversation gets the room. The bot's own handoff
+		// offer above, plus this toggle, keep the escape hatch discoverable.
+		var extras = el('div', 'db-chat-extras');
+		extras.id = 'db-chat-extras';
 		// Escape hatch to a human, above the AI disclaimer. Quiet on purpose:
 		// it must not compete with the composer for attention.
-		composer.appendChild(buildHandoffRow());
-		composer.appendChild(buildBotHandoffRow());
+		extras.appendChild(buildHandoffRow());
 		// Staff-inbox "Talk to a human" control — a second, unrelated escape
 		// hatch, hidden unless handoffEnabled. See HUMAN HANDOFF (STAFF INBOX)
 		// above for why it is safe to always build this and just keep it hidden.
-		composer.appendChild(buildHumanHandoffRow());
+		extras.appendChild(buildHumanHandoffRow());
+
+		var toggle = el('button', 'db-chat-extras-toggle');
+		toggle.type = 'button';
+		toggle.setAttribute('aria-controls', 'db-chat-extras');
+		toggle.setAttribute('aria-expanded', 'false');
+		toggle.appendChild(el('span', 'db-chat-extras-toggle-label', 'Contact & help'));
+		toggle.appendChild(el('span', 'db-chat-extras-toggle-chevron', '▾'));
+		toggle.addEventListener('click', function () {
+			var open = composer.classList.toggle('db-chat-extras-open');
+			toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+			try {
+				window.localStorage.setItem(EXTRAS_KEY, open ? '1' : '0');
+			} catch (e) { /* storage unavailable: this tab only */ }
+			if (open) {
+				scrollToEnd();
+			}
+		});
+
+		// Restore the viewer's last choice; collapsed by default.
+		var startOpen = false;
+		try {
+			startOpen = window.localStorage.getItem(EXTRAS_KEY) === '1';
+		} catch (e) { /* storage unavailable: default collapsed */ }
+		if (startOpen) {
+			composer.classList.add('db-chat-extras-open');
+			toggle.setAttribute('aria-expanded', 'true');
+		}
+
+		composer.appendChild(toggle);
+		composer.appendChild(extras);
 		composer.appendChild(buildFootnote());
 
 		els.input = input;
