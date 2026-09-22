@@ -942,23 +942,26 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
 .db-chat-extras-toggle {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 5px;
     width: fit-content;
     margin: 8px auto 0;
-    padding: 4px 10px;
-    border: none;
-    border-radius: 12px;
-    background: transparent;
-    color: var(--db-chat-ink-muted);
+    padding: 5px 14px;
+    border: 1px solid var(--db-chat-brand);
+    border-radius: 999px;
+    background: var(--db-chat-surface);
+    color: var(--db-chat-brand-hover);
     font-family: inherit;
     font-size: var(--db-chat-size-caption);
+    font-weight: 600;
     cursor: pointer;
+    transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 .db-chat-extras-toggle:hover,
 .db-chat-extras-toggle:focus-visible {
-    color: var(--db-chat-ink);
-    background: var(--db-chat-surface-alt);
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+    border-color: var(--db-chat-brand);
 }
 
 .db-chat-extras-toggle-chevron {
