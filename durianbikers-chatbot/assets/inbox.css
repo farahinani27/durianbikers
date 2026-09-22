@@ -22,13 +22,87 @@ hyphen-separated, no BEM, no build step.
 
 /* -------------------------- left: conversation list -------------------------- */
 
-.db-chat-inbox-list {
+.db-chat-inbox-left {
 	flex: 0 0 320px;
+	max-width: 320px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+/* Bulk toolbar above the list — rendered outside the list so the 5s poll
+   never wipes it. */
+.db-chat-inbox-toolbar {
+	display: flex;
+	align-items: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	min-height: 30px;
+	padding: 6px 8px;
+	background: #fff;
+	border: 1px solid #dcdcde;
+	border-radius: 4px;
+}
+
+.db-chat-inbox-toolbar:empty {
+	display: none;
+}
+
+.db-chat-inbox-selectall {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 12px;
+	color: #1d2327;
+	white-space: nowrap;
+}
+
+.db-chat-inbox-toolbar-count {
+	font-size: 12px;
+	color: #646970;
+}
+
+.db-chat-inbox-toolbar-actions {
+	display: inline-flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-left: auto;
+}
+
+.db-chat-inbox-bulk--danger {
+	color: #b32d2e;
+	border-color: #b32d2e;
+}
+
+.db-chat-inbox-bulk--danger:hover:not( :disabled ),
+.db-chat-inbox-bulk--danger:focus:not( :disabled ) {
+	background: #b32d2e;
+	border-color: #b32d2e;
+	color: #fff;
+}
+
+.db-chat-inbox-list {
+	flex: 1 1 auto;
+	width: 100%;
 	max-height: 70vh;
 	overflow-y: auto;
 	background: #fff;
 	border: 1px solid #dcdcde;
 	border-radius: 4px;
+}
+
+/* Per-row select checkbox. */
+.db-chat-inbox-check {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	padding-top: 2px;
+	cursor: pointer;
+}
+
+.db-chat-inbox-check-input {
+	margin: 0;
+	cursor: pointer;
 }
 
 .db-chat-inbox-empty,
@@ -253,6 +327,12 @@ hyphen-separated, no BEM, no build step.
 @media (max-width: 700px) {
 	.db-chat-inbox {
 		flex-direction: column;
+	}
+
+	.db-chat-inbox-left {
+		flex: 1 1 auto;
+		max-width: none;
+		width: 100%;
 	}
 
 	.db-chat-inbox-list {

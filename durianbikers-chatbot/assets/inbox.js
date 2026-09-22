@@ -20,6 +20,12 @@ the list auto-refresh. The open conversation's transcript is ALSO polled
 every ~5s (see pollOpenConversation()): it re-renders and auto-scrolls only
 when the newest message id actually changed, so an agent mid-read (or
 mid-reply, in the textarea) isn't interrupted when nothing new arrived.
+
+Bulk actions: every list row has a checkbox, and a toolbar above the list
+(rendered once in boot(), OUTSIDE the list so the 5s re-render never wipes
+it) offers Select all / Resolve selected / Delete selected. The selection
+lives in state.checked so it survives each poll. There is no bulk endpoint:
+runBulk() calls /resolve or /delete once per id, strictly one at a time.
 */
 
 ( function () {
@@ -43,6 +49,13 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 		conversations: [],
 		selectedId: null,
 		messages: [],
+		// Bulk-selection checkboxes: conversation id (string) → true. Kept
+		// here, not in the DOM, so a tick survives the 5s list re-render.
+		checked: {},
+		// True while runBulk() is working through its ids; bulkProgress is
+		// the "Deleting 3/7…" text shown in place of the selected count.
+		bulkBusy: false,
+		bulkProgress: '',
 	};
 
 	// Newest message id we've actually rendered, keyed by conversation id.
@@ -59,6 +72,7 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	var mount = null;
 	var listEl = null;
 	var detailEl = null;
+	var toolbarEl = null;
 	var pollTimer = null;
 
 	// Per-conversation status seen on the previous /list poll (id → status).
@@ -173,6 +187,7 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	function renderList() {
 		if ( 0 === state.conversations.length ) {
 			listEl.innerHTML = '<div class="db-chat-inbox-empty">No conversations yet.</div>';
+			renderToolbar();
 			return;
 		}
 
@@ -181,8 +196,13 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 				var status = row.status || 'bot';
 				var label = STATUS_LABELS[ status ] || status;
 				var active = String( row.id ) === String( state.selectedId ) ? ' is-active' : '';
+				var isChecked = state.checked[ String( row.id ) ] ? ' checked' : '';
+				var boxDisabled = state.bulkBusy ? ' disabled' : '';
 				return (
 					'<div class="db-chat-inbox-row' + active + '" data-id="' + esc( row.id ) + '">' +
+					'<label class="db-chat-inbox-check">' +
+					'<input type="checkbox" class="db-chat-inbox-check-input" data-id="' + esc( row.id ) + '" aria-label="' + esc( 'Select conversation #' + row.id ) + '"' + isChecked + boxDisabled + '>' +
+					'</label>' +
 					'<span class="db-chat-inbox-badge db-chat-inbox-badge--' + esc( status ) + '">' + esc( label ) + '</span>' +
 					'<div class="db-chat-inbox-row-main">' +
 					'<div class="db-chat-inbox-row-contact">' + esc( lastPreview( row ) ) + '</div>' +
@@ -194,6 +214,7 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 			.join( '' );
 
 		listEl.innerHTML = html;
+		renderToolbar();
 	}
 
 	function buildBubblesHtml() {
@@ -460,11 +481,157 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 	}
 
 	function onListClick( e ) {
+		// A checkbox tick is handled by onListChange; don't also open the row.
+		if ( e.target.closest( '.db-chat-inbox-check' ) ) {
+			return;
+		}
 		var row = e.target.closest( '.db-chat-inbox-row' );
 		if ( ! row ) {
 			return;
 		}
 		selectConversation( row.getAttribute( 'data-id' ) );
+	}
+
+	/** A row checkbox toggled: record it in state.checked (survives the poll). */
+	function onListChange( e ) {
+		var box = e.target.closest( '.db-chat-inbox-check-input' );
+		if ( ! box ) {
+			return;
+		}
+		var id = String( box.getAttribute( 'data-id' ) );
+		if ( box.checked ) {
+			state.checked[ id ] = true;
+		} else {
+			delete state.checked[ id ];
+		}
+		renderToolbar();
+	}
+
+	/** The "Select all" checkbox: tick/untick every conversation in the list. */
+	function onToolbarChange( e ) {
+		if ( ! e.target.closest( '.db-chat-inbox-selectall-input' ) || state.bulkBusy ) {
+			return;
+		}
+		if ( e.target.checked ) {
+			state.conversations.forEach( function ( row ) {
+				state.checked[ String( row.id ) ] = true;
+			} );
+		} else {
+			state.checked = {};
+		}
+		renderList();
+	}
+
+	/** Resolve selected / Delete selected. */
+	function onToolbarClick( e ) {
+		var btn = e.target.closest( '.db-chat-inbox-bulk' );
+		if ( ! btn || state.bulkBusy ) {
+			return;
+		}
+		var action = btn.getAttribute( 'data-bulk' );
+		var ids = selectedIds();
+		if ( ! ids.length ) {
+			return;
+		}
+		if ( 'delete' === action &&
+			! window.confirm( 'Delete ' + ids.length + ' conversation' + ( ids.length > 1 ? 's' : '' ) + ' permanently? This cannot be undone.' ) ) {
+			return;
+		}
+		runBulk( action, ids );
+	}
+
+	/** Checked ids that are still in the current (possibly filtered) list. */
+	function selectedIds() {
+		var present = {};
+		state.conversations.forEach( function ( row ) {
+			present[ String( row.id ) ] = true;
+		} );
+		return Object.keys( state.checked ).filter( function ( id ) {
+			return present[ id ];
+		} );
+	}
+
+	/** Toolbar above the list: Select all, count/progress, bulk buttons.
+	 *  Rendered into toolbarEl (OUTSIDE the list) so the 5s poll never wipes it. */
+	function renderToolbar() {
+		if ( ! toolbarEl ) {
+			return;
+		}
+
+		if ( state.bulkBusy ) {
+			toolbarEl.innerHTML =
+				'<span class="db-chat-inbox-toolbar-count">' + esc( state.bulkProgress || 'Working…' ) + '</span>';
+			return;
+		}
+
+		var total = state.conversations.length;
+		var n = selectedIds().length;
+		var allChecked = total > 0 && n === total;
+		var disabled = n ? '' : ' disabled';
+
+		toolbarEl.innerHTML =
+			'<label class="db-chat-inbox-selectall">' +
+			'<input type="checkbox" class="db-chat-inbox-selectall-input"' + ( allChecked ? ' checked' : '' ) + ( total ? '' : ' disabled' ) + '> Select all' +
+			'</label>' +
+			'<span class="db-chat-inbox-toolbar-count">' + ( n ? n + ' selected' : '' ) + '</span>' +
+			'<span class="db-chat-inbox-toolbar-actions">' +
+			'<button type="button" class="button db-chat-inbox-bulk" data-bulk="resolve"' + disabled + '>Resolve selected</button>' +
+			'<button type="button" class="button db-chat-inbox-bulk db-chat-inbox-bulk--danger" data-bulk="delete"' + disabled + '>Delete selected</button>' +
+			'</span>';
+	}
+
+	/** Apply a bulk action one id at a time (no bulk endpoint). Skips failures
+	 *  and reports the count at the end; clears the open pane if it was deleted. */
+	function runBulk( action, ids ) {
+		var isDelete = 'delete' === action;
+		var path = isDelete ? '/delete' : '/resolve';
+		var verb = isDelete ? 'Deleting' : 'Resolving';
+		var total = ids.length;
+		var failed = 0;
+
+		state.bulkBusy = true;
+		renderList(); // disables the row checkboxes and shows progress
+
+		function step( i ) {
+			if ( i >= total ) {
+				state.bulkBusy = false;
+				state.bulkProgress = '';
+				state.checked = {};
+				return loadList().then( function () {
+					if ( isDelete && state.selectedId && ! inList( state.selectedId ) ) {
+						state.selectedId = null;
+						renderDetail();
+					}
+					renderToolbar();
+					if ( failed ) {
+						window.alert( failed + ' of ' + total + ' could not be ' + ( isDelete ? 'deleted' : 'resolved' ) + '.' );
+					}
+				} );
+			}
+
+			state.bulkProgress = verb + ' ' + ( i + 1 ) + '/' + total + '…';
+			renderToolbar();
+
+			return api( path, { method: 'POST', body: JSON.stringify( { id: ids[ i ] } ) } )
+				.then( function () {
+					delete state.checked[ String( ids[ i ] ) ];
+				} )
+				.catch( function () {
+					failed += 1;
+				} )
+				.then( function () {
+					return step( i + 1 );
+				} );
+		}
+
+		step( 0 );
+	}
+
+	/** Is this conversation id still present in the loaded list? */
+	function inList( id ) {
+		return state.conversations.some( function ( row ) {
+			return String( row.id ) === String( id );
+		} );
 	}
 
 	function onDetailClick( e ) {
@@ -553,14 +720,21 @@ mid-reply, in the textarea) isn't interrupted when nothing new arrived.
 
 		mount.innerHTML =
 			'<div class="db-chat-inbox">' +
+			'<div class="db-chat-inbox-left">' +
+			'<div class="db-chat-inbox-toolbar" id="db-chat-inbox-toolbar"></div>' +
 			'<div class="db-chat-inbox-list" id="db-chat-inbox-list"></div>' +
+			'</div>' +
 			'<div class="db-chat-inbox-detail" id="db-chat-inbox-detail"></div>' +
 			'</div>';
 
 		listEl = document.getElementById( 'db-chat-inbox-list' );
 		detailEl = document.getElementById( 'db-chat-inbox-detail' );
+		toolbarEl = document.getElementById( 'db-chat-inbox-toolbar' );
 
 		listEl.addEventListener( 'click', onListClick );
+		listEl.addEventListener( 'change', onListChange );
+		toolbarEl.addEventListener( 'click', onToolbarClick );
+		toolbarEl.addEventListener( 'change', onToolbarChange );
 		detailEl.addEventListener( 'click', onDetailClick );
 		detailEl.addEventListener( 'submit', function ( e ) {
 			if ( e.target && e.target.classList.contains( 'db-chat-inbox-reply' ) ) {
