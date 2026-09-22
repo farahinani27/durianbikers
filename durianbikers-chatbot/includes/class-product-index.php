@@ -343,6 +343,17 @@ class DB_Chat_Product_Index {
 			}
 		}
 
+		/*
+		 * TYPO-TOLERANT FALLBACK. Everything above is exact / substring matching,
+		 * so a misspelling ("danisha" for "Danish") finds nothing. Before giving
+		 * up, look for products whose title carries a word a short edit away from
+		 * a distinctive word the customer typed, so the assistant can offer a
+		 * "did you mean …?" instead of a flat "not found".
+		 */
+		if ( empty( $products ) && '' !== $query ) {
+			$products = $this->fuzzy_products( $query );
+		}
+
 		$include_unavailable = (bool) apply_filters( 'db_chat_include_unavailable', true );
 
 		$results = array();
@@ -724,6 +735,119 @@ class DB_Chat_Product_Index {
 		);
 
 		return mb_strlen( $tokens[0] ) >= 3 ? $tokens[0] : '';
+	}
+
+	/**
+	 * Typo-tolerant lookup for a query the exact/substring search could not
+	 * answer. Keys on the DISTINCTIVE words the customer typed (dropping generic
+	 * category nouns like "helmet" and filler), fetches candidates by a prefix
+	 * of each such word (which catches trailing-character typos and plurals —
+	 * "danisha" -> "danis" still finds "Danish"), then keeps only candidates
+	 * whose title has a word within a small Levenshtein distance of one of those
+	 * words. Closest-first, capped. Runs only after the normal search fails, so
+	 * its cost is paid on the rare miss, not every search.
+	 *
+	 * @param string $query Raw customer query.
+	 * @return WC_Product[]
+	 */
+	private function fuzzy_products( $query ) {
+		if ( ! function_exists( 'wc_get_products' ) ) {
+			return array();
+		}
+
+		$tokens = preg_split( '/[^\p{L}\p{N}]+/u', mb_strtolower( (string) $query ), -1, PREG_SPLIT_NO_EMPTY );
+		$tokens = is_array( $tokens ) ? $tokens : array();
+
+		// Words that would match everything (category nouns) or nothing useful
+		// (filler) — never a distinctive key to correct against.
+		$generic = array(
+			'helmet', 'helmets', 'topi', 'tyre', 'tyres', 'tire', 'tires', 'tayar',
+			'part', 'parts', 'spare', 'gear', 'lube', 'oil', 'minyak', 'glove',
+			'gloves', 'jacket', 'pad', 'pads', 'brake', 'brakes', 'chain', 'visor',
+			'nak', 'beli', 'saya', 'kita', 'aku', 'the', 'for', 'and', 'dengan',
+			'untuk', 'yang', 'ada', 'cari', 'boleh',
+		);
+
+		$keys = array();
+
+		foreach ( $tokens as $t ) {
+			if ( mb_strlen( $t ) >= 4 && ! in_array( $t, $generic, true ) ) {
+				$keys[ $t ] = true;
+			}
+		}
+
+		$keys = array_keys( $keys );
+
+		if ( empty( $keys ) ) {
+			return array();
+		}
+
+		// Candidate fetch: a prefix of each distinctive word.
+		$candidates = array();
+
+		foreach ( $keys as $key ) {
+			$prefix = mb_substr( $key, 0, max( 4, mb_strlen( $key ) - 2 ) );
+
+			foreach ( $this->run_query( $prefix, '', '', false ) as $p ) {
+				if ( $p instanceof WC_Product ) {
+					$candidates[ $p->get_id() ] = $p;
+				}
+			}
+
+			if ( count( $candidates ) >= 80 ) {
+				break;
+			}
+		}
+
+		if ( empty( $candidates ) ) {
+			return array();
+		}
+
+		$scored = array();
+
+		foreach ( $candidates as $product ) {
+			$words = preg_split( '/[^\p{L}\p{N}]+/u', mb_strtolower( (string) $product->get_name() ), -1, PREG_SPLIT_NO_EMPTY );
+			$words = is_array( $words ) ? $words : array();
+
+			$best = null;
+
+			foreach ( $keys as $key ) {
+				$tol = mb_strlen( $key ) >= 6 ? 2 : 1;
+
+				foreach ( $words as $w ) {
+					$d = levenshtein( $key, $w );
+
+					if ( $d <= $tol && ( null === $best || $d < $best ) ) {
+						$best = $d;
+					}
+				}
+			}
+
+			if ( null !== $best ) {
+				$scored[] = array(
+					'product'  => $product,
+					'distance' => $best,
+				);
+			}
+		}
+
+		if ( empty( $scored ) ) {
+			return array();
+		}
+
+		usort(
+			$scored,
+			static function ( $a, $b ) {
+				return $a['distance'] <=> $b['distance'];
+			}
+		);
+
+		return array_map(
+			static function ( $row ) {
+				return $row['product'];
+			},
+			array_slice( $scored, 0, self::MAX_CARDS )
+		);
 	}
 
 	/**
