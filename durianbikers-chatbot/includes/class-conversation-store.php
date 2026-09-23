@@ -13,7 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class DB_Chat_Conversation_Store {
 
-	const SCHEMA_VERSION = 2;
+	const SCHEMA_VERSION = 3;
 
 	const STATUS_BOT      = 'bot';
 	const STATUS_WAITING  = 'waiting';
@@ -82,6 +82,8 @@ final class DB_Chat_Conversation_Store {
 				sender VARCHAR(16) NOT NULL,
 				author_user_id BIGINT UNSIGNED NULL,
 				body TEXT NOT NULL,
+				image_media_type VARCHAR(32) NULL,
+				image_data LONGTEXT NULL,
 				created_at DATETIME NOT NULL,
 				PRIMARY KEY  (id),
 				KEY conversation_id (conversation_id, id)
@@ -166,22 +168,31 @@ final class DB_Chat_Conversation_Store {
 	 *
 	 * @return int New message id.
 	 */
-	public static function add_message( $conversation_id, $sender, $body, $author_user_id = null ) {
+	public static function add_message( $conversation_id, $sender, $body, $author_user_id = null, $image = null ) {
 		global $wpdb;
 
 		$now = current_time( 'mysql', true );
 
-		$wpdb->insert(
-			self::messages_table(),
-			array(
-				'conversation_id' => (int) $conversation_id,
-				'sender'          => (string) $sender,
-				'author_user_id'  => $author_user_id ? (int) $author_user_id : null,
-				'body'            => (string) $body,
-				'created_at'      => $now,
-			),
-			array( '%d', '%s', '%d', '%s', '%s' )
+		$data    = array(
+			'conversation_id' => (int) $conversation_id,
+			'sender'          => (string) $sender,
+			'author_user_id'  => $author_user_id ? (int) $author_user_id : null,
+			'body'            => (string) $body,
+			'created_at'      => $now,
 		);
+		$formats = array( '%d', '%s', '%d', '%s', '%s' );
+
+		// A photo the customer attached, so the inbox (and the customer's own
+		// reloaded chat) can show it. Already validated by
+		// DB_Chat_Chat_Endpoint::sanitize_image() before it reaches here.
+		if ( is_array( $image ) && isset( $image['media_type'], $image['data'] ) ) {
+			$data['image_media_type'] = (string) $image['media_type'];
+			$data['image_data']       = (string) $image['data'];
+			$formats[]                = '%s';
+			$formats[]                = '%s';
+		}
+
+		$wpdb->insert( self::messages_table(), $data, $formats );
 
 		$touch = array( 'updated_at' => $now );
 		if ( 'customer' === $sender ) {
@@ -210,7 +221,7 @@ final class DB_Chat_Conversation_Store {
 	public static function messages_since( $conversation_id, $since_id, array $senders = array() ) {
 		global $wpdb;
 
-		$sql    = 'SELECT id, sender, body, created_at FROM ' . self::messages_table()
+		$sql    = 'SELECT id, sender, body, image_media_type, image_data, created_at FROM ' . self::messages_table()
 			. ' WHERE conversation_id = %d AND id > %d';
 		$params = array( (int) $conversation_id, (int) $since_id );
 
@@ -335,7 +346,7 @@ final class DB_Chat_Conversation_Store {
 		global $wpdb;
 		return $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, sender, author_user_id, body, created_at FROM ' . self::messages_table()
+				'SELECT id, sender, author_user_id, body, image_media_type, image_data, created_at FROM ' . self::messages_table()
 				. ' WHERE conversation_id = %d ORDER BY id ASC',
 				(int) $conversation_id
 			),

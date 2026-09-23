@@ -724,7 +724,9 @@ products.
 	 */
 	var STATE_VERSION = 1;
 	var STATE_MAX_AGE = 30 * 60 * 1000;
-	var STATE_MAX_BYTES = 100000;
+	// Raised from 100KB to fit a persisted photo (a downscaled JPEG data URL is
+	// a few hundred KB). saveState drops image data before it ever hits this cap.
+	var STATE_MAX_BYTES = 2500000;
 	var STATE_MAX_ENTRIES = MAX_HISTORY_TURNS * 2;
 
 	function stateKey() {
@@ -757,15 +759,31 @@ products.
 			}
 			return { role: 'bot', text: entry.text, products: entry.products, pages: entry.pages, chips: [] };
 		});
+		var savedAt = Date.now();
 		var payload;
 		try {
-			payload = JSON.stringify({ v: STATE_VERSION, savedAt: Date.now(), open: isOpen, history: history, pending: pendingOrder, transcript: entries });
+			payload = JSON.stringify({ v: STATE_VERSION, savedAt: savedAt, open: isOpen, history: history, pending: pendingOrder, transcript: entries });
 		} catch (e) {
 			return;
 		}
+		// Too big — almost always a persisted photo. Drop image data (keep the
+		// text conversation) and retry, so the chat still persists on reload.
 		if (payload.length > STATE_MAX_BYTES) {
-			clearSavedState();
-			return;
+			var lean = entries.map(function (entry) {
+				if (entry && entry.role === 'user' && entry.image) {
+					return { role: 'user', text: entry.text };
+				}
+				return entry;
+			});
+			try {
+				payload = JSON.stringify({ v: STATE_VERSION, savedAt: savedAt, open: isOpen, history: history, pending: pendingOrder, transcript: lean });
+			} catch (e2) {
+				return;
+			}
+			if (payload.length > STATE_MAX_BYTES) {
+				clearSavedState();
+				return;
+			}
 		}
 		try {
 			window.sessionStorage.setItem(stateKey(), payload);
@@ -808,12 +826,17 @@ products.
 		try {
 			var entries = data.transcript.slice(-STATE_MAX_ENTRIES);
 			entries.forEach(function (entry, i) {
-				if (!entry || typeof entry.text !== 'string' || !entry.text.trim()) {
+				if (!entry || typeof entry.text !== 'string') {
+					return;
+				}
+				var entryImage = (entry.role === 'user' && typeof entry.image === 'string' && entry.image.indexOf('data:image/') === 0) ? entry.image : '';
+				// A text-less entry is only valid when it carried a photo.
+				if (!entry.text.trim() && !entryImage) {
 					return;
 				}
 				if (entry.role === 'user') {
-					addUserMessage(entry.text);
-					transcript.push({ role: 'user', text: entry.text });
+					addUserMessage(entry.text, entryImage || undefined);
+					transcript.push(entryImage ? { role: 'user', text: entry.text, image: entryImage } : { role: 'user', text: entry.text });
 					return;
 				}
 				if (entry.role !== 'bot') {
@@ -3582,7 +3605,13 @@ products.
 			history = history.slice(-(MAX_HISTORY_TURNS * 2));
 		}
 
-		transcript.push({ role: 'user', text: sentMessage });
+		var userEntry = { role: 'user', text: sentMessage };
+		// Keep the photo with the entry so a reload re-renders it (persisted in
+		// sessionStorage by saveState, which drops it first if space runs short).
+		if (sentExtra && sentExtra.image && sentExtra.image.data && sentExtra.image.media_type) {
+			userEntry.image = 'data:' + sentExtra.image.media_type + ';base64,' + sentExtra.image.data;
+		}
+		transcript.push(userEntry);
 		transcript.push({
 			role: 'bot',
 			text: reply,

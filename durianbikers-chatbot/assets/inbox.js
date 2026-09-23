@@ -217,13 +217,29 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 		renderToolbar();
 	}
 
+	// Allowed image types for a stored customer photo — mirrors the server's
+	// sanitize_image() whitelist, so a bad media_type can't build a data: URL.
+	var IMAGE_TYPES = { 'image/jpeg': 1, 'image/png': 1, 'image/webp': 1, 'image/gif': 1 };
+
+	function messageImageHtml( m ) {
+		if ( ! m || ! m.image_data || ! m.image_media_type || ! IMAGE_TYPES[ m.image_media_type ] ) {
+			return '';
+		}
+		// base64 payload only, so it is safe inside the src attribute.
+		var data = String( m.image_data ).replace( /[^A-Za-z0-9+/=]/g, '' );
+		if ( ! data ) {
+			return '';
+		}
+		return '<img class="db-chat-inbox-msg-image" src="data:' + m.image_media_type + ';base64,' + data + '" alt="Customer photo">';
+	}
+
 	function buildBubblesHtml() {
 		return state.messages
 			.map( function ( m ) {
 				return (
 					'<div class="db-chat-inbox-msg db-chat-inbox-msg--' + esc( m.sender ) + '">' +
 					'<div class="db-chat-inbox-msg-meta">' + esc( m.sender ) + ' &middot; ' + esc( fmtTime( m.created_at ) ) + '</div>' +
-					'<div class="db-chat-inbox-msg-body">' + esc( m.body ) + '</div>' +
+					'<div class="db-chat-inbox-msg-body">' + messageImageHtml( m ) + esc( m.body ) + '</div>' +
 					'</div>'
 				);
 			} )

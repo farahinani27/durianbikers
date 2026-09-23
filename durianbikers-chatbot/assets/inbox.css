@@ -280,6 +280,18 @@ hyphen-separated, no BEM, no build step.
 	word-break: break-word;
 }
 
+/* A customer's attached photo, shown in the inbox transcript. */
+.db-chat-inbox-msg-image {
+	display: block;
+	max-width: 240px;
+	max-height: 240px;
+	width: auto;
+	height: auto;
+	margin-bottom: 6px;
+	border-radius: 8px;
+	border: 1px solid #dcdcde;
+}
+
 .db-chat-inbox-msg--customer {
 	align-self: flex-start;
 	background: #f0f0f1;

@@ -844,7 +844,9 @@ class DB_Chat_Chat_Endpoint {
 				$conversation = DB_Chat_Conversation_Store::ensure( '', $seed );
 			}
 
-			DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'customer', $message );
+			// Store the attached photo (if any) on the customer's message, so the
+			// staff inbox and the customer's own reloaded chat can show it.
+			DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'customer', $message, null, $image );
 
 			// Handed off → the human owns this conversation; do not run the AI.
 			if ( in_array( $conversation['status'], array( DB_Chat_Conversation_Store::STATUS_WAITING, DB_Chat_Conversation_Store::STATUS_HUMAN ), true ) ) {
