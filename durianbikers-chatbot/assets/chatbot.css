@@ -847,6 +847,13 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     display: none;
 }
 
+/* Starter chips are dimmed and unclickable while the pre-chat contact gate is
+   unmet — a customer must give their name + email before they can chat. */
+.db-chat-suggestions-locked {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
 .db-chat-chip {
     /* inline-flex so the mobile sheet's 44px minimum can centre the label.
        max-width caps a long label at the row width instead of letting it
@@ -1122,6 +1129,13 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     cursor: not-allowed;
 }
 
+/* Composer textarea while the pre-chat contact gate is unmet. */
+.db-chat-input:disabled {
+    background: var(--db-chat-surface-alt);
+    color: var(--db-chat-ink-muted);
+    cursor: not-allowed;
+}
+
 .db-chat-send svg {
     width: 17px;
     height: 17px;
@@ -1366,7 +1380,8 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     border-color: var(--db-chat-brand);
 }
 
-.db-chat-contact-email.is-invalid {
+.db-chat-contact-email.is-invalid,
+.db-chat-contact-input.is-invalid {
     border-color: var(--db-chat-error-ink);
 }
 

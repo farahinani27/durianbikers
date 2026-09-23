@@ -371,6 +371,24 @@ class DB_Chat_Chat_Endpoint {
 							return null === $value || is_bool( $value );
 						},
 					),
+					/*
+					 * Pre-chat contact gate (guests): the name + email the
+					 * customer gave before their first message. Claims from the
+					 * browser â re-sanitised (sanitize_text_field / sanitize_email)
+					 * and email-validated server-side, stored once on the
+					 * conversation, never echoed into the reply. See
+					 * capture_contact_gate().
+					 */
+					'contact_name'  => array(
+						'required' => false,
+						'type'     => 'string',
+						'default'  => '',
+					),
+					'contact_email' => array(
+						'required' => false,
+						'type'     => 'string',
+						'default'  => '',
+					),
 				),
 			)
 		);
@@ -484,6 +502,29 @@ class DB_Chat_Chat_Endpoint {
 			$payload['handoff']['enabled']     = true;
 			$payload['handoff']['pollSeconds'] = max( 2, (int) get_option( 'db_chat_handoff_poll_seconds', 5 ) );
 			$payload['handoff']['status']      = $conversation['status'];
+		}
+
+		/*
+		 * Pre-chat contact gate. For a signed-in customer, hand the widget their
+		 * account name + email so it can skip the form entirely — a known
+		 * customer should never be asked to re-type what we already hold. This is
+		 * per-visitor PII and only ever travels on THIS no-store route, never in
+		 * the cached page HTML. restore_cookie_user() above has already run, so
+		 * is_user_logged_in() is accurate here.
+		 */
+		if ( DB_Chat_Plugin::contact_gate_enabled() && is_user_logged_in() ) {
+			$user = wp_get_current_user();
+			if ( $user && $user->exists() ) {
+				$name = trim( (string) $user->display_name );
+				if ( '' === $name ) {
+					$name = trim( trim( (string) $user->first_name ) . ' ' . trim( (string) $user->last_name ) );
+				}
+				$payload['contact'] = array(
+					'name'      => $name,
+					'email'     => (string) $user->user_email,
+					'satisfied' => true,
+				);
+			}
 		}
 
 		$response = new WP_REST_Response( $payload );
@@ -843,6 +884,11 @@ class DB_Chat_Chat_Endpoint {
 			if ( DB_Chat_Conversation_Store::STATUS_RESOLVED === $conversation['status'] ) {
 				$conversation = DB_Chat_Conversation_Store::ensure( '', $seed );
 			}
+
+			// Pre-chat contact gate: attach the customer's name + email to the
+			// conversation (once) so the inbox shows who it is. Must run before the
+			// add_message below so a brand-new conversation is already named.
+			$this->capture_contact_gate( $request, $conversation );
 
 			// Store the attached photo (if any) on the customer's message, so the
 			// staff inbox and the customer's own reloaded chat can show it.
@@ -2144,6 +2190,62 @@ class DB_Chat_Chat_Endpoint {
 	 *                      was present this turn (caller leaves $message
 	 *                      untouched).
 	 */
+	/**
+	 * Pre-chat contact gate: persist the customer's name + email on the
+	 * conversation so the inbox can show who it is.
+	 *
+	 * Set ONCE — if the conversation already carries an email (from an earlier
+	 * turn or a handoff form) nothing is overwritten. A signed-in customer's
+	 * details come from their WooCommerce account, not the request body, so a
+	 * known customer is authoritative and never has to type anything. A guest's
+	 * name + email are claims from the browser: re-sanitised here and the email
+	 * validated with is_email(); an invalid or empty email is simply not stored
+	 * (the widget enforces the same rule before it lets them send).
+	 *
+	 * Unlike checkout PII, name + email are the whole point of this feature, so
+	 * they ARE stored — but only on the conversation row, never echoed into the
+	 * reply, the log, or Claude's context.
+	 *
+	 * @param WP_REST_Request $request      Request.
+	 * @param array           $conversation Ensured conversation row.
+	 * @return void
+	 */
+	private function capture_contact_gate( $request, $conversation ) {
+		if ( ! DB_Chat_Plugin::contact_gate_enabled() ) {
+			return;
+		}
+
+		// Set once: never clobber an email already captured for this thread.
+		if ( ! empty( $conversation['contact_email'] ) ) {
+			return;
+		}
+
+		$name  = '';
+		$email = '';
+
+		if ( is_user_logged_in() ) {
+			$user = wp_get_current_user();
+			if ( $user && $user->exists() ) {
+				$name = trim( (string) $user->display_name );
+				if ( '' === $name ) {
+					$name = trim( trim( (string) $user->first_name ) . ' ' . trim( (string) $user->last_name ) );
+				}
+				$email = (string) $user->user_email;
+			}
+		} else {
+			$name  = sanitize_text_field( (string) $request->get_param( 'contact_name' ) );
+			$email = sanitize_email( (string) $request->get_param( 'contact_email' ) );
+		}
+
+		// No usable email → nothing to attach (a guest who somehow bypassed the
+		// widget gate, or an account with no address). Leave the row unnamed.
+		if ( '' === $email || ! is_email( $email ) ) {
+			return;
+		}
+
+		DB_Chat_Conversation_Store::set_contact_details( (int) $conversation['id'], $name, $email, '' );
+	}
+
 	private function capture_checkout_input( $request ) {
 		$details = $this->read_checkout_details( $request );
 

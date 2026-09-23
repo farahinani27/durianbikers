@@ -183,7 +183,13 @@ products.
 		// dbChat.handoff.* — they exist so a half-filled settings screen still
 		// produces a sane button, not so English is hardcoded.
 		handoffLabel: 'Chat with us on WhatsApp',
-		handoffOpener: 'Hi, I have a question from your website'
+		handoffOpener: 'Hi, I have a question from your website',
+		// Pre-chat contact gate (name + email required before chatting).
+		gatePrompt: cfg.gatePromptText || "Before we start, please tell us who we're chatting with:",
+		gateSubmit: cfg.gateSubmitLabel || 'Start chat',
+		gateNameError: cfg.gateNameErrorText || "Please enter your name so we know who we're talking to.",
+		gateEmailError: cfg.gateEmailErrorText || 'Please enter a valid email so we can reply.',
+		gatePlaceholder: cfg.gatePlaceholderText || 'Enter your name and email above to start…'
 	};
 
 	var MAX_MESSAGE = 1000;      // matches the REST contract
@@ -248,6 +254,18 @@ products.
 	// holds the { media_type, data } for the NEXT send, cleared after it goes.
 	var visionEnabled = cfg.visionEnabled === '1' || cfg.visionEnabled === true;
 	var pendingImage = null;
+	// Pre-chat contact gate. When on, a guest must give a name + email before
+	// the composer unlocks. contactGiven holds { name, email } once satisfied
+	// (a signed-in account via /session, a restored guest submission, or the
+	// form). contactFromGate is true only for a guest's own submission — that
+	// is the one case whose details must ride the first /chat POST (a signed-in
+	// customer's come from their account server-side). contactSessionResolved
+	// gates showing the form until /session has told us whether they're signed
+	// in, so a logged-in customer never sees the form flash.
+	var contactGateEnabled = cfg.contactGate === '1' || cfg.contactGate === true;
+	var contactGiven = null;
+	var contactFromGate = false;
+	var contactSessionResolved = false;
 	var lastAttempt = '';
 	var lastFocused = null;
 	var savedScrollY = 0;
@@ -762,7 +780,7 @@ products.
 		var savedAt = Date.now();
 		var payload;
 		try {
-			payload = JSON.stringify({ v: STATE_VERSION, savedAt: savedAt, open: isOpen, history: history, pending: pendingOrder, transcript: entries });
+			payload = JSON.stringify({ v: STATE_VERSION, savedAt: savedAt, open: isOpen, history: history, pending: pendingOrder, transcript: entries, contact: (contactFromGate ? contactGiven : null) });
 		} catch (e) {
 			return;
 		}
@@ -776,7 +794,7 @@ products.
 				return entry;
 			});
 			try {
-				payload = JSON.stringify({ v: STATE_VERSION, savedAt: savedAt, open: isOpen, history: history, pending: pendingOrder, transcript: lean });
+				payload = JSON.stringify({ v: STATE_VERSION, savedAt: savedAt, open: isOpen, history: history, pending: pendingOrder, transcript: lean, contact: (contactFromGate ? contactGiven : null) });
 			} catch (e2) {
 				return;
 			}
@@ -821,6 +839,14 @@ products.
 		var data = readSavedState();
 		if (!data) {
 			return;
+		}
+		// A returning guest who already gave their details this tab session:
+		// restore them so the pre-chat gate does not ask again. (A signed-in
+		// customer's come from /session instead, never from saved state.)
+		if (contactGateEnabled && data.contact && typeof data.contact === 'object' &&
+			data.contact.email && EMAIL_RE.test(String(data.contact.email))) {
+			contactGiven = { name: trimmed(data.contact.name), email: trimmed(data.contact.email) };
+			contactFromGate = true;
 		}
 		restoring = true;
 		try {
@@ -996,6 +1022,178 @@ products.
 		if (conversationId && (currentStatus === 'waiting' || currentStatus === 'human')) {
 			startPolling();
 		}
+	}
+
+	/**
+	 * Pre-chat contact gate — read the /session response's `contact` block. For
+	 * a signed-in customer the backend sends { name, email, satisfied:true } so
+	 * we can unlock without ever showing the form. Marks the session resolved
+	 * either way, which is what lets a guest's form finally appear (and never
+	 * flash to a logged-in customer beforehand).
+	 */
+	function applyContactGate(data) {
+		if (!contactGateEnabled) {
+			return;
+		}
+		contactSessionResolved = true;
+		var c = data && typeof data === 'object' ? data.contact : null;
+		if (!contactGiven && c && typeof c === 'object' && c.satisfied === true && c.email) {
+			contactGiven = { name: trimmed(c.name), email: trimmed(c.email) };
+			contactFromGate = false; // account-sourced; server fills it, don't POST it.
+		}
+		refreshContactGate();
+	}
+
+	/** Lock or unlock the composer + starter chips behind the contact gate. */
+	function setComposerLocked(locked) {
+		if (els.input) {
+			els.input.disabled = locked;
+			try {
+				els.input.setAttribute('placeholder', locked ? TEXT.gatePlaceholder : TEXT.placeholder);
+			} catch (e) { /* attribute set can't fail in practice */ }
+		}
+		if (els.send) {
+			els.send.disabled = locked;
+		}
+		if (els.suggestions) {
+			els.suggestions.classList.toggle('db-chat-suggestions-locked', locked);
+		}
+	}
+
+	/**
+	 * Reconcile the gate with current state. Satisfied → unlock and drop the
+	 * form. Not satisfied → lock, and show the form only once /session has
+	 * resolved and the panel is open (so a logged-in customer never sees it).
+	 */
+	function refreshContactGate() {
+		if (!contactGateEnabled) {
+			return;
+		}
+		if (contactGiven) {
+			setComposerLocked(false);
+			if (els.contactGate) {
+				els.contactGate.remove();
+				els.contactGate = null;
+			}
+			return;
+		}
+		setComposerLocked(true);
+		if (contactSessionResolved && isOpen) {
+			openContactGateForm();
+		}
+	}
+
+	/**
+	 * The pre-chat form: name + email, both required. A leaner sibling of
+	 * openContactStep() (the handoff form) — no phone, no cancel, and on submit
+	 * it unlocks the composer rather than posting anywhere. The details are kept
+	 * client-side (saved state) and ride the FIRST /chat POST, where the server
+	 * persists them on the conversation.
+	 */
+	function openContactGateForm() {
+		if (els.contactGate) {
+			return;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(buildAvatar('db-chat-msg-avatar'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-contact-step db-chat-contact-gate');
+		box.appendChild(el('p', 'db-chat-contact-label', TEXT.gatePrompt));
+
+		var nameInput = document.createElement('input');
+		nameInput.type = 'text';
+		nameInput.className = 'db-chat-contact-input db-chat-contact-name';
+		nameInput.setAttribute('placeholder', 'Your name');
+		nameInput.setAttribute('autocomplete', 'name');
+		box.appendChild(nameInput);
+
+		var emailInput = document.createElement('input');
+		emailInput.type = 'email';
+		emailInput.className = 'db-chat-contact-input db-chat-contact-email';
+		emailInput.setAttribute('placeholder', 'you@example.com');
+		emailInput.setAttribute('autocomplete', 'email');
+		box.appendChild(emailInput);
+
+		var error = el('p', 'db-chat-contact-error', '');
+		error.setAttribute('role', 'alert');
+		error.hidden = true;
+		box.appendChild(error);
+
+		function showError(text, field) {
+			error.textContent = text;
+			error.hidden = false;
+			if (field) {
+				field.classList.add('is-invalid');
+				try {
+					field.focus();
+				} catch (e) { /* not focusable: harmless */ }
+			}
+		}
+		function clearError() {
+			if (error.hidden) {
+				return;
+			}
+			error.hidden = true;
+			error.textContent = '';
+			nameInput.classList.remove('is-invalid');
+			emailInput.classList.remove('is-invalid');
+		}
+		nameInput.addEventListener('input', clearError);
+		emailInput.addEventListener('input', clearError);
+
+		function attempt() {
+			var name = trimmed(nameInput.value);
+			var email = trimmed(emailInput.value);
+			if (!name) {
+				showError(TEXT.gateNameError, nameInput);
+				return;
+			}
+			if (!email || !EMAIL_RE.test(email)) {
+				showError(TEXT.gateEmailError, emailInput);
+				return;
+			}
+			clearError();
+			contactGiven = { name: name, email: email };
+			contactFromGate = true;
+			// Real user gesture: prime the notification audio for later polling.
+			primeAudioContext();
+			try {
+				saveState();
+			} catch (e) { /* memory-only is fine */ }
+			refreshContactGate();
+			if (els.input) {
+				try {
+					els.input.focus();
+				} catch (e) { /* harmless */ }
+			}
+		}
+
+		var actions = el('div', 'db-chat-contact-actions');
+		var startBtn = el('button', 'db-chat-contact-send', TEXT.gateSubmit);
+		startBtn.type = 'button';
+		startBtn.addEventListener('click', attempt);
+		actions.appendChild(startBtn);
+
+		[nameInput, emailInput].forEach(function (input) {
+			input.addEventListener('keydown', function (event) {
+				if (event.key === 'Enter') {
+					event.preventDefault();
+					attempt();
+				}
+			});
+		});
+
+		box.appendChild(actions);
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		els.contactGate = wrap;
+		scrollToEnd();
+		try {
+			nameInput.focus();
+		} catch (e) { /* not focusable yet: harmless */ }
 	}
 
 	function handoffOpener() {
@@ -3201,11 +3399,20 @@ products.
 			// the button without an availability claim.
 			applySessionHandoff(data);
 			applyHandoffFeature(data);
+			applyContactGate(data);
 			sessionNonce = data.nonce;
 			sessionPromise = null;
 			return sessionNonce;
 		}).catch(function (error) {
 			sessionPromise = null;
+			// Even if the session round-trip failed, a gated guest should get the
+			// form rather than a permanently locked composer. Treat unknown as
+			// guest (the safe default): a logged-in customer would only ever have
+			// been unlocked by a SUCCESSFUL session response anyway.
+			if (contactGateEnabled && !contactGiven) {
+				contactSessionResolved = true;
+				refreshContactGate();
+			}
 			throw error;
 		});
 
@@ -3295,6 +3502,15 @@ products.
 		if (handoffEnabled && conversationId) {
 			body.conversation_id = conversationId;
 		}
+		// A guest's pre-chat name + email, so the server can name the
+		// conversation in the inbox. Sent every turn while unpersisted is
+		// harmless (the server sets it once), but contactFromGate is only ever
+		// true for a guest's own submission — a signed-in customer's details
+		// come from their account server-side and never ride the POST.
+		if (handoffEnabled && contactFromGate && contactGiven && contactGiven.email) {
+			body.contact_name = contactGiven.name || '';
+			body.contact_email = contactGiven.email || '';
+		}
 
 		return fetchWithTimeout(cfg.ajaxUrl, {
 			method: 'POST',
@@ -3342,6 +3558,14 @@ products.
 
 	function send(rawValue, extra) {
 		if (isSending) {
+			return;
+		}
+
+		// Contact gate: nothing may be sent until a name + email is on file.
+		// Belt-and-braces — the composer is disabled while gated, but a chip or
+		// programmatic caller must not slip past either.
+		if (contactGateEnabled && !contactGiven) {
+			refreshContactGate();
 			return;
 		}
 
@@ -3657,6 +3881,11 @@ products.
 		if (handoffEnabled) {
 			primeAudioContext();
 		}
+
+		// Lock the composer immediately if the contact gate is on and unmet, so
+		// nothing can be typed before /session tells us who this is. The form
+		// itself is shown from applyContactGate once the session resolves.
+		refreshContactGate();
 
 		// Kick the session nonce off first so the round-trip overlaps the
 		// open animation. Failures surface at send time, not here.

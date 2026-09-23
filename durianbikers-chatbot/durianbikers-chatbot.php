@@ -68,6 +68,11 @@ define( 'DB_CHAT_OPT_LOGGING', 'db_chat_logging' );
 // the escalation/vision model). Default on; flip to '0' to hide the attach
 // button and ignore any image sent.
 define( 'DB_CHAT_OPT_VISION', 'db_chat_vision' );
+// Requires a name + email before a guest can chat (logged-in customers skip it
+// and their account details are used). Default on; flip to '0' to let anyone
+// chat without leaving details. Only meaningful when the handoff/inbox is on,
+// since that is what stores the conversation the name is attached to.
+define( 'DB_CHAT_OPT_CONTACT_GATE', 'db_chat_contact_gate' );
 
 /**
  * Which brain answers: 'auto', 'lookup' or 'ai'.
@@ -702,6 +707,19 @@ final class DB_Chat_Plugin {
 	}
 
 	/**
+	 * Whether a name + email is required before a guest can chat. Default ON.
+	 * Only takes effect when the handoff/inbox is enabled, since that is what
+	 * persists the conversation the details attach to. The toggle exists so it
+	 * can be switched off instantly if the gate ever costs engagement.
+	 *
+	 * @return bool
+	 */
+	public static function contact_gate_enabled() {
+		return '1' === self::setting( DB_CHAT_OPT_CONTACT_GATE, '1' )
+			&& '1' === get_option( 'db_chat_handoff_enabled', '0' );
+	}
+
+	/**
 	 * Greeting shown when the panel opens.
 	 *
 	 * @return string Plain text.
@@ -836,6 +854,12 @@ final class DB_Chat_Plugin {
 			// Photo attach: the widget shows the attach button only when this is
 			// '1'. The endpoint independently ignores images when it is off.
 			'visionEnabled' => self::vision_enabled() ? '1' : '0',
+			// Pre-chat name+email gate. Only the static policy flag is baked in
+			// here (safe to cache — no PII). Whether a given visitor has already
+			// satisfied it (logged-in account, or details given this session) is
+			// decided per-request from the no-store /session route and the
+			// widget's own saved state, never from this cached HTML.
+			'contactGate'   => self::contact_gate_enabled() ? '1' : '0',
 			// Which storefront this page belongs to ('my', 'gb', or '' on the
 			// splash). Keys the saved conversation, so MYR and USD chats never
 			// mix. From the live theme's store routing when present.
@@ -1015,6 +1039,7 @@ register_activation_hook(
 		add_option( DB_CHAT_OPT_GREETING, '' );
 		add_option( DB_CHAT_OPT_LOGGING, '0' );
 		add_option( DB_CHAT_OPT_VISION, '1' );
+		add_option( DB_CHAT_OPT_CONTACT_GATE, '1' );
 
 		// Human handoff. Off by default, same reasoning as DB_CHAT_OPT_ENABLED
 		// above: this runs on a live store, so the feature stays off until

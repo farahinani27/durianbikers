@@ -145,6 +145,11 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 	}
 
 	function lastPreview( row ) {
+		// Name first — the pre-chat contact gate captures it, and a person's
+		// name is the most useful label in the list. Then the older fallbacks.
+		if ( row.contact_name ) {
+			return row.contact_name;
+		}
 		if ( row.contact_email ) {
 			return row.contact_email;
 		}
