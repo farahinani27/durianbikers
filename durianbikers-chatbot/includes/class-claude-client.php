@@ -257,9 +257,16 @@ class DB_Chat_Claude_Client {
 	 *                                 search_pages to read anything.
 	 * @return string|WP_Error Assistant reply text, or WP_Error.
 	 */
-	public function chat( array $messages, $static_context, callable $tool_executor, $page_context = '', $model_override = '' ) {
+	public function chat( array $messages, $static_context, callable $tool_executor, $page_context = '', $model_override = '', $image = null ) {
 		$this->last_usage        = self::empty_usage();
 		$this->last_tool_results = array();
+
+		// A photo the customer attached rides on the LAST user message as an
+		// image content block. Validated upstream (DB_Chat_Chat_Endpoint::
+		// sanitize_image); never persisted.
+		if ( is_array( $image ) && isset( $image['media_type'], $image['data'] ) ) {
+			$messages = $this->attach_image( $messages, $image );
+		}
 
 		// A caller (the orchestrator's tiered escalation) may run this turn on a
 		// specific model. Validated with the same conservative charset as
@@ -892,6 +899,7 @@ ALWAYS SEARCH BEFORE YOU ANSWER — NEVER ANSWER FROM MEMORY
 - Your FIRST action for ANY shipping, delivery, returns, refunds, warranty, payment or other policy question — \"do you ship to…\", \"how long is delivery\", \"what's your return policy\", \"do you take…\" — is to CALL search_pages, before answering. You have none of this text in memory. (Opening hours are the exception: answer those directly from the OPENING HOURS block, do not search.)
 - Answer ONLY after the tool returns, using only what it gave you. If the tool genuinely returns nothing useful, say so plainly and offer a human — never a guess, and never a vague \"let me check\" when a search would have answered it.
 - TYPOS AND NEAR-MISSES. Customers misspell brand, model and rider names all the time (\"danisha\" for \"Danish\", \"shinkoo\" for \"Shinko\"). search_products already tolerates small misspellings, so when it returns a product whose name is CLOSE to — but not exactly — what the customer typed, treat it as a likely typo: do NOT say we don't stock it. Confirm it in their language, e.g. \"Did you mean <exact product name>?\", and show that product. Only decline when the search truly comes back empty.
+- PHOTOS. A customer may attach a photo — a helmet, a part, a damaged item. Say what you can see in it (brand, type, colour, any text or model name you can read), then USE search_products with what you read to look it up and SHOW the closest matching products, exactly as you would for a typed query. NEVER claim from a photo alone that it IS a specific product, that a price is right, or that a part FITS a particular bike — you cannot verify those from an image. Describe it, show the nearest catalogue matches, and for fitment or a damaged / wrong / warranty item, hand it to " . $contact . ".
 
 FACTS — THIS IS A HARD RULE
 - ONLY state a price, stock level, size, or specific product that a tool returned to you in THIS conversation. Never invent or guess a price, a product, a stock figure, a size, or a spec.
@@ -930,6 +938,47 @@ Keep replies to a sentence or three. Be genuinely helpful.";
 	 * @param string $page_context   Help page titles. Never page content.
 	 * @return string
 	 */
+	/**
+	 * Attach a validated image to the last user message, turning its plain-text
+	 * content into a [text?, image] block array (Anthropic's multimodal shape).
+	 * The image is never stored; it exists only for this one request.
+	 *
+	 * @param array<int,array<string,mixed>> $messages Built messages.
+	 * @param array{media_type:string,data:string} $image Validated image.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function attach_image( array $messages, array $image ) {
+		for ( $i = count( $messages ) - 1; $i >= 0; $i-- ) {
+			if ( ! isset( $messages[ $i ]['role'] ) || 'user' !== $messages[ $i ]['role'] ) {
+				continue;
+			}
+
+			$text   = is_string( $messages[ $i ]['content'] ) ? trim( $messages[ $i ]['content'] ) : '';
+			$blocks = array();
+
+			if ( '' !== $text ) {
+				$blocks[] = array(
+					'type' => 'text',
+					'text' => $text,
+				);
+			}
+
+			$blocks[] = array(
+				'type'   => 'image',
+				'source' => array(
+					'type'       => 'base64',
+					'media_type' => (string) $image['media_type'],
+					'data'       => (string) $image['data'],
+				),
+			);
+
+			$messages[ $i ]['content'] = $blocks;
+			break;
+		}
+
+		return $messages;
+	}
+
 	private function build_system_prompt( $static_context, $page_context = '' ) {
 		/*
 		 * How the bot refers customers to a human.

@@ -244,6 +244,10 @@ products.
 	// True while a checkout SUMMARY is on screen waiting to be confirmed, so a
 	// plain typed reply can be routed to the deterministic checkout confirm.
 	var awaitingCheckoutConfirm = false;
+	// Photo attach (vision). visionEnabled gates the whole UI; pendingImage
+	// holds the { media_type, data } for the NEXT send, cleared after it goes.
+	var visionEnabled = cfg.visionEnabled === '1' || cfg.visionEnabled === true;
+	var pendingImage = null;
 	var lastAttempt = '';
 	var lastFocused = null;
 	var savedScrollY = 0;
@@ -2163,6 +2167,97 @@ products.
 		}).catch(function () { /* transient network hiccup: try again next tick */ });
 	}
 
+	/* ---- Photo attach (vision) ---- */
+
+	// Read a picked/pasted image file, downscale it, and stage it for the next
+	// send. Everything is client-side; nothing is uploaded until the customer
+	// actually sends.
+	function handleImageFile(file) {
+		if (!visionEnabled || !file || !/^image\//.test(file.type || '')) {
+			return;
+		}
+		var reader = new FileReader();
+		reader.onload = function () {
+			var img = new Image();
+			img.onload = function () { stagePendingImage(img); };
+			img.onerror = function () { addNotice('Could not read that image.', true); };
+			img.src = reader.result;
+		};
+		reader.onerror = function () { addNotice('Could not read that image.', true); };
+		reader.readAsDataURL(file);
+	}
+
+	// Downscale to a sane size and re-encode as JPEG, so the payload stays
+	// small and one code path (image/jpeg) reaches the server.
+	function stagePendingImage(img) {
+		var maxDim = 1536;
+		var w = img.naturalWidth || img.width;
+		var h = img.naturalHeight || img.height;
+		if (!w || !h) {
+			addNotice('Could not read that image.', true);
+			return;
+		}
+		var scale = Math.min(1, maxDim / Math.max(w, h));
+		var cw = Math.max(1, Math.round(w * scale));
+		var ch = Math.max(1, Math.round(h * scale));
+
+		var canvas = document.createElement('canvas');
+		canvas.width = cw;
+		canvas.height = ch;
+		var ctx = canvas.getContext('2d');
+		if (!ctx) {
+			addNotice('Could not process that image.', true);
+			return;
+		}
+		// White backfill so a transparent PNG doesn't turn black under JPEG.
+		ctx.fillStyle = '#ffffff';
+		ctx.fillRect(0, 0, cw, ch);
+		ctx.drawImage(img, 0, 0, cw, ch);
+
+		var dataUrl;
+		try {
+			dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+		} catch (e) {
+			addNotice('Could not process that image.', true);
+			return;
+		}
+		var comma = dataUrl.indexOf(',');
+		if (comma < 0) {
+			return;
+		}
+		pendingImage = { media_type: 'image/jpeg', data: dataUrl.slice(comma + 1) };
+		renderImagePreview(dataUrl);
+	}
+
+	function renderImagePreview(dataUrl) {
+		if (!els.imagePreview) {
+			return;
+		}
+		els.imagePreview.innerHTML = '';
+
+		var thumb = document.createElement('img');
+		thumb.className = 'db-chat-image-thumb';
+		thumb.src = dataUrl;
+		thumb.alt = 'Attached photo';
+
+		var remove = el('button', 'db-chat-image-remove', '✕');
+		remove.type = 'button';
+		remove.setAttribute('aria-label', 'Remove photo');
+		remove.addEventListener('click', clearPendingImage);
+
+		els.imagePreview.appendChild(thumb);
+		els.imagePreview.appendChild(remove);
+		els.imagePreview.hidden = false;
+	}
+
+	function clearPendingImage() {
+		pendingImage = null;
+		if (els.imagePreview) {
+			els.imagePreview.innerHTML = '';
+			els.imagePreview.hidden = true;
+		}
+	}
+
 	function buildComposer() {
 		var composer = el('div', 'db-chat-composer');
 		var form = el('form', 'db-chat-form');
@@ -2200,6 +2295,53 @@ products.
 			event.preventDefault();
 			send(input.value);
 		});
+
+		// Photo attach: a button left of the textarea, a hidden file input, a
+		// preview strip above the form, and paste-an-image support. Only when
+		// the vision toggle is on.
+		if (visionEnabled) {
+			var preview = el('div', 'db-chat-image-preview');
+			preview.hidden = true;
+			composer.appendChild(preview);
+			els.imagePreview = preview;
+
+			var fileInput = document.createElement('input');
+			fileInput.type = 'file';
+			fileInput.accept = 'image/png,image/jpeg,image/webp,image/gif';
+			fileInput.className = 'db-chat-visually-hidden';
+			fileInput.addEventListener('change', function () {
+				if (fileInput.files && fileInput.files[0]) {
+					handleImageFile(fileInput.files[0]);
+				}
+				fileInput.value = '';
+			});
+
+			var attachBtn = el('button', 'db-chat-attach');
+			attachBtn.type = 'button';
+			attachBtn.setAttribute('aria-label', 'Attach a photo');
+			attachBtn.appendChild(icon(ICONS.image));
+			attachBtn.addEventListener('click', function () { fileInput.click(); });
+
+			form.insertBefore(attachBtn, input);
+			form.appendChild(fileInput);
+
+			input.addEventListener('paste', function (event) {
+				if (!event.clipboardData) {
+					return;
+				}
+				var items = event.clipboardData.items || [];
+				for (var i = 0; i < items.length; i++) {
+					if (items[i].type && items[i].type.indexOf('image/') === 0) {
+						var file = items[i].getAsFile();
+						if (file) {
+							event.preventDefault();
+							handleImageFile(file);
+							break;
+						}
+					}
+				}
+			});
+		}
 
 		composer.appendChild(form);
 
@@ -3102,6 +3244,11 @@ products.
 		if (extra && extra.checkout_confirm_context) {
 			body.checkout_confirm_context = true;
 		}
+		// An attached photo: { media_type, data }. The server re-validates it
+		// and forwards it to the model for this turn only — never stored.
+		if (extra && extra.image) {
+			body.image = extra.image;
+		}
 		// Only ever present once GET /session has round-tripped one back
 		// (i.e. only when handoffEnabled). Off in production: this field is
 		// simply absent, same request body as before this feature existed.
@@ -3159,7 +3306,17 @@ products.
 		}
 
 		var message = String(rawValue == null ? '' : rawValue).trim();
-		if (!message) {
+
+		// A staged photo rides this send. Capture it now (and clear the strip),
+		// so a photo goes with or without a caption.
+		var imageToSend = pendingImage;
+		if (imageToSend) {
+			extra = extra || {};
+			extra.image = imageToSend;
+			clearPendingImage();
+		}
+
+		if (!message && !imageToSend) {
 			return;
 		}
 		if (message.length > MAX_MESSAGE) {
@@ -3178,7 +3335,7 @@ products.
 		// next send whatever it is.
 		if (awaitingCheckoutConfirm) {
 			awaitingCheckoutConfirm = false;
-			if (!extra || (!extra.pick && !extra.cart_confirm && !extra.checkout_details && !extra.checkout_confirm_address && !extra.checkout_confirm && !extra.size_pick)) {
+			if (!extra || (!extra.pick && !extra.cart_confirm && !extra.checkout_details && !extra.checkout_confirm_address && !extra.checkout_confirm && !extra.size_pick && !extra.image)) {
 				extra = extra || {};
 				extra.checkout_confirm_context = true;
 			}
@@ -3186,8 +3343,11 @@ products.
 
 		lastAttempt = message;
 		lastAttemptExtra = null;
-		if (extra && (extra.pick || extra.size_pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address || extra.checkout_confirm || extra.checkout_confirm_context)) {
+		if (extra && (extra.pick || extra.size_pick || extra.cart_confirm || extra.checkout_details || extra.checkout_confirm_address || extra.checkout_confirm || extra.checkout_confirm_context || extra.image)) {
 			lastAttemptExtra = {};
+			if (extra.image) {
+				lastAttemptExtra.image = extra.image;
+			}
 			if (extra.pick) {
 				lastAttemptExtra.pick = extra.pick;
 			}
@@ -3216,7 +3376,8 @@ products.
 		lastUserMessage = message;
 		noteOrderContext(message);
 		refreshHandoffHref();
-		addUserMessage(message);
+		// Image-only send: show a marker in the customer's bubble so it isn't blank.
+		addUserMessage(message || (imageToSend ? '📷 Photo' : ''));
 
 		if (els.input) {
 			els.input.value = '';

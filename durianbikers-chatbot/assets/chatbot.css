@@ -1015,6 +1015,73 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     border-color: var(--db-chat-brand);
 }
 
+/* Photo attach (vision): a quiet round button left of the input, plus the
+   preview strip above the composer form. */
+.db-chat-attach {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--db-chat-ink-muted);
+    cursor: pointer;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.db-chat-attach:hover,
+.db-chat-attach:focus-visible {
+    background: var(--db-chat-surface-alt);
+    color: var(--db-chat-brand);
+}
+
+.db-chat-attach svg {
+    width: 20px;
+    height: 20px;
+}
+
+.db-chat-image-preview {
+    position: relative;
+    display: inline-block;
+    margin: 0 0 8px 4px;
+}
+
+.db-chat-image-preview[hidden] {
+    display: none;
+}
+
+.db-chat-image-thumb {
+    display: block;
+    width: 88px;
+    height: 88px;
+    object-fit: cover;
+    border-radius: 10px;
+    border: 1px solid var(--db-chat-border);
+}
+
+.db-chat-image-remove {
+    position: absolute;
+    top: -8px;
+    right: -8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 2px solid var(--db-chat-surface);
+    border-radius: 50%;
+    background: var(--db-chat-ink);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+}
+
 .db-chat-send {
     display: flex;
     align-items: center;

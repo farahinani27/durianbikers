@@ -291,6 +291,19 @@ class DB_Chat_Chat_Endpoint {
 							return null === $value || is_array( $value );
 						},
 					),
+					/*
+					 * An attached photo: { media_type, data (base64) }. Fully
+					 * re-validated by sanitize_image() (allowed type, size cap,
+					 * real image magic bytes) and never persisted — see
+					 * handle_request()'s image handling.
+					 */
+					'image'     => array(
+						'required'          => false,
+						'default'           => null,
+						'validate_callback' => static function ( $value ) {
+							return null === $value || is_array( $value );
+						},
+					),
 					'pending' => array(
 						'required'          => false,
 						'default'           => null,
@@ -670,15 +683,23 @@ class DB_Chat_Chat_Endpoint {
 	 * @param mixed $value Raw value.
 	 * @return true|WP_Error
 	 */
-	public function validate_message( $value ) {
+	public function validate_message( $value, $request = null ) {
 		$value = $this->sanitize_message( $value );
 
 		if ( '' === $value ) {
-			return new WP_Error(
-				'db_chat_empty_message',
-				__( 'Please type a message first.', 'durianbikers-chatbot' ),
-				array( 'status' => 400 )
-			);
+			// A photo may be sent with no caption — allow an empty message when
+			// a photo is attached and vision is on. Otherwise, require text.
+			$has_image = ( $request instanceof WP_REST_Request )
+				&& DB_Chat_Plugin::vision_enabled()
+				&& is_array( $request->get_param( 'image' ) );
+
+			if ( ! $has_image ) {
+				return new WP_Error(
+					'db_chat_empty_message',
+					__( 'Please type a message first.', 'durianbikers-chatbot' ),
+					array( 'status' => 400 )
+				);
+			}
 		}
 
 		if ( mb_strlen( $value ) > self::MAX_MESSAGE_LENGTH ) {
@@ -775,6 +796,19 @@ class DB_Chat_Chat_Endpoint {
 
 		if ( null !== $checkout_marker ) {
 			$message = $checkout_marker;
+		}
+
+		/*
+		 * Attached photo (vision). Validated here and forwarded to the model for
+		 * THIS turn only — never written to the transcript, the log, or disk.
+		 * Ignored entirely when the vision toggle is off. A captionless photo
+		 * gets a neutral "[photo]" text marker so the stored/logged message is
+		 * not blank (the image bytes are still never stored).
+		 */
+		$image = DB_Chat_Plugin::vision_enabled() ? self::sanitize_image( $request->get_param( 'image' ) ) : null;
+
+		if ( null !== $image && '' === trim( (string) $message ) ) {
+			$message = '[photo]';
 		}
 
 		/*
@@ -955,7 +989,8 @@ class DB_Chat_Chat_Endpoint {
 				null !== $conversation ? (string) $conversation['public_id'] : ''
 			),
 			$context,
-			$pages_ctx
+			$pages_ctx,
+			$image
 		);
 
 		$this->maybe_log( $message, isset( $result['reply'] ) ? (string) $result['reply'] : '' );
@@ -2571,6 +2606,74 @@ class DB_Chat_Chat_Endpoint {
 			'pages'    => array(),
 			'proposal' => $proposal,
 		);
+	}
+
+	/**
+	 * Validate an attached image before it is forwarded to the model. Returns
+	 * { media_type, data } for a real, in-limit base64 image of an allowed type,
+	 * or null for anything else. The image is NEVER stored — this only decides
+	 * whether it may ride THIS request to Anthropic.
+	 *
+	 * @param mixed $raw The 'image' param as sent by the browser.
+	 * @return array{media_type:string,data:string}|null
+	 */
+	public static function sanitize_image( $raw ) {
+		if ( ! is_array( $raw ) ) {
+			return null;
+		}
+
+		$media = isset( $raw['media_type'] ) && is_string( $raw['media_type'] ) ? strtolower( trim( $raw['media_type'] ) ) : '';
+		$data  = isset( $raw['data'] ) && is_string( $raw['data'] ) ? trim( $raw['data'] ) : '';
+
+		$allowed = array( 'image/jpeg', 'image/png', 'image/webp', 'image/gif' );
+
+		if ( ! in_array( $media, $allowed, true ) || '' === $data ) {
+			return null;
+		}
+
+		// base64 only, and within Anthropic's ~5MB-per-image ceiling. The widget
+		// downscales to a few hundred KB; this cap is the hard backstop.
+		if ( ! preg_match( '#^[A-Za-z0-9+/]+={0,2}$#', $data ) || strlen( $data ) > 5000000 ) {
+			return null;
+		}
+
+		$bin = base64_decode( $data, true );
+
+		if ( false === $bin || strlen( $bin ) < 24 ) {
+			return null;
+		}
+
+		if ( ! self::image_magic_ok( $media, $bin ) ) {
+			return null;
+		}
+
+		return array(
+			'media_type' => $media,
+			'data'       => $data,
+		);
+	}
+
+	/**
+	 * Do the decoded bytes actually start like the claimed image type? Stops a
+	 * non-image, or a type mismatch, being forwarded as an image.
+	 *
+	 * @param string $media image/jpeg|png|webp|gif.
+	 * @param string $bin   Decoded bytes.
+	 * @return bool
+	 */
+	private static function image_magic_ok( $media, $bin ) {
+		switch ( $media ) {
+			case 'image/jpeg':
+				return "\xFF\xD8\xFF" === substr( $bin, 0, 3 );
+			case 'image/png':
+				return "\x89PNG\r\n\x1A\n" === substr( $bin, 0, 8 );
+			case 'image/gif':
+				return 'GIF87a' === substr( $bin, 0, 6 ) || 'GIF89a' === substr( $bin, 0, 6 );
+			case 'image/webp':
+				return 'RIFF' === substr( $bin, 0, 4 ) && 'WEBP' === substr( $bin, 8, 4 );
+			default:
+				return false;
+		}
 	}
 
 	/**

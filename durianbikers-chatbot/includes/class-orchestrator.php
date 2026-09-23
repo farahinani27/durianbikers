@@ -26,13 +26,20 @@ final class DB_Chat_Orchestrator {
 	/**
 	 * @return array{reply:string,products:array,pages:array,source:string,grounding:string,escalate:bool}
 	 */
-	public function answer( $message, array $history, callable $tool_executor, $context = '', $pages = '' ) {
+	public function answer( $message, array $history, callable $tool_executor, $context = '', $pages = '', $image = null ) {
 		if ( ! $this->can_use_ai() ) {
 			return $this->fallback( $message, $history );
 		}
 
 		$messages = DB_Chat_Messages::build( $history, (string) $message );
-		$reply    = $this->client->chat( $messages, (string) $context, $tool_executor, (string) $pages );
+
+		// A photo turn runs on the stronger vision model from the start (it must
+		// read small logos / model text on the item), so it does NOT go through
+		// the base->escalation retry below — it is already on the top model.
+		$has_image  = is_array( $image ) && isset( $image['media_type'], $image['data'] );
+		$vision_mdl = ( $has_image && method_exists( $this->client, 'escalation_model' ) ) ? (string) $this->client->escalation_model() : '';
+
+		$reply = $this->client->chat( $messages, (string) $context, $tool_executor, (string) $pages, $vision_mdl, $has_image ? $image : null );
 
 		if ( $this->budget ) {
 			$this->budget->record( $this->client->get_last_usage() );
@@ -52,7 +59,9 @@ final class DB_Chat_Orchestrator {
 			// ONE turn on the more capable escalation model, with the same
 			// tools, so it can search and answer from real data. Only turns
 			// that fail on the base model pay for the escalation.
-			$escalation = method_exists( $this->client, 'escalation_model' ) ? (string) $this->client->escalation_model() : '';
+			// A photo turn already ran on the escalation/vision model, so there
+			// is nowhere to escalate to — fall straight through to the safe line.
+			$escalation = ( ! $has_image && method_exists( $this->client, 'escalation_model' ) ) ? (string) $this->client->escalation_model() : '';
 
 			if ( '' !== $escalation ) {
 				$retry = $this->client->chat( $messages, (string) $context, $tool_executor, (string) $pages, $escalation );

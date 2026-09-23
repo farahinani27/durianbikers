@@ -64,6 +64,10 @@ define( 'DB_CHAT_OPT_ENABLED', 'db_chat_enabled' );
 define( 'DB_CHAT_OPT_GREETING', 'db_chat_greeting' );
 define( 'DB_CHAT_OPT_SUGGESTIONS', 'db_chat_suggestions' );
 define( 'DB_CHAT_OPT_LOGGING', 'db_chat_logging' );
+// Lets customers attach a photo the assistant can read (routes that turn to
+// the escalation/vision model). Default on; flip to '0' to hide the attach
+// button and ignore any image sent.
+define( 'DB_CHAT_OPT_VISION', 'db_chat_vision' );
 
 /**
  * Which brain answers: 'auto', 'lookup' or 'ai'.
@@ -688,6 +692,16 @@ final class DB_Chat_Plugin {
 	}
 
 	/**
+	 * Whether customers may attach a photo for the assistant to read. Default
+	 * ON — the toggle exists so cost can be killed instantly.
+	 *
+	 * @return bool
+	 */
+	public static function vision_enabled() {
+		return '1' === self::setting( DB_CHAT_OPT_VISION, '1' );
+	}
+
+	/**
 	 * Greeting shown when the panel opens.
 	 *
 	 * @return string Plain text.
@@ -819,6 +833,9 @@ final class DB_Chat_Plugin {
 			'suggestions'   => self::get_suggestions(),
 			'maxLength'     => DB_Chat_Chat_Endpoint::MAX_MESSAGE_LENGTH,
 			'maxHistory'    => DB_Chat_Chat_Endpoint::MAX_HISTORY,
+			// Photo attach: the widget shows the attach button only when this is
+			// '1'. The endpoint independently ignores images when it is off.
+			'visionEnabled' => self::vision_enabled() ? '1' : '0',
 			// Which storefront this page belongs to ('my', 'gb', or '' on the
 			// splash). Keys the saved conversation, so MYR and USD chats never
 			// mix. From the live theme's store routing when present.
@@ -997,6 +1014,7 @@ register_activation_hook(
 		add_option( DB_CHAT_OPT_MODEL, DB_CHAT_DEFAULT_MODEL );
 		add_option( DB_CHAT_OPT_GREETING, '' );
 		add_option( DB_CHAT_OPT_LOGGING, '0' );
+		add_option( DB_CHAT_OPT_VISION, '1' );
 
 		// Human handoff. Off by default, same reasoning as DB_CHAT_OPT_ENABLED
 		// above: this runs on a live store, so the feature stays off until
