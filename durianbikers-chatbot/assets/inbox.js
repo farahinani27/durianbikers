@@ -301,6 +301,15 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 		// staff cannot reply into either, so the reply box is disabled.
 		var replyDisabled = resolved || botActive;
 
+		// "Also email this reply" — only meaningful when we have a contact email
+		// AND the reply box is usable. Otherwise show why it can't be emailed.
+		var hasEmail = !!( convo && convo.contact_email );
+		var emailOptHtml = replyDisabled
+			? ''
+			: ( hasEmail
+				? '<label class="db-chat-inbox-email-opt"><input type="checkbox" name="email_reply"> Also email this reply to ' + esc( convo.contact_email ) + '</label>'
+				: '<span class="db-chat-inbox-email-none">No email on file — reply shows in the chat only</span>' );
+
 		/*
 		 * Single toggle instead of two static buttons: it always offers the
 		 * OPPOSITE of the current state. 'waiting' (just handed off, not yet
@@ -335,7 +344,10 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 				: '' ) +
 			'<form class="db-chat-inbox-reply">' +
 			'<textarea name="body" placeholder="' + ( replyDisabled ? 'Replies are disabled — the AI assistant has this chat' : 'Type a reply…' ) + '" rows="3"' + ( replyDisabled ? ' disabled' : '' ) + '></textarea>' +
+			'<div class="db-chat-inbox-reply-actions">' +
+			emailOptHtml +
 			'<button type="submit" class="button button-primary"' + ( replyDisabled ? ' disabled' : '' ) + '>Send reply</button>' +
+			'</div>' +
 			'</form>';
 
 		var transcriptEl = detailEl.querySelector( '.db-chat-inbox-transcript' );
@@ -735,14 +747,27 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 			return;
 		}
 
+		var emailBox = form.querySelector( 'input[name="email_reply"]' );
+		var wantEmail = !!( emailBox && emailBox.checked );
+
 		var submitBtn = form.querySelector( 'button[type="submit"]' );
 		submitBtn.disabled = true;
 		textarea.disabled = true;
 
 		var id = state.selectedId;
 
-		api( '/reply', { method: 'POST', body: JSON.stringify( { id: id, body: body } ) } )
-			.then( function () {
+		api( '/reply', { method: 'POST', body: JSON.stringify( { id: id, body: body, email: wantEmail } ) } )
+			.then( function ( res ) {
+				// Tell the operator plainly whether the email actually went out.
+				if ( wantEmail ) {
+					if ( res && res.emailed ) {
+						window.alert( 'Reply sent and emailed to the customer.' );
+					} else if ( res && ! res.has_email ) {
+						window.alert( 'Reply sent. No email on file for this customer, so it was not emailed.' );
+					} else {
+						window.alert( 'Reply sent, but the email could not be sent. Check the mail settings.' );
+					}
+				}
 				return Promise.all( [ loadList(), loadConversation( id ) ] );
 			} )
 			.catch( function ( err ) {

@@ -189,6 +189,25 @@ final class DB_Chat_Followup {
 
 	/* ---------------------------------------------------------------------- */
 
+	/**
+	 * Email one agent reply to the customer NOW, on demand — used by the inbox's
+	 * "Also email this reply" control. Independent of the master toggle and the
+	 * cron (a deliberate operator action), it only needs a valid contact email.
+	 *
+	 * @param array  $conversation Conversation row (needs contact_email / contact_name).
+	 * @param string $text         The agent's reply text.
+	 * @return bool True if the email was accepted for delivery.
+	 */
+	public static function email_agent_reply( array $conversation, $text ) {
+		$email = isset( $conversation['contact_email'] ) ? trim( (string) $conversation['contact_email'] ) : '';
+		$text  = trim( (string) $text );
+		if ( '' === $email || ! is_email( $email ) || '' === $text ) {
+			return false;
+		}
+		$name = isset( $conversation['contact_name'] ) ? (string) $conversation['contact_name'] : '';
+		return self::send_reply_email( $name, $email, array( $text ) );
+	}
+
 	private static function send_missed_email( $name, $email ) {
 		$subject = __( 'We got your message — Durian Bikers', 'durianbikers-chatbot' );
 		$body    = implode(

@@ -346,8 +346,42 @@ hyphen-separated, no BEM, no build step.
 	resize: vertical;
 }
 
-.db-chat-inbox-reply button {
-	align-self: flex-end;
+/* Row under the textarea: the "also email" option on the left, Send on the right. */
+.db-chat-inbox-reply-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.db-chat-inbox-reply-actions:only-child,
+.db-chat-inbox-reply-actions:empty {
+	justify-content: flex-end;
+}
+
+.db-chat-inbox-email-opt {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	font-size: 13px;
+	color: #1d2327;
+	cursor: pointer;
+}
+
+.db-chat-inbox-email-opt input {
+	margin: 0;
+	cursor: pointer;
+}
+
+.db-chat-inbox-email-none {
+	font-size: 12px;
+	color: #8c8f94;
+	font-style: italic;
+}
+
+.db-chat-inbox-reply-actions button {
+	margin-left: auto;
 }
 
 /* -------------------------------- mobile -------------------------------- */

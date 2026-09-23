@@ -211,10 +211,27 @@ final class DB_Chat_Inbox_Admin {
 			DB_Chat_Conversation_Store::assign( $id, get_current_user_id() );
 		}
 		$mid = DB_Chat_Conversation_Store::add_message( $id, 'agent', $body, get_current_user_id() );
+
+		// Optional: also email this reply to the customer now (the inbox's
+		// "Also email this reply" checkbox). A deliberate staff action, so it
+		// works regardless of the automatic follow-up toggle.
+		$has_email = ! empty( $c['contact_email'] ) && is_email( (string) $c['contact_email'] );
+		$emailed   = false;
+		if ( $req->get_param( 'email' ) && $has_email && class_exists( 'DB_Chat_Followup' ) ) {
+			$emailed = DB_Chat_Followup::email_agent_reply( $c, $body );
+			if ( $emailed ) {
+				// Advance the follow-up high-water mark so the automatic scan
+				// (if ever enabled) never emails this same reply a second time.
+				DB_Chat_Conversation_Store::set_emailed_msg_id( $id, (int) $mid );
+			}
+		}
+
 		return rest_ensure_response(
 			array(
-				'ok' => true,
-				'id' => $mid,
+				'ok'        => true,
+				'id'        => $mid,
+				'has_email' => (bool) $has_email,
+				'emailed'   => (bool) $emailed,
 			)
 		);
 	}
