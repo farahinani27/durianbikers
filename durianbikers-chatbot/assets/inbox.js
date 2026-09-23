@@ -227,7 +227,9 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 					'<span class="db-chat-inbox-badge db-chat-inbox-badge--' + esc( status ) + '">' + esc( label ) + '</span>' +
 					'<div class="db-chat-inbox-row-main">' +
 					'<div class="db-chat-inbox-row-contact">' + esc( contactLabel( row ) ) + '</div>' +
-					( preview ? '<div class="db-chat-inbox-row-preview">' + esc( preview ) + '</div>' : '' ) +
+					( preview
+						? '<div class="db-chat-inbox-row-preview">' + esc( preview ) + '</div>'
+						: '<div class="db-chat-inbox-row-preview db-chat-inbox-row-preview--empty">' + esc( '(no message yet)' ) + '</div>' ) +
 					'<div class="db-chat-inbox-row-time">' + esc( fmtTime( row.updated_at ) ) + '</div>' +
 					'</div>' +
 					'</div>'

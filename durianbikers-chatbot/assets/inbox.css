@@ -151,6 +151,12 @@ hyphen-separated, no BEM, no build step.
 	white-space: nowrap;
 }
 
+/* Placeholder when the visitor opened the chat but never sent a message. */
+.db-chat-inbox-row-preview--empty {
+	color: #8c8f94;
+	font-style: italic;
+}
+
 .db-chat-inbox-row-time {
 	font-size: 12px;
 	color: #646970;
