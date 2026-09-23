@@ -503,6 +503,16 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     color: var(--db-chat-bubble-user-ink);
 }
 
+/* The photo the customer sent, echoed inside their own bubble. */
+.db-chat-bubble-image {
+    display: block;
+    max-width: 200px;
+    max-height: 200px;
+    width: auto;
+    height: auto;
+    border-radius: 10px;
+}
+
 .db-chat-caption {
     margin: 0;
     padding-left: 2px;

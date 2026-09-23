@@ -2524,9 +2524,26 @@ products.
 
 	// --- MESSAGE RENDERING --- //
 
-	function addUserMessage(text) {
+	function addUserMessage(text, imageUrl) {
 		var wrap = el('div', 'db-chat-msg db-chat-msg-user');
-		wrap.appendChild(el('div', 'db-chat-bubble', text));
+		var bubble = el('div', 'db-chat-bubble');
+		// Show the photo the customer just sent, so their own message isn't a
+		// bare caption. Ephemeral: the image lives in the DOM for this session
+		// only, never in saved state or history.
+		if (imageUrl) {
+			var img = document.createElement('img');
+			img.className = 'db-chat-bubble-image';
+			img.src = imageUrl;
+			img.alt = 'Photo you sent';
+			if (text) {
+				img.style.marginBottom = '6px';
+			}
+			bubble.appendChild(img);
+		}
+		if (text) {
+			bubble.appendChild(document.createTextNode(text));
+		}
+		wrap.appendChild(bubble);
 		els.log.appendChild(wrap);
 		scrollToEnd();
 		return wrap;
@@ -3376,8 +3393,9 @@ products.
 		lastUserMessage = message;
 		noteOrderContext(message);
 		refreshHandoffHref();
-		// Image-only send: show a marker in the customer's bubble so it isn't blank.
-		addUserMessage(message || (imageToSend ? '📷 Photo' : ''));
+		// Echo the customer's photo (and caption) back into their own bubble.
+		var sentImageUrl = imageToSend ? ('data:' + imageToSend.media_type + ';base64,' + imageToSend.data) : null;
+		addUserMessage(message, sentImageUrl);
 
 		if (els.input) {
 			els.input.value = '';
