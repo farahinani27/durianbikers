@@ -13,7 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class DB_Chat_Conversation_Store {
 
-	const SCHEMA_VERSION = 3;
+	const SCHEMA_VERSION = 4;
 
 	const STATUS_BOT      = 'bot';
 	const STATUS_WAITING  = 'waiting';
@@ -68,6 +68,9 @@ final class DB_Chat_Conversation_Store {
 				updated_at DATETIME NOT NULL,
 				last_customer_at DATETIME NULL,
 				last_agent_at DATETIME NULL,
+				last_seen_at DATETIME NULL,
+				notified_missed_at DATETIME NULL,
+				emailed_msg_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
 				PRIMARY KEY  (id),
 				UNIQUE KEY public_id (public_id),
 				KEY status (status),
@@ -425,5 +428,75 @@ final class DB_Chat_Conversation_Store {
 		$wpdb->query( $wpdb->prepare( 'DELETE FROM ' . self::conversations_table() . ' WHERE id IN (' . $place . ')', $ids ) );
 
 		return count( $ids );
+	}
+
+	/* -------------------------------------------------------------------------
+	 * Email follow-up support (DB_Chat_Followup).
+	 * ---------------------------------------------------------------------- */
+
+	/**
+	 * Mark the customer as currently watching the chat. Called on each poll of
+	 * the customer's messages endpoint, so `last_seen_at` tracks presence — the
+	 * signal the follow-up job uses to tell "still here" from "has left".
+	 */
+	public static function touch_seen( $conversation_id ) {
+		global $wpdb;
+		$wpdb->update(
+			self::conversations_table(),
+			array( 'last_seen_at' => current_time( 'mysql', true ) ),
+			array( 'id' => (int) $conversation_id ),
+			array( '%s' ),
+			array( '%d' )
+		);
+	}
+
+	/** Record that the "sorry we missed you" email has been sent (once per chat). */
+	public static function mark_missed_notified( $conversation_id ) {
+		global $wpdb;
+		$wpdb->update(
+			self::conversations_table(),
+			array( 'notified_missed_at' => current_time( 'mysql', true ) ),
+			array( 'id' => (int) $conversation_id ),
+			array( '%s' ),
+			array( '%d' )
+		);
+	}
+
+	/** Advance the high-water mark of agent messages already emailed to the customer. */
+	public static function set_emailed_msg_id( $conversation_id, $message_id ) {
+		global $wpdb;
+		$wpdb->update(
+			self::conversations_table(),
+			array( 'emailed_msg_id' => (int) $message_id ),
+			array( 'id' => (int) $conversation_id ),
+			array( '%d' ),
+			array( '%d' )
+		);
+	}
+
+	/**
+	 * Live conversations that might need a follow-up email: still with a human
+	 * (waiting or assigned), a contact email on file, and touched within the
+	 * last two days (so the scan never trawls the whole history). Newest first.
+	 *
+	 * @return array<int,array>
+	 */
+	public static function followup_candidates( $limit = 100 ) {
+		global $wpdb;
+
+		$cutoff = gmdate( 'Y-m-d H:i:s', time() - 2 * DAY_IN_SECONDS );
+
+		return $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT * FROM ' . self::conversations_table()
+				. " WHERE status IN ('" . self::STATUS_WAITING . "','" . self::STATUS_HUMAN . "')"
+				. " AND contact_email <> '' AND contact_email IS NOT NULL"
+				. ' AND updated_at >= %s'
+				. ' ORDER BY updated_at DESC LIMIT %d',
+				$cutoff,
+				(int) $limit
+			),
+			ARRAY_A
+		) ?: array();
 	}
 }

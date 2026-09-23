@@ -73,6 +73,11 @@ define( 'DB_CHAT_OPT_VISION', 'db_chat_vision' );
 // chat without leaving details. Only meaningful when the handoff/inbox is on,
 // since that is what stores the conversation the name is attached to.
 define( 'DB_CHAT_OPT_CONTACT_GATE', 'db_chat_contact_gate' );
+// Emails the customer when a human is idle too long: a "we missed you" note
+// after a chat waits unanswered, and forwards an agent's reply if the customer
+// has left the chat. Default OFF — turn on only after testing (needs the
+// handoff/inbox on, which owns the conversations). See DB_Chat_Followup.
+define( 'DB_CHAT_OPT_FOLLOWUP', 'db_chat_followup' );
 
 /**
  * Which brain answers: 'auto', 'lookup' or 'ai'.
@@ -141,6 +146,7 @@ $db_chat_optional_files = array(
 	'includes/class-handoff-alert.php',
 	'includes/class-handoff-endpoint.php',
 	'includes/class-inbox-admin.php',
+	'includes/class-followup.php',
 );
 
 foreach ( $db_chat_optional_files as $db_chat_optional_file ) {
@@ -289,6 +295,13 @@ final class DB_Chat_Plugin {
 
 		if ( class_exists( 'DB_Chat_Inbox_Admin' ) ) {
 			new DB_Chat_Inbox_Admin();
+		}
+
+		// Customer email follow-ups (idle "we missed you" + agent-reply forward).
+		// Registers its cron; only schedules/sends while its own toggle + the
+		// handoff feature are both on (default OFF).
+		if ( class_exists( 'DB_Chat_Followup' ) ) {
+			DB_Chat_Followup::init();
 		}
 
 		add_action( 'init', array( $this, 'load_textdomain' ) );
@@ -1040,6 +1053,7 @@ register_activation_hook(
 		add_option( DB_CHAT_OPT_LOGGING, '0' );
 		add_option( DB_CHAT_OPT_VISION, '1' );
 		add_option( DB_CHAT_OPT_CONTACT_GATE, '1' );
+		add_option( DB_CHAT_OPT_FOLLOWUP, '0' );
 
 		// Human handoff. Off by default, same reasoning as DB_CHAT_OPT_ENABLED
 		// above: this runs on a live store, so the feature stays off until

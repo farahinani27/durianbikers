@@ -138,6 +138,10 @@ final class DB_Chat_Handoff_Endpoint {
 		}
 		$since = (int) $request->get_param( 'since' );
 
+		// The customer is actively watching this chat — record it so the email
+		// follow-up job can tell "still here" from "has left". Cheap single UPDATE.
+		DB_Chat_Conversation_Store::touch_seen( (int) $conv['id'] );
+
 		$messages = DB_Chat_Conversation_Store::messages_since( (int) $conv['id'], $since, array( 'agent', 'system' ) );
 
 		$last = $since;
