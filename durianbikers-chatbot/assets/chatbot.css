@@ -1376,6 +1376,12 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     margin-top: 8px;
 }
 
+/* Phone field follows the (often hidden) error line, so the adjacent-input
+   rule above can't reach it — give it the same gap explicitly. */
+.db-chat-contact-phone {
+    margin-top: 8px;
+}
+
 .db-chat-contact-input:focus {
     border-color: var(--db-chat-brand);
 }

@@ -144,7 +144,7 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 		return d.toLocaleString();
 	}
 
-	function lastPreview( row ) {
+	function contactLabel( row ) {
 		// Name first — the pre-chat contact gate captures it, and a person's
 		// name is the most useful label in the list. Then the older fallbacks.
 		if ( row.contact_name ) {
@@ -160,6 +160,21 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 			return row.contact_value;
 		}
 		return row.page_url ? row.page_url : '(no contact given)';
+	}
+
+	// A short snippet of the customer's most recent message (server sends up to
+	// 200 chars as `preview`), trimmed to ~15 words so the row shows what they
+	// asked — e.g. "hi, do you have…". Empty when nothing has been said yet.
+	function messagePreview( row ) {
+		var text = ( typeof row.preview === 'string' ? row.preview : '' ).replace( /\s+/g, ' ' ).trim();
+		if ( ! text ) {
+			return '';
+		}
+		var words = text.split( ' ' );
+		if ( words.length > 15 ) {
+			return words.slice( 0, 15 ).join( ' ' ) + '…';
+		}
+		return text;
 	}
 
 	/** Small "Customer contact" block for the detail view: only the fields
@@ -203,6 +218,7 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 				var active = String( row.id ) === String( state.selectedId ) ? ' is-active' : '';
 				var isChecked = state.checked[ String( row.id ) ] ? ' checked' : '';
 				var boxDisabled = state.bulkBusy ? ' disabled' : '';
+				var preview = messagePreview( row );
 				return (
 					'<div class="db-chat-inbox-row' + active + '" data-id="' + esc( row.id ) + '">' +
 					'<label class="db-chat-inbox-check">' +
@@ -210,7 +226,8 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 					'</label>' +
 					'<span class="db-chat-inbox-badge db-chat-inbox-badge--' + esc( status ) + '">' + esc( label ) + '</span>' +
 					'<div class="db-chat-inbox-row-main">' +
-					'<div class="db-chat-inbox-row-contact">' + esc( lastPreview( row ) ) + '</div>' +
+					'<div class="db-chat-inbox-row-contact">' + esc( contactLabel( row ) ) + '</div>' +
+					( preview ? '<div class="db-chat-inbox-row-preview">' + esc( preview ) + '</div>' : '' ) +
 					'<div class="db-chat-inbox-row-time">' + esc( fmtTime( row.updated_at ) ) + '</div>' +
 					'</div>' +
 					'</div>'

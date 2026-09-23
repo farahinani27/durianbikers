@@ -141,6 +141,16 @@ hyphen-separated, no BEM, no build step.
 	text-overflow: ellipsis;
 }
 
+/* One-line snippet of the customer's latest message, under the name. */
+.db-chat-inbox-row-preview {
+	font-size: 13px;
+	color: #3c434a;
+	margin-top: 2px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 .db-chat-inbox-row-time {
 	font-size: 12px;
 	color: #646970;

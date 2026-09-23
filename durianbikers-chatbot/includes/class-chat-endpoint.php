@@ -389,6 +389,13 @@ class DB_Chat_Chat_Endpoint {
 						'type'     => 'string',
 						'default'  => '',
 					),
+					// Optional phone from the pre-chat gate. Never required â
+					// sanitised and stored if given, ignored if blank.
+					'contact_phone' => array(
+						'required' => false,
+						'type'     => 'string',
+						'default'  => '',
+					),
 				),
 			)
 		);
@@ -522,6 +529,7 @@ class DB_Chat_Chat_Endpoint {
 				$payload['contact'] = array(
 					'name'      => $name,
 					'email'     => (string) $user->user_email,
+					'phone'     => (string) get_user_meta( $user->ID, 'billing_phone', true ),
 					'satisfied' => true,
 				);
 			}
@@ -2222,6 +2230,7 @@ class DB_Chat_Chat_Endpoint {
 
 		$name  = '';
 		$email = '';
+		$phone = '';
 
 		if ( is_user_logged_in() ) {
 			$user = wp_get_current_user();
@@ -2231,10 +2240,14 @@ class DB_Chat_Chat_Endpoint {
 					$name = trim( trim( (string) $user->first_name ) . ' ' . trim( (string) $user->last_name ) );
 				}
 				$email = (string) $user->user_email;
+				// The account's saved billing phone, if any — optional, so a
+				// blank one simply leaves the field empty.
+				$phone = (string) get_user_meta( $user->ID, 'billing_phone', true );
 			}
 		} else {
 			$name  = sanitize_text_field( (string) $request->get_param( 'contact_name' ) );
 			$email = sanitize_email( (string) $request->get_param( 'contact_email' ) );
+			$phone = sanitize_text_field( (string) $request->get_param( 'contact_phone' ) );
 		}
 
 		// No usable email → nothing to attach (a guest who somehow bypassed the
@@ -2243,7 +2256,7 @@ class DB_Chat_Chat_Endpoint {
 			return;
 		}
 
-		DB_Chat_Conversation_Store::set_contact_details( (int) $conversation['id'], $name, $email, '' );
+		DB_Chat_Conversation_Store::set_contact_details( (int) $conversation['id'], $name, $email, $phone );
 	}
 
 	private function capture_checkout_input( $request ) {

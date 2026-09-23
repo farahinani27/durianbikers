@@ -326,15 +326,25 @@ final class DB_Chat_Conversation_Store {
 	public static function list_conversations( $status = '', $limit = 50, $offset = 0 ) {
 		global $wpdb;
 
-		$sql    = 'SELECT * FROM ' . self::conversations_table();
-		$params = array();
+		$conv = self::conversations_table();
+		$msg  = self::messages_table();
+
+		// Each row carries `preview`: the first 200 chars of the customer's most
+		// recent message, so the inbox list can show what they actually asked
+		// ("hi, do you have…") instead of only who they are. Correlated subquery
+		// — one query for the whole page, no N+1. %s ('customer') is the FIRST
+		// placeholder in the SQL text, so it must be the first bound value.
+		$sql    = 'SELECT c.*, ( SELECT LEFT( m.body, 200 ) FROM ' . $msg
+			. ' m WHERE m.conversation_id = c.id AND m.sender = %s ORDER BY m.id DESC LIMIT 1 ) AS preview FROM '
+			. $conv . ' c';
+		$params = array( 'customer' );
 
 		if ( '' !== $status ) {
-			$sql     .= ' WHERE status = %s';
+			$sql     .= ' WHERE c.status = %s';
 			$params[] = (string) $status;
 		}
 
-		$sql     .= ' ORDER BY updated_at DESC LIMIT %d OFFSET %d';
+		$sql     .= ' ORDER BY c.updated_at DESC LIMIT %d OFFSET %d';
 		$params[] = (int) $limit;
 		$params[] = (int) $offset;
 

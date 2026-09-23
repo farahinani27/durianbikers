@@ -189,7 +189,8 @@ products.
 		gateSubmit: cfg.gateSubmitLabel || 'Start chat',
 		gateNameError: cfg.gateNameErrorText || "Please enter your name so we know who we're talking to.",
 		gateEmailError: cfg.gateEmailErrorText || 'Please enter a valid email so we can reply.',
-		gatePlaceholder: cfg.gatePlaceholderText || 'Enter your name and email above to start…'
+		gatePlaceholder: cfg.gatePlaceholderText || 'Enter your name and email above to start…',
+		gatePhonePlaceholder: cfg.gatePhonePlaceholderText || 'Phone number (optional)'
 	};
 
 	var MAX_MESSAGE = 1000;      // matches the REST contract
@@ -845,7 +846,7 @@ products.
 		// customer's come from /session instead, never from saved state.)
 		if (contactGateEnabled && data.contact && typeof data.contact === 'object' &&
 			data.contact.email && EMAIL_RE.test(String(data.contact.email))) {
-			contactGiven = { name: trimmed(data.contact.name), email: trimmed(data.contact.email) };
+			contactGiven = { name: trimmed(data.contact.name), email: trimmed(data.contact.email), phone: trimmed(data.contact.phone) };
 			contactFromGate = true;
 		}
 		restoring = true;
@@ -1038,7 +1039,7 @@ products.
 		contactSessionResolved = true;
 		var c = data && typeof data === 'object' ? data.contact : null;
 		if (!contactGiven && c && typeof c === 'object' && c.satisfied === true && c.email) {
-			contactGiven = { name: trimmed(c.name), email: trimmed(c.email) };
+			contactGiven = { name: trimmed(c.name), email: trimmed(c.email), phone: trimmed(c.phone) };
 			contactFromGate = false; // account-sourced; server fills it, don't POST it.
 		}
 		refreshContactGate();
@@ -1121,6 +1122,15 @@ products.
 		error.hidden = true;
 		box.appendChild(error);
 
+		// Phone is OPTIONAL — no validation, blank is fine. Placed after the
+		// email error so a validation message sits directly under the email.
+		var phoneInput = document.createElement('input');
+		phoneInput.type = 'tel';
+		phoneInput.className = 'db-chat-contact-input db-chat-contact-phone';
+		phoneInput.setAttribute('placeholder', TEXT.gatePhonePlaceholder);
+		phoneInput.setAttribute('autocomplete', 'tel');
+		box.appendChild(phoneInput);
+
 		function showError(text, field) {
 			error.textContent = text;
 			error.hidden = false;
@@ -1155,7 +1165,7 @@ products.
 				return;
 			}
 			clearError();
-			contactGiven = { name: name, email: email };
+			contactGiven = { name: name, email: email, phone: trimmed(phoneInput.value) };
 			contactFromGate = true;
 			// Real user gesture: prime the notification audio for later polling.
 			primeAudioContext();
@@ -1176,7 +1186,7 @@ products.
 		startBtn.addEventListener('click', attempt);
 		actions.appendChild(startBtn);
 
-		[nameInput, emailInput].forEach(function (input) {
+		[nameInput, emailInput, phoneInput].forEach(function (input) {
 			input.addEventListener('keydown', function (event) {
 				if (event.key === 'Enter') {
 					event.preventDefault();
@@ -3510,6 +3520,7 @@ products.
 		if (handoffEnabled && contactFromGate && contactGiven && contactGiven.email) {
 			body.contact_name = contactGiven.name || '';
 			body.contact_email = contactGiven.email || '';
+			body.contact_phone = contactGiven.phone || '';
 		}
 
 		return fetchWithTimeout(cfg.ajaxUrl, {
