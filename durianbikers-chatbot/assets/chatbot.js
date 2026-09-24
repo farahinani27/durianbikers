@@ -742,7 +742,10 @@ products.
 	 * as a live reply.
 	 */
 	var STATE_VERSION = 1;
-	var STATE_MAX_AGE = 30 * 60 * 1000;
+	// How long a chat survives with no activity before it is dropped and the
+	// widget starts fresh. Each save refreshes the clock, so this is an IDLE
+	// timeout: 2 hours since the customer's last message/interaction.
+	var STATE_MAX_AGE = 2 * 60 * 60 * 1000;
 	// Raised from 100KB to fit a persisted photo (a downscaled JPEG data URL is
 	// a few hundred KB). saveState drops image data before it ever hits this cap.
 	var STATE_MAX_BYTES = 2500000;
@@ -809,10 +812,12 @@ products.
 		} catch (e) { /* private mode or quota: the chat still works in memory */ }
 	}
 
-	function readSavedState() {
+	// Read + validate the saved state at ONE storage key. Invalid/expired state
+	// at that key is removed. Returns the parsed object or null.
+	function parseStateAt(key) {
 		var raw = null;
 		try {
-			raw = window.sessionStorage.getItem(stateKey());
+			raw = window.sessionStorage.getItem(key);
 		} catch (e) {
 			return null;
 		}
@@ -830,10 +835,71 @@ products.
 			age >= 0 && age <= STATE_MAX_AGE &&
 			Array.isArray(data.history) && Array.isArray(data.transcript);
 		if (!valid) {
-			clearSavedState();
+			try {
+				window.sessionStorage.removeItem(key);
+			} catch (e) { /* storage unavailable */ }
 			return null;
 		}
 		return data;
+	}
+
+	function readSavedState() {
+		var key = stateKey();
+		var data = parseStateAt(key);
+		if (data) {
+			return data;
+		}
+
+		/*
+		 * The store prefix in the key can differ between pages of the same site:
+		 * the "/" homepage keys as `_default`, while "/my/" pages key as `_my`.
+		 * Without this, opening the chat on the homepage and then clicking into
+		 * the store would look like a fresh widget — the in-progress chat is in a
+		 * different bucket. So when THIS page's bucket is empty, adopt the most
+		 * recent valid chat from any other bucket and migrate it to this key, so
+		 * the conversation follows the customer as they browse.
+		 */
+		var prefix = 'db_chat_state_v' + STATE_VERSION + '_';
+		var keys = [];
+		try {
+			for (var i = 0; i < window.sessionStorage.length; i++) {
+				var k = window.sessionStorage.key(i);
+				if (k) {
+					keys.push(k);
+				}
+			}
+		} catch (e) { /* iteration unavailable: nothing to migrate */ }
+
+		var best = null;
+		var bestKey = null;
+		keys.forEach(function (k) {
+			if (k.indexOf(prefix) !== 0 || k === key) {
+				return;
+			}
+			var d = parseStateAt(k);
+			if (d && (!best || (d.savedAt || 0) > (best.savedAt || 0))) {
+				best = d;
+				bestKey = k;
+			}
+		});
+
+		if (best && bestKey) {
+			// Crossing between two DIFFERENT real stores (my <-> gb) could carry a
+			// stale-currency pending order; drop just that (the chat text is fine
+			// to keep). Migrating from the ambiguous `_default` splash keeps it.
+			var curStore = key.slice(prefix.length);
+			var srcStore = bestKey.slice(prefix.length);
+			if (/^[a-z]{2}$/.test(curStore) && /^[a-z]{2}$/.test(srcStore) && curStore !== srcStore) {
+				best.pending = null;
+			}
+			try {
+				window.sessionStorage.setItem(key, JSON.stringify(best));
+				window.sessionStorage.removeItem(bestKey);
+			} catch (e) { /* storage full/unavailable: still use it in memory */ }
+			return best;
+		}
+
+		return null;
 	}
 
 	function restoreState() {
@@ -1013,6 +1079,10 @@ products.
 			try {
 				window.localStorage.removeItem(CONVERSATION_ID_KEY);
 			} catch (e) { /* storage unavailable: memory only */ }
+			// Also wipe the saved transcript so a resolved chat does not
+			// restore on this reload or a later page (mirrors the live-poll
+			// resolved branch).
+			clearSavedState();
 			setHumanHandoffButtonVisible(true);
 			setBotHandoffButtonVisible(false);
 			return;
@@ -2395,6 +2465,9 @@ products.
 				try {
 					window.localStorage.removeItem(CONVERSATION_ID_KEY);
 				} catch (e) { /* storage unavailable: memory only */ }
+				// Resolved is a hard clear point: wipe the saved transcript too, so
+				// the closed chat does not restore on the next page or reload.
+				clearSavedState();
 				setHumanHandoffButtonVisible(true);
 				setBotHandoffButtonVisible(false);
 				return;
