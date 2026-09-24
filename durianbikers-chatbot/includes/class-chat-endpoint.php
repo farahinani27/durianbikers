@@ -1192,6 +1192,16 @@ class DB_Chat_Chat_Endpoint {
 			$response_data['last_message_id'] = $mid;
 		}
 
+		// Tell the widget when THIS turn actually looked up the customer's orders
+		// (the same precise, request-scoped signal that drives no-store above).
+		// The widget uses it to keep a real order lookup out of persisted chat
+		// state and the WhatsApp prefill — without disabling persistence for the
+		// many ordinary chats that merely say the word "order". Just a boolean;
+		// it carries no order data (the reply text already did).
+		if ( $this->order_tool_used ) {
+			$response_data['order_lookup'] = true;
+		}
+
 		return $this->apply_no_store( rest_ensure_response( $response_data ) );
 	}
 

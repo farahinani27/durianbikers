@@ -74,9 +74,9 @@ PREFILL IS A PRIVACY BOUNDARY
 The `?text=` parameter is built at click time and contains ONLY the
 customer's own last typed message, trimmed to 200 characters and
 URL-encoded. Never an assistant reply, never product data, never anything
-else from the transcript. If the conversation has touched orders at all
-(order numbers, tracking, refunds — see ORDER_HINT), the prefill is skipped
-entirely in favour of a neutral opener: a wa.me URL is visible in browser
+else from the transcript. If the conversation has looked up the customer's
+own orders (the server's order_lookup signal — see noteOrderTools), the
+prefill is skipped in favour of a neutral opener: a wa.me URL is visible in browser
 history, in the OS share sheet and to anyone looking at the screen, and
 order data has no business being there.
 
@@ -686,47 +686,25 @@ products.
 	// --- HUMAN HANDOFF (WhatsApp) --- //
 
 	/**
-	 * Anything that suggests the conversation has touched the customer's own
-	 * orders. Matching here is deliberately loose: a false positive costs a
-	 * neutral opener instead of a helpful one, a false negative would put an
-	 * order number into a URL that lands in browser history. Malay terms are
-	 * included because customers do ask in Malay.
-	 */
-	var ORDER_HINT = new RegExp(
-		'(^|[^a-z])(orders?|ordered|ordering|invoices?|invois|receipts?|resit|' +
-		'tracking|tracked|track|parcels?|shipments?|shipped|consignment|awb|' +
-		'refunds?|pesanan|penghantaran|pembelian)([^a-z]|$)' +
-		'|#\\s*\\d{3,}' +      // "#1042"
-		'|\\d{5,}',            // a bare order-number-looking run of digits
-		'i'
-	);
-
-	function noteOrderContext(text) {
-		if (ordersTouched || typeof text !== 'string' || !text) {
-			return;
-		}
-		if (ORDER_HINT.test(text)) {
-			ordersTouched = true;
-			clearSavedState();
-		}
-	}
-
-	/**
-	 * Belt and braces on top of the text heuristic above: if a response ever
-	 * reports which tools it ran, trust that too.
+	 * Mark the conversation as having touched the customer's own ORDER data —
+	 * the reply carried real order details (order number, tracking, items) from
+	 * get_my_orders. This drives two protections: the chat is not persisted, and
+	 * the WhatsApp prefill drops it (so an order number never lands in a URL).
 	 *
-	 * The backend does NOT send `tools_used` today, and that is a deliberate
-	 * decision, not an oversight — it declined to add any new field to the one
-	 * response that can carry order data. So this is a no-op in practice and
-	 * the text check above is the whole mechanism. Left in place because it
-	 * costs nothing and fails safe: no field, no behaviour change.
+	 * The signal is PRECISE, from the server: `data.order_lookup === true` (set
+	 * only when the order tool actually ran this turn), or a `tools_used` list
+	 * naming get_my_orders. It deliberately does NOT trigger on the mere WORD
+	 * "order" — that fired constantly (the bot's own "track your orders" line
+	 * included) and wiped every ordinary chat's saved history, which is exactly
+	 * what customers were losing on navigation.
 	 */
 	function noteOrderTools(data) {
 		if (ordersTouched || !data || typeof data !== 'object') {
 			return;
 		}
 		var used = Array.isArray(data.tools_used) ? data.tools_used : null;
-		if (used && used.indexOf('get_my_orders') !== -1) {
+		var byTool = !!(used && used.indexOf('get_my_orders') !== -1);
+		if (data.order_lookup === true || byTool) {
 			ordersTouched = true;
 			clearSavedState();
 		}
@@ -744,8 +722,8 @@ products.
 	var STATE_VERSION = 1;
 	// How long a chat survives with no activity before it is dropped and the
 	// widget starts fresh. Each save refreshes the clock, so this is an IDLE
-	// timeout: 2 hours since the customer's last message/interaction.
-	var STATE_MAX_AGE = 2 * 60 * 60 * 1000;
+	// timeout: 1 hour since the customer's last message/interaction.
+	var STATE_MAX_AGE = 60 * 60 * 1000;
 	// Raised from 100KB to fit a persisted photo (a downscaled JPEG data URL is
 	// a few hundred KB). saveState drops image data before it ever hits this cap.
 	var STATE_MAX_BYTES = 2500000;
@@ -3732,10 +3710,10 @@ products.
 			}
 		}
 		var sentExtra = lastAttemptExtra;
-		// The customer's own words: the only thing the WhatsApp prefill may
-		// ever carry, and only if orders never came up.
+		// The customer's own words: the only thing the WhatsApp prefill may ever
+		// carry, and only until a real order lookup marks the chat (see
+		// noteOrderTools — the server's order_lookup signal, not the word "order").
 		lastUserMessage = message;
-		noteOrderContext(message);
 		refreshHandoffHref();
 		// Echo the customer's photo (and caption) back into their own bubble.
 		var sentImageUrl = imageToSend ? ('data:' + imageToSend.media_type + ';base64,' + imageToSend.data) : null;
@@ -3856,10 +3834,6 @@ products.
 			return;
 		}
 
-		// An assistant reply can name an order too ("order #1042 shipped"), so
-		// it counts as touching orders even though the reply text itself never
-		// reaches the URL.
-		noteOrderContext(reply);
 		refreshHandoffHref();
 
 		addBotMessage(reply);
