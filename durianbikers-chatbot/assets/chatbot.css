@@ -1442,6 +1442,25 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     color: var(--db-chat-ink);
 }
 
+/* "Change delivery address" on the checkout summary — a quiet secondary
+   control that must not compete with "Confirm & proceed to payment". */
+.db-chat-checkout-change {
+    margin-top: 8px;
+    padding: 0;
+    border: 0;
+    background: none;
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 600;
+    color: var(--db-chat-brand);
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+.db-chat-checkout-change:hover {
+    color: var(--db-chat-brand-hover);
+}
+
 /* Agent ("Team") reply — same bubble shape as a bot message, tinted with the
    brand colour at low opacity so it reads as a different voice without
    introducing a whole new colour. */

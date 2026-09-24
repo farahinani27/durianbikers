@@ -1879,6 +1879,19 @@ products.
 
 		body.appendChild(el('p', 'db-chat-escalate-text', 'Is everything above correct?'));
 
+		// Let the customer fix or change their delivery address — a wrong
+		// address, or a different country — instead of being stuck with whatever
+		// was captured. Re-opens the same address form. Only shown once an
+		// address is on the summary (the confirm step).
+		if (typeof summary.address_line === 'string' && summary.address_line.trim()) {
+			var changeBtn = el('button', 'db-chat-checkout-change', 'Change delivery address');
+			changeBtn.type = 'button';
+			changeBtn.addEventListener('click', function () {
+				openCheckoutForm();
+			});
+			body.appendChild(changeBtn);
+		}
+
 		wrap.appendChild(body);
 		els.log.appendChild(wrap);
 		scrollToEnd();

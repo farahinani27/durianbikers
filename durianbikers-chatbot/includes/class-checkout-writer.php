@@ -192,7 +192,18 @@ class DB_Chat_Checkout_Writer {
 		if ( function_exists( 'WC' ) && WC()->cart ) {
 			WC()->cart->calculate_shipping();
 			WC()->cart->calculate_totals();
-			$shipping = wp_strip_all_tags( (string) WC()->cart->get_cart_shipping_total() );
+			// get_cart_shipping_total() returns price HTML whose currency symbol
+			// can arrive as numeric entities (e.g. "&#82;&#77;" for "RM"). Strip
+			// the tags AND decode the entities, or the widget — which renders this
+			// as plain text — shows the raw "&#82;&#77;10.00" instead of "RM10.00".
+			$shipping = html_entity_decode(
+				wp_strip_all_tags( (string) WC()->cart->get_cart_shipping_total() ),
+				ENT_QUOTES,
+				'UTF-8'
+			);
+			// A decoded &nbsp; becomes a non-breaking space; normalise it so the
+			// figure reads as a plain "RM 10.00".
+			$shipping = trim( str_replace( "\xC2\xA0", ' ', $shipping ) );
 		}
 
 		return array(
