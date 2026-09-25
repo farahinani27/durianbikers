@@ -1756,6 +1756,7 @@ products.
 			{ key: 'email', placeholder: 'you@example.com', type: 'email' },
 			{ key: 'address_1', placeholder: 'Street address', type: 'text' },
 			{ key: 'city', placeholder: 'City', type: 'text' },
+			{ key: 'state', placeholder: 'State / region (e.g. Johor)', type: 'text' },
 			{ key: 'postcode', placeholder: 'Postcode', type: 'text' },
 			{ key: 'country', placeholder: 'Country', type: 'text' }
 		];
@@ -1980,6 +1981,13 @@ products.
 	 */
 	function addCheckoutStep(checkout, hasLink) {
 		if (!checkout || typeof checkout !== 'object') {
+			return;
+		}
+		// Empty cart: the server refuses to build a summary or a payment link, so
+		// never render a form, a summary card, or a confirm button. Say so plainly
+		// instead of showing an RM0.00 "proceed to payment".
+		if (checkout.needs === 'cart') {
+			renderSystemNote('Your cart is empty — add an item and I can take you to checkout.');
 			return;
 		}
 		if (checkout.needs === 'address') {

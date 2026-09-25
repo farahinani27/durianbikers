@@ -67,6 +67,68 @@ class DB_Chat_Checkout_Writer {
 	}
 
 	/**
+	 * Map a country the customer typed to WooCommerce's 2-letter code.
+	 * Accepts an existing code ("MY") or a full name ("Malaysia"/"MALAYSIA");
+	 * unknown input is returned unchanged. Input arrives letters-only+uppercase
+	 * from sanitize_details(), so names are compared the same way.
+	 *
+	 * @param string $value Country code or name (letters-only, uppercase).
+	 * @return string ISO country code, or the input if it could not be mapped.
+	 */
+	private static function to_country_code( $value ) {
+		$value = strtoupper( trim( (string) $value ) );
+
+		if ( '' === $value || ! function_exists( 'WC' ) || ! WC()->countries ) {
+			return $value;
+		}
+
+		$countries = WC()->countries->get_countries();
+
+		if ( isset( $countries[ $value ] ) ) {
+			return $value; // already a valid code
+		}
+
+		foreach ( $countries as $code => $name ) {
+			if ( strtoupper( (string) preg_replace( '/[^A-Za-z]/', '', (string) $name ) ) === $value ) {
+				return $code;
+			}
+		}
+
+		return $value; // unknown — leave as given
+	}
+
+	/**
+	 * Map a state the customer typed to WooCommerce's code for that country
+	 * (e.g. Malaysia "Johor" -> "JHR"). Accepts a code or a name; returns the
+	 * input unchanged when the country has no state list or nothing matches.
+	 *
+	 * @param string $country Country code (already resolved).
+	 * @param string $value   State code or name (letters-only, uppercase).
+	 * @return string State code, or the input if it could not be mapped.
+	 */
+	private static function to_state_code( $country, $value ) {
+		$value = strtoupper( trim( (string) $value ) );
+
+		if ( '' === $value || '' === $country || ! function_exists( 'WC' ) || ! WC()->countries ) {
+			return $value;
+		}
+
+		$states = WC()->countries->get_states( $country );
+
+		if ( empty( $states ) || isset( $states[ $value ] ) ) {
+			return $value; // no state list, or already a code
+		}
+
+		foreach ( $states as $code => $name ) {
+			if ( strtoupper( (string) preg_replace( '/[^A-Za-z]/', '', (string) $name ) ) === $value ) {
+				return $code;
+			}
+		}
+
+		return $value; // unknown — leave as given
+	}
+
+	/**
 	 * Return the session-bound WC_Customer, loading the WooCommerce session
 	 * first if a REST request has not booted it yet.
 	 *
@@ -103,6 +165,15 @@ class DB_Chat_Checkout_Writer {
 	 */
 	public function set_details( array $raw ) {
 		$clean = self::sanitize_details( $raw );
+
+		// Resolve the country/state NAMES to the ISO codes WooCommerce needs.
+		// sanitize_details() only upper-cased them, so a customer who typed
+		// "Malaysia"/"Johor" left "MALAYSIA"/"JOHOR" — which WC cannot map to a
+		// shipping zone, so checkout showed shipping as "Free!" and the order
+		// could not be placed. This needs WC's country/state tables, so it lives
+		// here (with WC access), not in the pure sanitiser.
+		$clean['country'] = self::to_country_code( $clean['country'] );
+		$clean['state']   = self::to_state_code( $clean['country'], $clean['state'] );
 
 		$c = $this->ensure_customer();
 
@@ -166,6 +237,18 @@ class DB_Chat_Checkout_Writer {
 			}
 		}
 
+		// State is required only where the country actually HAS states (Malaysia
+		// does, and without it WooCommerce won't calculate shipping or accept the
+		// order). Countries with no state list must not be blocked on it.
+		$country = $c && is_callable( array( $c, 'get_billing_country' ) ) ? (string) $c->get_billing_country() : '';
+		if ( '' !== $country && function_exists( 'WC' ) && WC()->countries ) {
+			$states = WC()->countries->get_states( $country );
+			$state  = is_callable( array( $c, 'get_billing_state' ) ) ? (string) $c->get_billing_state() : '';
+			if ( ! empty( $states ) && '' === trim( $state ) ) {
+				$missing[] = 'state';
+			}
+		}
+
 		return array(
 			'ok'      => empty( $missing ),
 			'missing' => $missing,
@@ -185,34 +268,48 @@ class DB_Chat_Checkout_Writer {
 	 * @return array{items:array,shipping:string,total:string,address_line:string,cart_url:string}
 	 */
 	public function summary() {
-		$cart = ( new DB_Chat_Cart_Writer() )->contents(); // items/count/total/cart_url
+		$cart = ( new DB_Chat_Cart_Writer() )->contents(); // items/count/cart_url
 
 		$shipping = '';
+		$total    = isset( $cart['total'] ) ? (string) $cart['total'] : '';
 
 		if ( function_exists( 'WC' ) && WC()->cart ) {
+			// Calculate BEFORE reading the totals — get_cart_total() otherwise
+			// returns a stale (often zero) figure on a fresh REST request.
 			WC()->cart->calculate_shipping();
 			WC()->cart->calculate_totals();
-			// get_cart_shipping_total() returns price HTML whose currency symbol
-			// can arrive as numeric entities (e.g. "&#82;&#77;" for "RM"). Strip
-			// the tags AND decode the entities, or the widget — which renders this
-			// as plain text — shows the raw "&#82;&#77;10.00" instead of "RM10.00".
-			$shipping = html_entity_decode(
-				wp_strip_all_tags( (string) WC()->cart->get_cart_shipping_total() ),
-				ENT_QUOTES,
-				'UTF-8'
-			);
-			// A decoded &nbsp; becomes a non-breaking space; normalise it so the
-			// figure reads as a plain "RM 10.00".
-			$shipping = trim( str_replace( "\xC2\xA0", ' ', $shipping ) );
+
+			$shipping = $this->money( (string) WC()->cart->get_cart_shipping_total() );
+
+			// The GRAND total the customer pays — items + shipping (+ tax).
+			// get_cart_total() excludes shipping here; get_total() includes it.
+			$grand = $this->money( (string) WC()->cart->get_total() );
+			if ( '' !== $grand ) {
+				$total = $grand;
+			}
 		}
 
 		return array(
 			'items'        => isset( $cart['items'] ) ? $cart['items'] : array(),
 			'shipping'     => $shipping,
-			'total'        => isset( $cart['total'] ) ? (string) $cart['total'] : '',
+			'total'        => $total,
 			'address_line' => $this->address_line(),
 			'cart_url'     => isset( $cart['cart_url'] ) ? (string) $cart['cart_url'] : '',
 		);
+	}
+
+	/**
+	 * Normalise a WooCommerce price-HTML string to plain text: strip tags,
+	 * decode numeric entities (the MYR symbol can arrive as "&#82;&#77;"), and
+	 * turn a decoded &nbsp; into a normal space, so the widget (which renders
+	 * this as plain text) shows "RM10.00" rather than "&#82;&#77;10.00".
+	 *
+	 * @param string $html Price HTML from WooCommerce.
+	 * @return string Plain "RM…" text.
+	 */
+	private function money( $html ) {
+		$s = html_entity_decode( wp_strip_all_tags( (string) $html ), ENT_QUOTES, 'UTF-8' );
+		return trim( str_replace( "\xC2\xA0", ' ', $s ) );
 	}
 
 	/**

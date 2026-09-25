@@ -1152,13 +1152,26 @@ class DB_Chat_Chat_Endpoint {
 		 * $checkout_tool_used property doc for why that is deliberate.
 		 */
 		if ( $this->checkout_tool_used ) {
-			$checkout_status = ( new DB_Chat_Checkout_Writer() )->has_required_for_checkout();
+			$cart_count = ( function_exists( 'WC' ) && WC()->cart ) ? (int) WC()->cart->get_cart_contents_count() : 0;
 
-			$response_data['checkout'] = array(
-				'mode'    => is_user_logged_in() ? 'logged_in' : 'guest',
-				'needs'   => empty( $checkout_status['ok'] ) ? 'address' : '',
-				'summary' => $this->checkout_widget_summary,
-			);
+			if ( $cart_count < 1 ) {
+				// Empty cart: never show a checkout summary or a proceed-to-payment
+				// button (that produced the "Total: RM0.00 / Shipping: Free!" card).
+				// `needs: 'cart'` tells the widget to say the cart is empty instead.
+				$response_data['checkout'] = array(
+					'mode'    => is_user_logged_in() ? 'logged_in' : 'guest',
+					'needs'   => 'cart',
+					'summary' => null,
+				);
+			} else {
+				$checkout_status = ( new DB_Chat_Checkout_Writer() )->has_required_for_checkout();
+
+				$response_data['checkout'] = array(
+					'mode'    => is_user_logged_in() ? 'logged_in' : 'guest',
+					'needs'   => empty( $checkout_status['ok'] ) ? 'address' : '',
+					'summary' => $this->checkout_widget_summary,
+				);
+			}
 		}
 
 		if ( null !== $this->checkout_link_url ) {
