@@ -1760,13 +1760,43 @@ products.
 			{ key: 'postcode', placeholder: 'Postcode', type: 'text' },
 			{ key: 'country', placeholder: 'Country', type: 'text' }
 		];
+		// Store-scoped delivery countries for the dropdown: /my = Malaysia only,
+		// /gb = worldwide except Malaysia (see checkout_countries_for_store()).
+		// Fall back to Malaysia so the form always works.
+		var checkoutCountries = (cfg.checkoutCountries && typeof cfg.checkoutCountries === 'object' && Object.keys(cfg.checkoutCountries).length)
+			? cfg.checkoutCountries
+			: { MY: 'Malaysia' };
+
 		var inputs = {};
 		fields.forEach(function (field) {
-			var input = document.createElement('input');
-			input.type = field.type;
-			input.className = 'db-chat-contact-input';
-			input.setAttribute('placeholder', field.placeholder);
-			input.setAttribute('autocomplete', 'off');
+			var input;
+			if (field.key === 'country') {
+				// Country is a DROPDOWN, not free text — the customer picks from
+				// the countries this store actually ships to.
+				input = document.createElement('select');
+				input.className = 'db-chat-contact-input db-chat-contact-select';
+				var codes = Object.keys(checkoutCountries);
+				if (codes.length > 1) {
+					var ph = document.createElement('option');
+					ph.value = '';
+					ph.textContent = 'Select your country';
+					ph.disabled = true;
+					ph.selected = true;
+					input.appendChild(ph);
+				}
+				codes.forEach(function (code) {
+					var opt = document.createElement('option');
+					opt.value = code;
+					opt.textContent = checkoutCountries[code];
+					input.appendChild(opt);
+				});
+			} else {
+				input = document.createElement('input');
+				input.type = field.type;
+				input.setAttribute('placeholder', field.placeholder);
+				input.setAttribute('autocomplete', 'off');
+				input.className = 'db-chat-contact-input';
+			}
 			box.appendChild(input);
 			inputs[field.key] = input;
 		});
@@ -3131,15 +3161,41 @@ products.
 			body.appendChild(el('p', 'db-chat-product-price', 'Total: ' + cart.total.trim()));
 		}
 
+		// After an item is added, offer the three next steps as buttons the
+		// customer can tap — Checkout, Continue shopping, View cart — instead of
+		// having to type. Deterministic: Checkout drives the checkout flow, so it
+		// never depends on the model reading the customer's words.
+		var actions = el('div', 'db-chat-cart-actions');
+
+		var checkoutBtn = el('button', 'db-chat-cart-action db-chat-cart-action--primary', 'Checkout');
+		checkoutBtn.type = 'button';
+		checkoutBtn.addEventListener('click', function () {
+			actions.remove();
+			send('I want to checkout');
+		});
+		actions.appendChild(checkoutBtn);
+
+		var continueBtn = el('button', 'db-chat-cart-action', 'Continue shopping');
+		continueBtn.type = 'button';
+		continueBtn.addEventListener('click', function () {
+			actions.remove();
+			if (els.input) {
+				try {
+					els.input.focus();
+				} catch (e) { /* not focusable: harmless */ }
+			}
+		});
+		actions.appendChild(continueBtn);
+
 		var href = safeUrl(cart.cart_url);
 		if (href) {
 			// Same tab, same as a product card's own link — no target set.
-			var link = el('a', 'db-chat-page-link');
-			link.setAttribute('href', href);
-			link.appendChild(icon(ICONS.page, 'db-chat-page-icon'));
-			link.appendChild(el('span', 'db-chat-page-title', 'View cart'));
-			body.appendChild(link);
+			var viewLink = el('a', 'db-chat-cart-action', 'View cart');
+			viewLink.setAttribute('href', href);
+			actions.appendChild(viewLink);
 		}
+
+		body.appendChild(actions);
 
 		wrap.appendChild(body);
 		els.log.appendChild(wrap);

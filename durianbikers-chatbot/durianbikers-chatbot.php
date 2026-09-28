@@ -733,6 +733,35 @@ final class DB_Chat_Plugin {
 	}
 
 	/**
+	 * Country choices for the checkout delivery-form dropdown, scoped to the
+	 * current storefront: the /my (Malaysia) store delivers within Malaysia
+	 * only; the /gb store ships worldwide EXCEPT Malaysia. Returns { code => name }.
+	 *
+	 * @return array<string,string>
+	 */
+	private static function checkout_countries_for_store() {
+		$store = function_exists( 'db_effective_store_prefix' ) ? strtolower( (string) db_effective_store_prefix() ) : '';
+
+		// Malaysia store: local delivery only.
+		if ( 'my' === $store ) {
+			return array( 'MY' => 'Malaysia' );
+		}
+
+		if ( ! function_exists( 'WC' ) || ! WC()->countries || ! is_callable( array( WC()->countries, 'get_countries' ) ) ) {
+			return array( 'MY' => 'Malaysia' );
+		}
+
+		$all = (array) WC()->countries->get_countries(); // code => name, sorted by name
+
+		// International /gb store: worldwide except Malaysia.
+		if ( 'gb' === $store ) {
+			unset( $all['MY'] );
+		}
+
+		return $all;
+	}
+
+	/**
 	 * Greeting shown when the panel opens.
 	 *
 	 * @return string Plain text.
@@ -877,6 +906,11 @@ final class DB_Chat_Plugin {
 			// splash). Keys the saved conversation, so MYR and USD chats never
 			// mix. From the live theme's store routing when present.
 			'store'         => function_exists( 'db_effective_store_prefix' ) ? (string) db_effective_store_prefix() : '',
+			// Country choices for the checkout delivery form's dropdown, scoped
+			// to this storefront: the /my (Malaysia) store ships within Malaysia
+			// only, the /gb store ships worldwide EXCEPT Malaysia. { code: name }.
+			// Static reference data (no PII) so it is safe in the cached config.
+			'checkoutCountries' => self::checkout_countries_for_store(),
 
 			// Copy overrides. Empty string means "use the JS default".
 			'title'         => '',

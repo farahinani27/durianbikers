@@ -1376,6 +1376,55 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     margin-top: 8px;
 }
 
+/* Country dropdown in the checkout form — looks like the text fields, with a
+   pointer cursor and no native platform chrome fighting the rounded style. */
+.db-chat-contact-select {
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: pointer;
+    background-color: var(--db-chat-surface);
+}
+
+/* "Checkout / Continue shopping / View cart" buttons under the cart summary. */
+.db-chat-cart-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.db-chat-cart-action {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid var(--db-chat-border);
+    background: var(--db-chat-surface);
+    color: var(--db-chat-ink);
+    font-family: inherit;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 700;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.2s ease-in-out, border-color 0.2s ease-in-out;
+}
+
+.db-chat-cart-action:hover {
+    border-color: var(--db-chat-ink-muted);
+}
+
+.db-chat-cart-action--primary {
+    border-color: var(--db-chat-brand);
+    background: var(--db-chat-brand);
+    color: var(--db-chat-brand-ink);
+}
+
+.db-chat-cart-action--primary:hover {
+    background: var(--db-chat-brand-hover);
+    border-color: var(--db-chat-brand-hover);
+}
+
 /* Phone field follows the (often hidden) error line, so the adjacent-input
    rule above can't reach it — give it the same gap explicitly. */
 .db-chat-contact-phone {
