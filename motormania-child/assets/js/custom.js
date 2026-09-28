@@ -326,3 +326,32 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 })(jQuery);
+
+document.addEventListener('DOMContentLoaded', function () {
+  var items = document.querySelectorAll('.all-category-item');
+  if (!items.length) return;
+
+  var container = items[0].parentElement;
+
+  var btn = document.createElement('button');
+  btn.id = 'view-more-categories';
+  btn.textContent = 'View More';
+  container.parentElement.insertBefore(btn, container.nextSibling);
+
+  var shown = 6;
+
+  if (items.length <= shown) {
+    btn.style.display = 'none';
+    return;
+  }
+
+  btn.addEventListener('click', function () {
+    for (var i = shown; i < shown + 6 && i < items.length; i++) {
+      items[i].classList.add('show-more-active');
+    }
+    shown += 6;
+    if (shown >= items.length) {
+      btn.style.display = 'none';
+    }
+  });
+});
