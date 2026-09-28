@@ -15,6 +15,13 @@ add_filter( 'elementor/widget/render_content', function( $content, $widget ) {
 	return $content;
 }, 10, 2 );
 
+add_filter( 'loop_shop_per_page', 'durian_mobile_products_per_page', 9999 );
+function durian_mobile_products_per_page( $per_page ) {
+    if ( wp_is_mobile() ) {
+        return 8;
+    }
+    return $per_page;
+}
 
 // GSAP
 function custom_gsap_scripts() {
@@ -603,7 +610,7 @@ function db_store_map() {
 /** Storefront homepage page IDs, keyed by prefix. */
 function db_store_home_ids() {
 
-	$home = 55540; 
+	$home = 58450;
 
 	return array(
 		'my' => $home,
