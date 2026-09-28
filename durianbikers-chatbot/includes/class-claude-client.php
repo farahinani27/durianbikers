@@ -723,7 +723,7 @@ class DB_Chat_Claude_Client {
 						),
 						'max_price'     => array(
 							'type'        => 'number',
-							'description' => 'Optional price ceiling in ringgit. ALWAYS set this when the customer asks for products "under RM X", "below RM X", "cheaper than X" or "around X" — pass X as the number. Results are limited to items at or under that price, ordered cheapest first, so you never have to guess whether something fits their budget.',
+							'description' => 'Optional price ceiling, in the store\'s own currency (the same currency the results come back in). ALWAYS set this when the customer names a budget — "under X", "below X", "cheaper than X" or "around X", whether they write it as RM X, $X or just a number — and pass X as the number. Results are limited to items at or under that price, ordered cheapest first, so you never have to guess whether something fits their budget.',
 						),
 						'sort_cheapest' => array(
 							'type'        => 'boolean',
@@ -979,6 +979,29 @@ Keep replies to a sentence or three. Be genuinely helpful.";
 		return $messages;
 	}
 
+	/**
+	 * Human-readable name for a currency code, for the system prompt. Covers the
+	 * store's currencies (MYR/USD) plus common neighbours; unknown codes fall
+	 * back to the code itself, which is always safe to state.
+	 *
+	 * @param string $code ISO currency code.
+	 * @return string
+	 */
+	private static function currency_name( $code ) {
+		$map = array(
+			'MYR' => 'Malaysian Ringgit',
+			'USD' => 'US Dollars',
+			'SGD' => 'Singapore Dollars',
+			'GBP' => 'British Pounds',
+			'EUR' => 'Euros',
+			'AUD' => 'Australian Dollars',
+			'THB' => 'Thai Baht',
+			'IDR' => 'Indonesian Rupiah',
+		);
+		$code = strtoupper( (string) $code );
+		return isset( $map[ $code ] ) ? $map[ $code ] : $code;
+	}
+
 	private function build_system_prompt( $static_context, $page_context = '' ) {
 		/*
 		 * How the bot refers customers to a human.
@@ -1080,6 +1103,19 @@ Rules for sizing:
 - This is a general guide. Bell and Scorpion sizing can vary a little between models, so for those add that the specific model's chart on the product page is the final word, and always recommend trying the helmet on before relying on the chart.
 - These charts are about HEAD SIZE only. They tell you nothing about whether a helmet suits a particular use, head shape or bike, and nothing about stock — do not imply otherwise.";
 
+		/*
+		 * Active shop currency for THIS request. woo-multi-currency (WOOCS)
+		 * filters woocommerce_currency to the currency the customer is browsing
+		 * in — USD on the international /gb store, MYR on /my — and the search
+		 * tool's prices are already in it. So the model must NAME this currency
+		 * (a hardcoded "MYR" was wrong for /gb customers) and never convert.
+		 */
+		$currency_code = function_exists( 'get_woocommerce_currency' ) ? strtoupper( (string) get_woocommerce_currency() ) : 'MYR';
+		$currency_sym  = function_exists( 'get_woocommerce_currency_symbol' )
+			? trim( html_entity_decode( (string) get_woocommerce_currency_symbol( $currency_code ), ENT_QUOTES, 'UTF-8' ) )
+			: 'RM';
+		$currency_name = self::currency_name( $currency_code );
+
 		$prompt = self::prompt_directives() . "
 
 You are the Durian Bikers store assistant. Durian Bikers is a Malaysian motorcycle parts, tyres and riding gear retailer. You help customers on the shop website find products, understand our published shop policies, and — when they are signed in to their account — check on their own orders. You also answer general rider questions — basic maintenance, how-to, and how parts work — from your own knowledge.
@@ -1090,7 +1126,7 @@ TONE AND LANGUAGE
 - Malay and English are the common cases, but the rule is general: if a customer writes in Mandarin, Tamil or any other language, reply in that language. Never answer in a language the customer did not use, and never apologise for or comment on their choice of language.
 - Do NOT translate product names, brand names, model codes or SKUs. \"Shinko 705\", \"R&G Racing\", \"BHG-143\" stay exactly as the search tool returns them, in any language — a translated part name is one the customer cannot search for or order.
 - When answering a policy question in a language other than English, you are translating our English policy pages. Translate the MEANING exactly. Never soften, round, generalise or guess at a detail that is hard to phrase — an approximate translation of a refund window or a delivery restriction becomes a dispute. If you cannot render something precisely, say so in the customer's language and point them to the page.
-- All prices are in Malaysian Ringgit (MYR). Quote prices exactly as the search tool returns them and never convert to another currency, whatever language you are replying in.
+- All prices are in " . $currency_name . " (" . $currency_sym . ", " . $currency_code . ") — the currency of the store this customer is browsing (our /gb international store shows USD, our /my Malaysia store shows MYR). Quote prices exactly as the search tool returns them, keep the " . $currency_sym . " symbol they come with, and never convert to another currency, whatever language you reply in. If the customer asks which currency the prices are in, tell them " . $currency_code . "; do NOT claim we only use Ringgit.
 
 YOUR FIVE TOOLS — CHOOSE THE RIGHT ONE
 - search_products: what we sell. \"Do you sell…\", \"how much is…\", \"is it in stock\", \"show me…\", brands, sizes, specifications. Returns up to 12 products, but not their per-size stock.
