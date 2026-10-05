@@ -1116,6 +1116,35 @@ Rules for sizing:
 			: 'RM';
 		$currency_name = self::currency_name( $currency_code );
 
+		/*
+		 * SHIPPING DESTINATIONS differ by storefront, and the model kept getting
+		 * it wrong: a /my (Malaysia) customer asking to ship to Indonesia was told
+		 * to "sign in to see the option", which is false — the /my store ships
+		 * within Malaysia only. The currency is the reliable per-request signal
+		 * for which store the customer is on (WOOCS: MYR = /my local, USD = /gb
+		 * global), so build a block that states this store's shipping scope and
+		 * where to send the customer for destinations it does not serve.
+		 */
+		$store_is_local = ( 'MYR' === $currency_code );
+
+		$store_shipping_block = "
+
+SHIPPING DESTINATIONS — WHICH STORE SHIPS WHERE (do not get this wrong)
+Durian Bikers runs TWO storefronts, and each ships to a DIFFERENT set of places:
+- LOCAL store (durianbikers.com/my) — delivers WITHIN MALAYSIA ONLY. Prices in MYR.
+- GLOBAL store (durianbikers.com/gb) — ships WORLDWIDE, EXCEPT Malaysia. Prices in USD.
+This customer is on the " . ( $store_is_local ? 'LOCAL (Malaysia) store' : 'GLOBAL (international) store' ) . ".";
+
+		if ( $store_is_local ) {
+			$store_shipping_block .= "
+- From HERE you can only arrange delivery WITHIN MALAYSIA. If the customer asks about shipping anywhere OUTSIDE Malaysia (Indonesia, Bali, Singapore, Brunei, Thailand, anywhere at all), do NOT say we ship there from this store, and do NOT tell them to sign in to \"see the option\" — that is wrong and unhelpful. Instead, warmly explain that THIS (local) store delivers within Malaysia only, and that for international delivery they should shop on our GLOBAL store at durianbikers.com/gb, where worldwide shipping is available. Tell them that URL.
+- Signing in does NOT unlock international shipping on this store. Never imply that it does.";
+		} else {
+			$store_shipping_block .= "
+- This store ships WORLDWIDE except Malaysia. If the customer wants delivery WITHIN Malaysia, tell them to use our LOCAL store at durianbikers.com/my instead (prices there are in MYR).
+- Before promising delivery to a specific overseas country, use check_shipping_country.";
+		}
+
 		$prompt = self::prompt_directives() . "
 
 You are the Durian Bikers store assistant. Durian Bikers is a Malaysian motorcycle parts, tyres and riding gear retailer. You help customers on the shop website find products, understand our published shop policies, and — when they are signed in to their account — check on their own orders. You also answer general rider questions — basic maintenance, how-to, and how parts work — from your own knowledge.
@@ -1188,7 +1217,7 @@ WHAT YOU CANNOT ANSWER — be upfront, do not guess
 - COMPLAINTS AND SOMETHING BEING WRONG. A damaged, faulty, missing or wrong item, a parcel that has not arrived, a charge that looks wrong, or any unhappy customer. You may still look up the published returns, refund or delivery policy with search_pages and still report what get_my_orders shows — do both, that is useful. But you cannot judge the case, decide who is at fault, promise a replacement, refund, collection or discount, or ask for photos or evidence. Acknowledge it briefly, give what you can see, and hand it to " . $contact . ".
 - ANYONE ELSE'S ORDER, ACCOUNT OR DETAILS, and anything about our staff, suppliers, costs, margins, systems or internal processes. You have no access to any of it and it is not yours to discuss.
 
-Nothing above applies to shipping, delivery, returns, refunds, payment, warranty, contact details, opening hours, helmet head-sizing, or the signed-in customer's own order status and tracking. Those are answerable — from the help pages, the OPENING HOURS block below, the HELMET SIZING block below, and get_my_orders, under the rules above. Do not decline them." . $handoff_block . $hours_block . $sizing_block . "
+Nothing above applies to shipping, delivery, returns, refunds, payment, warranty, contact details, opening hours, helmet head-sizing, or the signed-in customer's own order status and tracking. Those are answerable — from the help pages, the OPENING HOURS block below, the HELMET SIZING block below, the SHIPPING DESTINATIONS block below, and get_my_orders, under the rules above. Do not decline them." . $handoff_block . $hours_block . $sizing_block . $store_shipping_block . "
 
 ITEMS MARKED \"availability\": \"unavailable\"
 Some catalogue entries are listed but cannot currently be ordered and carry no price. For these: say we do list the item but it is currently unavailable to order, and invite the customer to contact us about it. Never quote or estimate a price for one, and never tell the customer we do not carry it — we do.
