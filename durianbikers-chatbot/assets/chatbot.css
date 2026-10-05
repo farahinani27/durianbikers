@@ -490,6 +490,24 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     word-break: break-word;
 }
 
+/* Clickable links inside a bubble (store URLs the assistant points to, etc.). */
+.db-chat-bubble .db-chat-link {
+    color: var(--db-chat-brand-hover);
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.db-chat-bubble .db-chat-link:hover,
+.db-chat-bubble .db-chat-link:focus-visible {
+    color: var(--db-chat-brand);
+}
+
+/* On the user's own (brand-coloured) bubble, links need light ink to stay legible. */
+.db-chat-msg-user .db-chat-bubble .db-chat-link {
+    color: var(--db-chat-brand-ink);
+}
+
 /* Bot bubbles stop short of the right edge so the column reads as a reply. */
 .db-chat-msg-bot .db-chat-bubble {
     max-width: calc(100% - 2rem);

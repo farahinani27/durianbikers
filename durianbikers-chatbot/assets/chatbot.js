@@ -432,6 +432,82 @@ products.
 		return '';
 	}
 
+	/*
+	 * Turn URLs in a plain-text string (assistant or staff output) into real
+	 * clickable links, WITHOUT ever touching innerHTML. The text is untrusted
+	 * model/human output, so every non-link run is written with a text node and
+	 * every href is laundered through safeUrl(); a value that does not survive
+	 * safeUrl() is left as plain text. Recognises:
+	 *   - explicit http(s):// URLs
+	 *   - bare domains on a known TLD, e.g. "durianbikers.com/gb" (the form the
+	 *     assistant is told to emit when sending a customer to the other store)
+	 * Bold/markdown such as **…** is intentionally left as-is — only links are
+	 * made clickable.
+	 */
+	var LINK_PATTERN = /(https?:\/\/[^\s<]+|(?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.(?:com|net|org|io|co|my|gb|sg|id|asia|shop|store)(?:\/[^\s<]*)?)/gi;
+
+	// Trailing characters that are sentence punctuation, not part of the URL.
+	function trimUrlTail(match) {
+		var trailing = '';
+		while (match.length) {
+			var last = match.charAt(match.length - 1);
+			// Sentence punctuation and markdown/quote characters the model may
+			// butt up against the URL (e.g. the "**" of **durianbikers.com/gb**).
+			if ('.,;:!?*_"\''.indexOf(last) !== -1) {
+				trailing = last + trailing;
+				match = match.slice(0, -1);
+				continue;
+			}
+			// A ")" only belongs to the URL if the URL also opened one.
+			if (last === ')' && match.indexOf('(') === -1) {
+				trailing = last + trailing;
+				match = match.slice(0, -1);
+				continue;
+			}
+			break;
+		}
+		return { url: match, trailing: trailing };
+	}
+
+	function appendLinkedText(container, text) {
+		var str = text === undefined || text === null ? '' : String(text);
+		LINK_PATTERN.lastIndex = 0;
+		var lastIndex = 0;
+		var m;
+		while ((m = LINK_PATTERN.exec(str)) !== null) {
+			var raw = m[0];
+			var split = trimUrlTail(raw);
+			var display = split.url;
+			var hasScheme = /^https?:\/\//i.test(display);
+			var href = safeUrl(hasScheme ? display : 'https://' + display);
+			if (href) {
+				if (m.index > lastIndex) {
+					container.appendChild(document.createTextNode(str.slice(lastIndex, m.index)));
+				}
+				var a = el('a', 'db-chat-link', display);
+				a.setAttribute('href', href);
+				a.setAttribute('target', '_blank');
+				a.setAttribute('rel', 'noopener noreferrer');
+				container.appendChild(a);
+				if (split.trailing) {
+					container.appendChild(document.createTextNode(split.trailing));
+				}
+				lastIndex = m.index + raw.length;
+			}
+			// If href didn't survive safeUrl(), leave the text; the tail after
+			// lastIndex is flushed below, so nothing is dropped.
+		}
+		if (lastIndex < str.length) {
+			container.appendChild(document.createTextNode(str.slice(lastIndex)));
+		}
+		return container;
+	}
+
+	// A bubble whose plain text keeps any URLs clickable (see appendLinkedText).
+	function linkedBubble(className, text) {
+		return appendLinkedText(el('div', className), text);
+	}
+
 	function isMobileSheet() {
 		return window.matchMedia(MOBILE_QUERY).matches;
 	}
@@ -2373,7 +2449,7 @@ products.
 		var wrap = el('div', 'db-chat-msg db-chat-msg-bot db-chat-msg-agent');
 		wrap.appendChild(buildAgentAvatar('db-chat-msg-avatar'));
 		var msgBody = el('div', 'db-chat-msg-body');
-		msgBody.appendChild(el('div', 'db-chat-bubble db-chat-bubble-agent', body));
+		msgBody.appendChild(linkedBubble('db-chat-bubble db-chat-bubble-agent', body));
 		msgBody.appendChild(el('p', 'db-chat-caption', 'Team'));
 		wrap.appendChild(msgBody);
 		els.log.appendChild(wrap);
@@ -2888,8 +2964,9 @@ products.
 		wrap.appendChild(buildAvatar('db-chat-msg-avatar'));
 
 		var body = el('div', 'db-chat-msg-body');
-		// textContent: assistant output is untrusted model text.
-		body.appendChild(el('div', 'db-chat-bubble', text));
+		// Untrusted model text: rendered as text nodes with any URLs turned into
+		// safeUrl()-checked links — never via innerHTML (see appendLinkedText).
+		body.appendChild(linkedBubble('db-chat-bubble', text));
 		body.appendChild(el('p', 'db-chat-caption', TEXT.botName));
 		wrap.appendChild(body);
 
