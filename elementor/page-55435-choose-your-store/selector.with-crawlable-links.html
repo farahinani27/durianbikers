@@ -1,0 +1,268 @@
+<!-- ============================================================
+  DURIANBIKERS store selector — paste this whole block into a
+  single Elementor "HTML" widget on an Elementor Canvas page.
+  Every class is prefixed dbk- so your theme can't interfere,
+  and .dbk-stage is position:fixed so Elementor padding is ignored.
+  Set your two site URLs in the data-url attributes below.
+============================================================ -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;700;800;900&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+
+<style>
+html,body{overflow:hidden!important;margin:0!important;padding:0!important;background:#0d0e0f!important}
+
+.dbk-root{
+  --asphalt:#0d0e0f; 
+  --primary:#5F9D40; 
+  --secondary:#FBCE11; 
+  --ink:#f5f2ea; 
+  --muted:rgba(245,242,234,.55);
+  font-family:'Archivo',system-ui,sans-serif;
+  color:var(--ink);
+}
+.dbk-root *{margin:0;padding:0;box-sizing:border-box}
+
+.dbk-stage{position:fixed;inset:0;z-index:9990;display:flex;width:100%;height:100dvh}
+
+.dbk-back{position:absolute;top:1.5rem;left:1.5rem;z-index:6;display:inline-flex;align-items:center;gap:.4rem;
+font-family:'Archivo',sans-serif;font-weight:800;font-size:.78rem;letter-spacing:.1em;text-transform:uppercase;
+color:var(--ink);padding:.55rem .9rem;border:1px solid rgba(245,242,234,.25);border-radius:2px;
+background:rgba(13,14,15,.4);opacity:0;pointer-events:none;transition:opacity .35s,border-color .35s;cursor:pointer;}
+.dbk-panel.dbk-chosen .dbk-back{opacity:1;pointer-events:auto;}
+.dbk-back:hover{border-color:var(--ink);}
+
+
+@media (max-width:760px){ .dbk-stage{flex-direction:column} }
+
+.dbk-panel{position:relative;flex:1 1 0;flex-grow:1;display:flex;flex-direction:column;
+justify-content:center;align-items:center;overflow:hidden;cursor:pointer;will-change:flex-grow;}
+.dbk-panel.dbk-local{background:radial-gradient(120% 90% at 30% 20%,#241a08 0%,#100d06 55%,var(--asphalt) 100%);}
+.dbk-panel.dbk-intl {background:radial-gradient(120% 90% at 70% 20%,#0a1a26 0%,#0a1116 55%,var(--asphalt) 100%);}
+.dbk-panel.dbk-local::after{content:"";position:absolute;inset:0;pointer-events:none;box-shadow:inset -1px 0 0 rgba(242,177,52,.35);}
+@media (max-width:760px){ .dbk-panel.dbk-local::after{box-shadow:inset 0 -1px 0 rgba(242,177,52,.35)} }
+
+.dbk-ghost{
+  position:absolute;
+  font-weight:900;
+  font-size:clamp(9rem,26vw,24rem);
+  line-height:.8;
+  letter-spacing:-.04em;
+  opacity: 0.1;
+  user-select:none;
+  pointer-events:none;
+  white-space:nowrap;
+  top:50%;
+  left:50%;
+  transform:translate(-50%,-50%);
+}
+
+.dbk-local .dbk-ghost{
+  color: #5F9D40;
+} 
+.dbk-intl .dbk-ghost{color:var(--secondary)}
+
+.dbk-content{position:relative;z-index:2;text-align:center;padding:2rem}
+.dbk-eyebrow{font-family:'Archivo',sans-serif;font-weight:800;font-size:.78rem;letter-spacing:.42em;text-transform:uppercase;margin-bottom:1rem}
+.dbk-local .dbk-eyebrow{color:var(--primary)} .dbk-intl .dbk-eyebrow{color:var(--secondary)}
+.dbk-title{
+  font-family:'Archivo',sans-serif;
+  font-weight:900;
+  text-transform:uppercase;
+  font-size:clamp(2.6rem,5vw,4.6rem);
+  line-height:.92;
+  letter-spacing:-.02em
+}
+h1.dbk-title {
+    color: white;
+}
+.dbk-sub{margin-top:1rem;color:var(--muted);font-size:.98rem;font-weight:400;max-width:32ch;margin-left:auto;margin-right:auto}
+
+.dbk-cta{
+  margin-top:2.2rem;
+  display:inline-flex;
+  align-items:center;
+  gap:.6rem;
+  font-weight:800;
+  text-transform:uppercase;
+  letter-spacing:.14em;
+  font-size:.85rem;
+  color:var(--ink);
+  padding:1rem 1.9rem;
+  border:1.5px solid rgba(245,242,234,.25);
+  border-radius:2px;
+  background:rgba(245,242,234,.03);
+  transition:border-color .35s,background .35s;
+  text-decoration:none;
+  -webkit-tap-highlight-color:transparent
+}
+a.dbk-cta,a.dbk-cta:link,a.dbk-cta:visited,a.dbk-cta:hover,a.dbk-cta:active,a.dbk-cta:focus{
+  color:inherit;
+  text-decoration:none;
+  display:inline-flex
+}
+.dbk-local .dbk-cta:hover,.dbk-local.dbk-hot .dbk-cta{border-color:var(--primary);background:var(--primary)}
+.dbk-intl  .dbk-cta:hover,.dbk-intl.dbk-hot  .dbk-cta{border-color:var(--secondary);background:var(--secondary)}
+.dbk-arrow{transition:transform .35s}
+.dbk-panel.dbk-hot .dbk-arrow{transform:translateX(5px)}
+
+.dbk-brand{
+  position:fixed;
+  z-index:9995;
+  top:2rem;
+  left:50%;
+  transform:translateX(-50%);
+  font-family:'Archivo',sans-serif;
+  font-weight:900;
+  letter-spacing:.28em;
+  font-size:.82rem;
+  text-transform:uppercase;
+  color:var(--ink);
+  padding:.55rem 1.1rem;
+  border-radius:2px;
+  backdrop-filter:blur(6px);
+  display:flex;
+  gap:.5rem;
+  align-items:center;
+  justify-content: center;
+}
+.dbk-brand img {
+    width: 15%;
+}
+.dbk-dot{width:7px;height:7px;border-radius:50%;background:var(--primary);box-shadow:0 0 10px var(--primary)}
+
+
+
+.dbk-launch{position:fixed;inset:0;z-index:9999;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:1.1rem;
+background:rgba(13,14,15,.72);backdrop-filter:blur(4px);opacity:0;pointer-events:none;text-align:center;padding:2rem}
+.dbk-spin{width:46px;height:46px;border-radius:50%;border:3px solid rgba(61, 53, 32, 0.15);border-top-color:var(--ink);animation:dbk-spin .8s linear infinite}
+@keyframes dbk-spin{to{transform:rotate(360deg)}}
+.dbk-launch .dbk-label{font-family:'Archivo',sans-serif;font-weight:800;letter-spacing:.14em;text-transform:uppercase;font-size:.9rem}
+.dbk-launch .dbk-url{color:var(--muted);font-size:.9rem;word-break:break-all}
+
+@media (prefers-reduced-motion:reduce){ .dbk-root *{transition:none!important} }
+</style>
+
+<div class="dbk-root">
+<div class="dbk-brand">
+  <img src="https://durianbikers.com/wp-content/uploads/2026/04/cropped-db-logo-1.png" alt="durian bikers logo">
+</div>
+
+<div class="dbk-stage" id="dbk-stage">
+<section class="dbk-panel dbk-local" data-url="https://durianbikers.com/my/home/" tabindex="0" aria-label="Enter local store">
+  <button type="button" class="dbk-back" aria-label="Back to store selection">&larr; Back</button>
+  <span class="dbk-ghost">MALAYSIA</span>
+  <div class="dbk-content">
+    <p class="dbk-eyebrow">Malaysia</p>
+    <h1 class="dbk-title">Local<br>Store</h1>
+    <p class="dbk-sub">Shop in MYR, ship within Malaysia, visit our showroom and shop with confidence..</p>
+    <a class="dbk-cta" href="https://durianbikers.com/my/home/">Enter local store <span class="dbk-arrow">&rarr;</span></a>
+  </div>
+</section>
+
+<section class="dbk-panel dbk-intl" data-url="https://durianbikers.com/gb/home/" tabindex="0" aria-label="Enter global store">
+  <button type="button" class="dbk-back" aria-label="Back to store selection">&larr; Back</button>
+  <span class="dbk-ghost">GLOBAL</span>
+  <div class="dbk-content">
+    <p class="dbk-eyebrow">International</p>
+    <h1 class="dbk-title">Global<br>Store</h1>
+    <p class="dbk-sub">Worldwide shipping, pay in USD, tracked delivery to your door.</p>
+    <a class="dbk-cta" href="https://durianbikers.com/gb/home/">Enter global store <span class="dbk-arrow">&rarr;</span></a>
+  </div>
+</section>
+</div>
+
+<div class="dbk-launch" id="dbk-launch">
+<div class="dbk-spin"></div>
+<p class="dbk-label">Launching store</p>
+<p class="dbk-url" id="dbk-launch-url"></p>
+</div>
+</div>
+<script>
+(function(){
+var DEMO_MODE = false;
+
+function init(){
+  var panels = Array.prototype.slice.call(document.querySelectorAll('.dbk-panel'));
+  var launch = document.getElementById('dbk-launch');
+  var chosen = null;
+
+  panels.forEach(function(panel){
+    var others = panels.filter(function(p){ return p !== panel; });
+
+    panel.addEventListener('mouseenter', function(){
+      if (chosen) return;
+      panel.classList.add('dbk-hot');
+      gsap.to(panel, { flexGrow: 1.6, duration: .6, ease: 'power3.out' });
+      gsap.to(others, { flexGrow: 0.7, duration: .6, ease: 'power3.out' });
+    });
+    panel.addEventListener('mouseleave', function(){
+      if (chosen) return;
+      panel.classList.remove('dbk-hot');
+      gsap.to(panels, { flexGrow: 1, duration: .6, ease: 'power3.out' });
+    });
+
+    panel.addEventListener('click', function(e){
+      if (e.target.closest('.dbk-cta')) {
+        // Let a modified click behave like any other link (new tab / window /
+        // download); only take over the plain click, where the animation runs.
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) { return; }
+        e.preventDefault(); commit(panel); return;
+      }
+      if (e.target.closest('.dbk-back')) { return; } // handled separately below
+      preview(panel);
+    });
+    panel.addEventListener('keydown', function(e){
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); preview(panel); }
+    });
+
+    var back = panel.querySelector('.dbk-back');
+    back.addEventListener('click', function(e){ e.stopPropagation(); goBack(); });
+  });
+
+  document.addEventListener('keydown', function(e){
+    if (e.key === 'Escape') goBack();
+  });
+
+  function preview(panel){
+    if (chosen === panel) return;
+    if (chosen && chosen !== panel) return; // must go back first
+    chosen = panel;
+    panel.classList.add('dbk-chosen', 'dbk-hot');
+    var others = panels.filter(function(p){ return p !== panel; });
+    gsap.timeline()
+      .to(others, { flexGrow: 0.15, opacity: .35, duration: .7, ease: 'expo.inOut' })
+      .to(panel, { flexGrow: 3, duration: .9, ease: 'expo.inOut' }, '<')
+      .to(panel.querySelector('.dbk-content'), { scale: 1.05, duration: .9, ease: 'expo.out' }, '<');
+  }
+
+  function goBack(){
+    if (!chosen) return;
+    chosen.classList.remove('dbk-chosen', 'dbk-hot');
+    chosen = null;
+    gsap.to(panels, { flexGrow: 1, opacity: 1, duration: .6, ease: 'expo.inOut' });
+  }
+
+  function commit(panel){
+    var url = panel.getAttribute('data-url');
+    var others = panels.filter(function(p){ return p !== panel; });
+    gsap.timeline({
+      onComplete: function(){
+        if (DEMO_MODE){
+          document.getElementById('dbk-launch-url').textContent = url;
+          gsap.to(launch, { opacity: 1, duration: .4, pointerEvents: 'auto' });
+        } else {
+          window.location.href = url;
+        }
+      }
+    })
+    .to(others, { flexGrow: 0, opacity: 0, duration: .7, ease: 'expo.inOut' })
+    .to(panel, { flexGrow: 8, duration: .9, ease: 'expo.inOut' }, '<')
+    .to(panel.querySelector('.dbk-content'), { scale: 1.08, duration: .9, ease: 'expo.out' }, '<');
+  }
+}
+
+if (window.gsap) init();
+else { var t = setInterval(function(){ if (window.gsap){ clearInterval(t); init(); } }, 50); }
+})();
+</script>
