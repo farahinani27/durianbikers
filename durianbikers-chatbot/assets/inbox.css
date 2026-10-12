@@ -422,3 +422,39 @@ hyphen-separated, no BEM, no build step.
 	color: #1d2327;
 	font-size: 12px;
 }
+
+/* Product cards the bot showed the customer, stored with the message. */
+.db-chat-inbox-cards {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.db-chat-inbox-card {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 6px 0 0;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.db-chat-inbox-card-price {
+    font-weight: 600;
+}
+
+.db-chat-inbox-card-stock {
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #f0f0f1;
+    color: #646970;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.db-chat-inbox-card-stock.is-in {
+    background: rgba(95, 157, 64, 0.14);
+    color: #3d6b28;
+}

@@ -257,13 +257,52 @@ runBulk() calls /resolve or /delete once per id, strictly one at a time.
 		return '<img class="db-chat-inbox-msg-image" src="data:' + m.image_media_type + ';base64,' + data + '" alt="Customer photo">';
 	}
 
+	/** The product cards that went out with a bot reply, stored per message.
+	 *  Same fields the customer saw: name, price, stock and a link. Everything
+	 *  is escaped; the link is dropped unless it is plain http(s). */
+	function messageProductsHtml( m ) {
+		if ( ! m || ! m.products ) {
+			return '';
+		}
+
+		var cards;
+		try {
+			cards = 'string' === typeof m.products ? JSON.parse( m.products ) : m.products;
+		} catch ( e ) {
+			return '';
+		}
+
+		if ( ! cards || ! cards.length ) {
+			return '';
+		}
+
+		var rows = cards
+			.slice( 0, 4 )
+			.map( function ( c ) {
+				if ( ! c || ! c.name ) {
+					return '';
+				}
+				var url = String( c.url || '' );
+				var name = /^https?:\/\//i.test( url )
+					? '<a href="' + esc( url ) + '" target="_blank" rel="noopener noreferrer">' + esc( c.name ) + '</a>'
+					: esc( c.name );
+				var price = c.price ? '<span class="db-chat-inbox-card-price">' + esc( c.price ) + '</span>' : '';
+				var stock = '<span class="db-chat-inbox-card-stock' + ( c.in_stock ? ' is-in' : '' ) + '">' +
+					( c.in_stock ? 'In stock' : 'Out of stock' ) + '</span>';
+				return '<li class="db-chat-inbox-card">' + name + ' ' + price + ' ' + stock + '</li>';
+			} )
+			.join( '' );
+
+		return rows ? '<ul class="db-chat-inbox-cards">' + rows + '</ul>' : '';
+	}
+
 	function buildBubblesHtml() {
 		return state.messages
 			.map( function ( m ) {
 				return (
 					'<div class="db-chat-inbox-msg db-chat-inbox-msg--' + esc( m.sender ) + '">' +
 					'<div class="db-chat-inbox-msg-meta">' + esc( m.sender ) + ' &middot; ' + esc( fmtTime( m.created_at ) ) + '</div>' +
-					'<div class="db-chat-inbox-msg-body">' + messageImageHtml( m ) + esc( m.body ) + '</div>' +
+					'<div class="db-chat-inbox-msg-body">' + messageImageHtml( m ) + esc( m.body ) + messageProductsHtml( m ) + '</div>' +
 					'</div>'
 				);
 			} )

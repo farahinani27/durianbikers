@@ -1198,7 +1198,10 @@ class DB_Chat_Chat_Endpoint {
 	private function finalize_response( array $response_data, $conversation, $escalate ) {
 		if ( null !== $conversation ) {
 			$bot_text = isset( $response_data['reply'] ) ? (string) $response_data['reply'] : '';
-			$mid      = '' !== $bot_text ? DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'bot', $bot_text ) : 0;
+			$cards    = isset( $response_data['products'] ) && is_array( $response_data['products'] ) ? $response_data['products'] : array();
+			$mid      = '' !== $bot_text
+				? DB_Chat_Conversation_Store::add_message( (int) $conversation['id'], 'bot', $bot_text, null, null, $cards )
+				: 0;
 
 			$response_data['conversation_id'] = $conversation['public_id'];
 			$response_data['escalate']        = ! empty( $escalate );

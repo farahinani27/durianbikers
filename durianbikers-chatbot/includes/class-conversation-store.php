@@ -13,7 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 final class DB_Chat_Conversation_Store {
 
-	const SCHEMA_VERSION = 4;
+	const SCHEMA_VERSION = 5;
 
 	const STATUS_BOT      = 'bot';
 	const STATUS_WAITING  = 'waiting';
@@ -87,6 +87,7 @@ final class DB_Chat_Conversation_Store {
 				body TEXT NOT NULL,
 				image_media_type VARCHAR(32) NULL,
 				image_data LONGTEXT NULL,
+				products LONGTEXT NULL,
 				created_at DATETIME NOT NULL,
 				PRIMARY KEY  (id),
 				KEY conversation_id (conversation_id, id)
@@ -171,7 +172,7 @@ final class DB_Chat_Conversation_Store {
 	 *
 	 * @return int New message id.
 	 */
-	public static function add_message( $conversation_id, $sender, $body, $author_user_id = null, $image = null ) {
+	public static function add_message( $conversation_id, $sender, $body, $author_user_id = null, $image = null, $products = null ) {
 		global $wpdb;
 
 		$now = current_time( 'mysql', true );
@@ -195,6 +196,16 @@ final class DB_Chat_Conversation_Store {
 			$formats[]                = '%s';
 		}
 
+		// The product cards shown with this reply, so the inbox shows an agent
+		// exactly what the customer saw. Card fields only — no stock figures, no
+		// base64 — and capped, because a transcript row is read on every poll.
+		$cards = self::clean_products( $products );
+
+		if ( ! empty( $cards ) ) {
+			$data['products'] = wp_json_encode( $cards );
+			$formats[]        = '%s';
+		}
+
 		$wpdb->insert( self::messages_table(), $data, $formats );
 
 		$touch = array( 'updated_at' => $now );
@@ -216,6 +227,40 @@ final class DB_Chat_Conversation_Store {
 	}
 
 	/**
+	 * Reduce product cards to the few fields the inbox renders, capped.
+	 *
+	 * @param mixed $products Cards as sent to the widget.
+	 * @return array<int,array<string,mixed>>
+	 */
+	private static function clean_products( $products ) {
+		if ( ! is_array( $products ) ) {
+			return array();
+		}
+
+		$out = array();
+
+		foreach ( $products as $card ) {
+			if ( ! is_array( $card ) || empty( $card['name'] ) ) {
+				continue;
+			}
+
+			$out[] = array(
+				'id'       => isset( $card['id'] ) ? (int) $card['id'] : 0,
+				'name'     => mb_substr( wp_strip_all_tags( (string) $card['name'] ), 0, 200 ),
+				'price'    => isset( $card['price'] ) ? mb_substr( wp_strip_all_tags( (string) $card['price'] ), 0, 40 ) : '',
+				'url'      => isset( $card['url'] ) ? esc_url_raw( (string) $card['url'] ) : '',
+				'in_stock' => ! empty( $card['in_stock'] ),
+			);
+
+			if ( count( $out ) >= 4 ) {
+				break;
+			}
+		}
+
+		return $out;
+	}
+
+	/**
 	 * Messages with id greater than $since_id, optionally filtered by sender.
 	 *
 	 * @param string[] $senders e.g. array('agent','system'); empty = all.
@@ -224,7 +269,7 @@ final class DB_Chat_Conversation_Store {
 	public static function messages_since( $conversation_id, $since_id, array $senders = array() ) {
 		global $wpdb;
 
-		$sql    = 'SELECT id, sender, body, image_media_type, image_data, created_at FROM ' . self::messages_table()
+		$sql    = 'SELECT id, sender, body, image_media_type, image_data, products, created_at FROM ' . self::messages_table()
 			. ' WHERE conversation_id = %d AND id > %d';
 		$params = array( (int) $conversation_id, (int) $since_id );
 
@@ -359,7 +404,7 @@ final class DB_Chat_Conversation_Store {
 		global $wpdb;
 		return $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT id, sender, author_user_id, body, image_media_type, image_data, created_at FROM ' . self::messages_table()
+				'SELECT id, sender, author_user_id, body, image_media_type, image_data, products, created_at FROM ' . self::messages_table()
 				. ' WHERE conversation_id = %d ORDER BY id ASC',
 				(int) $conversation_id
 			),
