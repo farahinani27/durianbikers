@@ -10,16 +10,56 @@ Malaysian motorcycle parts and accessories retailer.
 - Theme: MotorMania v1.1.9  (child theme: MotorMania Child)
 - Page builder: Elementor
 - Hosting / panel: Exabytes / Plesk
-- PHP version: 8.3.33 (Supports 64bit values)   WordPress: 7.0.3   WooCommerce: 10.9.4
+- PHP version: 8.3.35   WordPress: 7.1.3   WooCommerce: 10.9.4
+  (verified live 2026-10-12 via `wc/v3/system_status`; re-check there rather
+  than trusting this line)
 
 ## Local development
 
-- No local WordPress install. Code is edited locally in this repo and
-  uploaded to the server; there is no local site to preview against.
-- Staging site: http://staging.durianbikers.com (Plesk / Exabytes)
-- Deploy: upload changed files via Plesk File Manager to
-  httpdocs/wp-content/themes/motormania-child/
+- No local WordPress install. There is no local site to preview against.
 - No build step. CSS and JS are edited directly, not compiled.
+
+**⚠️ This repo is NOT the source of truth for the theme.** Corrected 2026-10-12:
+the live theme is AHEAD of this repo, because people edit it directly on the
+server. Measured that day, `motormania-child` differed on five files — and the
+divergence is TWO-WAY, so a one-way copy in either direction destroys work:
+
+| file | local | server |
+|---|---|---|
+| `functions.php` | 563 lines | **1077** |
+| `style.css` | 5182 | 5442 |
+| `assets/js/custom.js` | 275 | 356 |
+| `footer.php` | 2 local-only lines | 2 server-only lines |
+| `template-parts/header/header-2.php` | **66 local-only lines** | 26 server-only |
+
+The repo also holds ~22 files that were never deployed (hero-banner templates,
+`.glb` models, `assets/mock/`). **Always diff against the server before
+uploading a theme file.** Uploading a stale `functions.php` on 2026-10-12 would
+have silently wiped 514 lines of live code. A snapshot of the server's versions
+of the five differing files is in `docs/server-snapshot-2026-10-12/`; merging
+them is a per-file judgement call, not a mechanical sync.
+
+### The live docroot is NOT `httpdocs`
+
+```
+/var/www/vhosts/durianbikers.com/staging.durianbikers.com/
+```
+
+`httpdocs` holds the old unused "Bloggers Unite" install (the rollback docroot).
+**Uploading there does nothing, with no error message** — this cost four failed
+deploy attempts on 2026-10-12. Confirm the path from `wc/v3/system_status` →
+`log_directory` if ever in doubt.
+
+### Deploy
+
+SSH works and is the reliable route (full un-chrooted shell, WP-CLI 2.12.0):
+
+```
+ssh -i ~/.ssh/durianbikers_vps -p 8288 durianbi@103.233.1.74
+```
+
+Note port **8288**, not 22. Plesk File Manager also works but is manual and was
+the source of the failed attempts above. After deploying, purge LiteSpeed Cache.
 
 ## Website updates via REST API
 
@@ -95,6 +135,41 @@ All in motormania-child/functions.php (self-contained — no includes):
   helmet_brands, custom_shop_by_brands / shop_by_brands
 - custom_shop_by_brands (old version) commented out — dead code, harmless
 - Enqueues assets/js/custom.js
+
+## SEO (added 2026-10-12)
+
+Lives in its own mu-plugin, NOT in the theme:
+`wp-content/mu-plugins/durianbikers-seo.php` (repo copy: `mu-plugins/`).
+
+It is a mu-plugin on purpose — it cannot overwrite a theme file, needs no
+activation, and is removed by deleting one file. Every constant and function is
+guarded (`defined` / `function_exists`) so a stray duplicate cannot fatal.
+
+What it does:
+
+- **Rewrites core-sitemap `<loc>` values to the CURCY `/my/` prefix.** WordPress
+  canonicals are bare (`/product/foo/`) and CURCY 302-redirects those, so the
+  sitemap was submitting 5,215 redirecting URLs to Google. Idempotent against
+  `/my/` and `/gb/`; leaves the site root alone (it is the "Choose Your Store"
+  selector, the one bare URL CURCY does not redirect).
+- **Removes the author (`users`) sitemap** — no SEO value, lists usernames.
+- **Excludes six pages from the sitemap**: Woo cart/checkout/my-account (resolved
+  by `wc_get_page_id()`, not slug) plus `under-construction`, `chatbot-test`,
+  `hero-banner`. `/home/` is deliberately KEPT — `/my/home/` is the canonical
+  storefront.
+- **Holds the GA4 tag**, dormant while `DURIANBIKERS_GA4_MEASUREMENT_ID` is `''`.
+  Suppressed for logged-in admins.
+- **Prints a build marker** `<!-- dbk-seo build 1.0.0 -->` in `wp_head`. This is a
+  deploy probe: one page fetch proves which version is live. Keep it — four
+  deploys failed silently before it existed.
+
+Store prefixes come from **CURCY (`woo-multi-currency`)**, not WPML. The redirect
+to `/my/` is unconditional — it ignores IP country, `Accept-Language` and
+cookies, so Googlebot gets `/my/` too. WPML is only the currency switcher widget.
+
+Still outstanding: no SEO plugin, so no meta descriptions, no Open Graph, titles
+up to 193 chars, no `hreflang` between `/my/` and `/gb/`, and the root homepage
+has zero crawlable `<a href>` (the store selector navigates via `data-url` + JS).
 
 ## Known issues (do not fix during go-live)
 
