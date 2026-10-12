@@ -58,6 +58,24 @@ class DB_Chat_Product_Index {
 	const MAX_CARDS = 4;
 
 	/**
+	 * Parents considered before the size filter picks the cheapest matches.
+	 * Deliberately wide: a size question ("cheapest 3XL helmet") has to see
+	 * the whole helmet wall, not a relevance-truncated top 12. "helmet" also
+	 * matches a few hundred accessories, so this has to clear BOTH.
+	 */
+	const SIZE_PARENT_LIMIT = 900;
+
+	/** In-stock variations inspected for one size query. */
+	const SIZE_VARIATION_LIMIT = 400;
+
+	/**
+	 * The product tags that describe the TYPE of helmet. The catalogue also
+	 * tags models and promotions ("MX-9 MIPS", "Clearance"), which are not
+	 * types, so only these are offered to the model as a filter.
+	 */
+	const HELMET_TYPE_TAGS = array( 'Full Face', 'Open Face', 'Flip Up / Modular', 'Off Road' );
+
+	/**
 	 * Products surfaced to the model during this request.
 	 *
 	 * Keyed by normalized product name => product ID. Used to turn the names
@@ -116,6 +134,11 @@ class DB_Chat_Product_Index {
 			$lines[] = 'BRANDS (' . count( $taxonomies['brands'] ) . '): ' . implode( ', ', $taxonomies['brands'] );
 		}
 
+		if ( ! empty( $taxonomies['types'] ) ) {
+			$lines[] = 'HELMET TYPES (' . count( $taxonomies['types'] ) . '): ' . implode( ', ', $taxonomies['types'] )
+				. "\nPass one of these as search_products' type to show only that kind of helmet.";
+		}
+
 		if ( empty( $lines ) ) {
 			return '';
 		}
@@ -131,18 +154,47 @@ class DB_Chat_Product_Index {
 	public function get_taxonomy_terms() {
 		$cached = get_transient( self::TRANSIENT );
 
-		if ( is_array( $cached ) && isset( $cached['categories'], $cached['brands'] ) ) {
+		// 'types' is part of the check so a transient written before helmet
+		// types existed is treated as stale and rebuilt, not read back short.
+		if ( is_array( $cached ) && isset( $cached['categories'], $cached['brands'], $cached['types'] ) ) {
 			return $cached;
 		}
 
 		$data = array(
 			'categories' => $this->get_term_names( 'product_cat' ),
 			'brands'     => $this->get_term_names( $this->get_brand_taxonomy() ),
+			'types'      => $this->get_helmet_type_names(),
 		);
 
 		set_transient( self::TRANSIENT, $data, self::CACHE_TTL );
 
 		return $data;
+	}
+
+	/**
+	 * The helmet-type tags that actually exist in this catalogue.
+	 *
+	 * Only the fixed HELMET_TYPE_TAGS list is considered — product tags also
+	 * carry model names and promotions, which would be noise as a filter.
+	 *
+	 * @return string[]
+	 */
+	private function get_helmet_type_names() {
+		if ( ! taxonomy_exists( 'product_tag' ) ) {
+			return array();
+		}
+
+		$names = array();
+
+		foreach ( self::HELMET_TYPE_TAGS as $label ) {
+			$term = get_term_by( 'name', $label, 'product_tag' );
+
+			if ( $term instanceof WP_Term ) {
+				$names[] = $term->name;
+			}
+		}
+
+		return $names;
 	}
 
 	/**
@@ -273,6 +325,8 @@ class DB_Chat_Product_Index {
 		$category      = isset( $args['category'] ) && is_scalar( $args['category'] ) ? sanitize_text_field( (string) $args['category'] ) : '';
 		$brand         = isset( $args['brand'] ) && is_scalar( $args['brand'] ) ? sanitize_text_field( (string) $args['brand'] ) : '';
 		$in_stock_only = ! empty( $args['in_stock_only'] );
+		$type          = isset( $args['type'] ) && is_scalar( $args['type'] ) ? sanitize_text_field( (string) $args['type'] ) : '';
+		$size          = isset( $args['size'] ) && is_scalar( $args['size'] ) ? sanitize_text_field( (string) $args['size'] ) : '';
 
 		// When the caller named a category/brand by name (a confident,
 		// whole-word taxonomy match), the "drop the filters" last resort below
@@ -293,7 +347,21 @@ class DB_Chat_Product_Index {
 
 		$query = trim( mb_substr( $query, 0, 200 ) );
 
-		$products      = $this->run_query( $query, $category, $brand, $in_stock_only, $max_price, $sort_cheapest );
+		/*
+		 * A SIZE question is answered by its own path and never falls back to
+		 * a size-blind search: "no 3XL in stock" has to mean that, not "the
+		 * first 12 results happened not to mention 3XL". An empty result here
+		 * is the honest answer.
+		 */
+		$size_spec = '' !== $size ? self::normalise_size( $size ) : array( 'label' => '' );
+
+		if ( '' !== $size_spec['label'] ) {
+			return $this->enforce_payload_cap(
+				$this->run_size_search( $query, $category, $brand, $type, $max_price, $size_spec )
+			);
+		}
+
+		$products      = $this->run_query( $query, $category, $brand, $in_stock_only, $max_price, $sort_cheapest, $type );
 		$used_fallback = false;
 
 		/*
@@ -305,7 +373,7 @@ class DB_Chat_Product_Index {
 			$fallback = $this->longest_token( $query );
 
 			if ( '' !== $fallback && $fallback !== $query ) {
-				$products      = $this->run_query( $fallback, $category, $brand, $in_stock_only, $max_price, $sort_cheapest );
+				$products      = $this->run_query( $fallback, $category, $brand, $in_stock_only, $max_price, $sort_cheapest, $type );
 				$used_fallback = true;
 			}
 		}
@@ -313,7 +381,7 @@ class DB_Chat_Product_Index {
 		// Last resort: drop the filters, keep the query — unless the caller
 		// asked us to respect the named taxonomy strictly (see above).
 		if ( ! $strict_taxonomy && empty( $products ) && ( '' !== $category || '' !== $brand ) ) {
-			$products = $this->run_query( $query, '', '', $in_stock_only, $max_price, $sort_cheapest );
+			$products = $this->run_query( $query, '', '', $in_stock_only, $max_price, $sort_cheapest, $type );
 		}
 
 		/*
@@ -396,7 +464,7 @@ class DB_Chat_Product_Index {
 	 *                                  ceiling ("cheapest x").
 	 * @return WC_Product[]
 	 */
-	private function run_query( $query, $category, $brand, $in_stock_only, $max_price = null, $sort_cheapest = false ) {
+	private function run_query( $query, $category, $brand, $in_stock_only, $max_price = null, $sort_cheapest = false, $type = '', $ids_limit = 0 ) {
 		if ( ! function_exists( 'wc_get_products' ) ) {
 			return array();
 		}
@@ -419,6 +487,16 @@ class DB_Chat_Product_Index {
 			// trimmed back down by the caller.
 			$args['orderby'] = 'price';
 			$args['order']   = 'ASC';
+		}
+
+		/*
+		 * Id mode, used by the size filter: it needs a WIDE candidate set and
+		 * then hydrates only the handful it keeps. Returning objects here
+		 * would load hundreds of products into memory for nothing.
+		 */
+		if ( $ids_limit > 0 ) {
+			$args['limit']  = (int) $ids_limit;
+			$args['return'] = 'ids';
 		}
 
 		if ( '' !== $query ) {
@@ -465,6 +543,34 @@ class DB_Chat_Product_Index {
 			add_filter( 'woocommerce_product_data_store_cpt_get_products_query', $filter, 99 );
 		}
 
+		/*
+		 * Helmet TYPE is a product tag on this store (Full Face, Open Face,
+		 * Flip Up / Modular, Off Road) — 364 of 366 helmets carry one. Same
+		 * documented data-store filter as brand above, removed in the same
+		 * finally block so it can never leak into another query.
+		 */
+		$tag_slug   = $this->resolve_term_slug( 'product_tag', $type );
+		$tag_filter = null;
+
+		if ( '' !== $tag_slug ) {
+			$tag_filter = static function ( $wp_query_args ) use ( $tag_slug ) {
+				if ( ! isset( $wp_query_args['tax_query'] ) || ! is_array( $wp_query_args['tax_query'] ) ) {
+					$wp_query_args['tax_query'] = array();
+				}
+
+				$wp_query_args['tax_query'][] = array(
+					'taxonomy' => 'product_tag',
+					'field'    => 'slug',
+					'terms'    => array( $tag_slug ),
+					'operator' => 'IN',
+				);
+
+				return $wp_query_args;
+			};
+
+			add_filter( 'woocommerce_product_data_store_cpt_get_products_query', $tag_filter, 99 );
+		}
+
 		$price_filter = null;
 
 		if ( $has_price_constraint ) {
@@ -506,12 +612,291 @@ class DB_Chat_Product_Index {
 				remove_filter( 'woocommerce_product_data_store_cpt_get_products_query', $filter, 99 );
 			}
 
+			if ( null !== $tag_filter ) {
+				remove_filter( 'woocommerce_product_data_store_cpt_get_products_query', $tag_filter, 99 );
+			}
+
 			if ( null !== $price_filter ) {
 				remove_filter( 'woocommerce_product_data_store_cpt_get_products_query', $price_filter, 99 );
 			}
 		}
 
 		return is_array( $products ) ? $products : array();
+	}
+
+	/**
+	 * Canonical size label plus every spelling the catalogue might hold.
+	 *
+	 * The store writes XXXL; customers write 3XL. That mismatch is exactly why
+	 * a customer asking for a 3XL helmet was told we had none while 23 were in
+	 * stock, so sizes are always matched through this alias set and never as a
+	 * raw string. A head measurement in centimetres maps to the generic
+	 * motorcycle-helmet band — the per-brand charts live in the model's
+	 * prompt and refine the answer, but the SEARCH needs one honest band.
+	 *
+	 * @param string $value Size as the customer or model wrote it.
+	 * @return array{label:string,spellings:string[]} Empty label when unreadable.
+	 */
+	public static function normalise_size( $value ) {
+		$none = array(
+			'label'     => '',
+			'spellings' => array(),
+		);
+
+		$raw = strtolower( trim( (string) $value ) );
+
+		if ( '' === $raw ) {
+			return $none;
+		}
+
+		// "size XXL", "saiz 3xl", "helmet size L", "65 cm head".
+		$raw = preg_replace( '/\b(size|saiz|helmet|helmets|head|topi)\b/', ' ', $raw );
+		$raw = trim( preg_replace( '/\s+/', ' ', (string) $raw ) );
+
+		$aliases = array(
+			'XS'    => array( 'xs', 'xsmall', 'extrasmall' ),
+			'S'     => array( 's', 'small' ),
+			'M'     => array( 'm', 'medium', 'med' ),
+			'L'     => array( 'l', 'large' ),
+			'XL'    => array( 'xl', 'xlarge', 'extralarge' ),
+			'XXL'   => array( 'xxl', '2xl', 'doublexl', 'xx' ),
+			'XXXL'  => array( 'xxxl', '3xl', 'triplexl', 'xxx' ),
+			'XXXXL' => array( 'xxxxl', '4xl', 'quadxl', 'xxxx' ),
+		);
+
+		$flat = str_replace( array( ' ', '-', '_' ), '', $raw );
+
+		foreach ( $aliases as $label => $spellings ) {
+			if ( in_array( $flat, $spellings, true ) ) {
+				return array(
+					'label'     => $label,
+					'spellings' => $spellings,
+				);
+			}
+		}
+
+		/*
+		 * A head measurement. Generic band, because the catalogue's size
+		 * labels are not per brand: 65 cm is an XXXL everywhere we stock it.
+		 */
+		// Anchored: unanchored, this would read a model number like "705"
+		// as a 70 cm head.
+		if ( preg_match( '/^(\d{2})(?:[.,]\d)?(?:cm|centimeter|centimetre|sm)?$/', $flat, $m ) ) {
+			$cm = (int) $m[1];
+
+			if ( $cm >= 50 && $cm <= 72 ) {
+				if ( $cm <= 54 ) {
+					$label = 'XS';
+				} elseif ( $cm <= 56 ) {
+					$label = 'S';
+				} elseif ( $cm <= 58 ) {
+					$label = 'M';
+				} elseif ( $cm <= 60 ) {
+					$label = 'L';
+				} elseif ( $cm <= 62 ) {
+					$label = 'XL';
+				} elseif ( $cm <= 64 ) {
+					$label = 'XXL';
+				} elseif ( $cm <= 66 ) {
+					$label = 'XXXL';
+				} else {
+					$label = 'XXXXL';
+				}
+
+				return array(
+					'label'     => $label,
+					'spellings' => $aliases[ $label ],
+				);
+			}
+		}
+
+		return $none;
+	}
+
+	/**
+	 * Products with an IN-STOCK variation in the requested size, cheapest
+	 * first, priced from that variation rather than the parent's range.
+	 *
+	 * Catalogue-wide size questions cannot be answered by the normal search:
+	 * it reads parent products only, so it can neither see a size nor know
+	 * whether that size is the one that is out of stock.
+	 *
+	 * @param string     $query     Search text.
+	 * @param string     $category  Category name or slug.
+	 * @param string     $brand     Brand name or slug.
+	 * @param string     $type      Helmet-type tag.
+	 * @param float|null $max_price Optional ceiling.
+	 * @param array      $size      From normalise_size().
+	 * @return array[] Model records, cheapest matching size first.
+	 */
+	private function run_size_search( $query, $category, $brand, $type, $max_price, array $size ) {
+		/*
+		 * Candidates are gathered by RELEVANCE, never by price, even when the
+		 * customer asked for the cheapest. Ordering this stage by price fills
+		 * the cap with cheap accessories that merely mention "helmet": the
+		 * cheapest 3XL helmet on the shelf (RM275) sat outside the first 400
+		 * and the search reported RM549 as the cheapest. The real cheapest-first
+		 * ordering happens in size_matches(), over the sizes themselves.
+		 */
+		$parent_ids = $this->run_query( $query, $category, $brand, true, $max_price, false, $type, self::SIZE_PARENT_LIMIT );
+
+		// Same single-token retry the normal path uses: core search is an AND
+		// across every word, so "cheapest 3xl helmet" must not die on "cheapest".
+		if ( empty( $parent_ids ) && '' !== $query ) {
+			$token = $this->longest_token( $query );
+
+			if ( '' !== $token && $token !== $query ) {
+				$parent_ids = $this->run_query( $token, $category, $brand, true, $max_price, false, $type, self::SIZE_PARENT_LIMIT );
+			}
+		}
+
+		if ( empty( $parent_ids ) ) {
+			return array();
+		}
+
+		$rows = $this->size_matches( $parent_ids, $size['spellings'] );
+		$rows = $this->rows_matching_query( $rows, $query );
+
+		$results = array();
+
+		foreach ( $rows as $row ) {
+			if ( count( $results ) >= self::SEARCH_LIMIT ) {
+				break;
+			}
+
+			$product = wc_get_product( (int) $row['parent_id'] );
+
+			if ( ! $product instanceof WC_Product ) {
+				continue;
+			}
+
+			if ( 'publish' !== $product->get_status() || ! $this->is_publicly_visible( $product ) ) {
+				continue;
+			}
+
+			$record = $this->format_for_model( $product );
+
+			/*
+			 * The size facts the model must quote instead of the parent's
+			 * price range — the whole point of the filter is that THIS size,
+			 * at THIS price, is on the shelf right now.
+			 */
+			$record['size']             = $size['label'];
+			$record['size_in_stock']    = true;
+			$record['variation_id']     = (int) $row['variation_id'];
+			$variation                  = wc_get_product( (int) $row['variation_id'] );
+			$variation_price            = $variation instanceof WC_Product ? $this->get_price_text( $variation ) : '';
+			$record['price_for_size']   = '' !== $variation_price ? $variation_price : ( isset( $record['price'] ) ? $record['price'] : '' );
+			$record['note_for_size']    = 'This is the price and stock of the ' . $size['label'] . ' size itself.';
+
+			$results[] = $record;
+
+			$this->remember( $product );
+		}
+
+		return $results;
+	}
+
+	/**
+	 * Drop size matches whose product is not what the customer asked for.
+	 *
+	 * The size path orders by price alone, so without this a search for the
+	 * cheapest 3XL HELMET leads with a pair of cheek pads: accessories are
+	 * cheaper, carry sizes, and mention "helmet" in their description. A
+	 * product whose TITLE shares no word with the query is not the thing
+	 * being asked for. If nothing survives, the unfiltered rows are returned
+	 * rather than claiming we stock nothing.
+	 *
+	 * @param array[] $rows  Rows from size_matches().
+	 * @param string  $query The customer's search text.
+	 * @return array[]
+	 */
+	private function rows_matching_query( array $rows, $query ) {
+		$query_tokens = $this->tokenise( $query );
+
+		if ( empty( $rows ) || empty( $query_tokens ) ) {
+			return $rows;
+		}
+
+		$kept = array();
+
+		foreach ( $rows as $row ) {
+			$title = get_the_title( (int) $row['parent_id'] );
+
+			if ( $this->overlap_score( $query_tokens, $this->tokenise( $title ) ) > 0 ) {
+				$kept[] = $row;
+			}
+		}
+
+		return empty( $kept ) ? $rows : $kept;
+	}
+
+	/**
+	 * In-stock variations of one size among the given parents, cheapest first.
+	 *
+	 * @param int[]    $parent_ids Candidate parent product ids.
+	 * @param string[] $spellings  Accepted spellings, already space/hyphen free.
+	 * @return array[] Rows of parent_id, variation_id, price.
+	 */
+	private function size_matches( array $parent_ids, array $spellings ) {
+		global $wpdb;
+
+		$parent_ids = array_values( array_unique( array_map( 'intval', $parent_ids ) ) );
+		$parent_ids = array_filter( $parent_ids );
+
+		if ( empty( $parent_ids ) || empty( $spellings ) ) {
+			return array();
+		}
+
+		// Safe to interpolate: every id went through intval above.
+		$ids_in       = implode( ',', $parent_ids );
+		$placeholders = implode( ',', array_fill( 0, count( $spellings ), '%s' ) );
+		$lookup       = $wpdb->prefix . 'wc_product_meta_lookup';
+
+		/*
+		 * Sizes are a LOCAL product attribute on this store (there is no
+		 * global pa_size taxonomy), so the size lives in variation postmeta
+		 * as attribute_size. pa_size is matched too, in case a future import
+		 * creates the global attribute. Price and stock come from
+		 * wc_product_meta_lookup, which carries a row per variation.
+		 */
+		$sql = "SELECT v.post_parent AS parent_id, v.ID AS variation_id, lk.min_price AS price
+			FROM {$wpdb->posts} v
+			INNER JOIN {$lookup} lk ON lk.product_id = v.ID
+			INNER JOIN {$wpdb->postmeta} pm ON pm.post_id = v.ID
+			WHERE v.post_type = 'product_variation'
+			  AND v.post_status = 'publish'
+			  AND v.post_parent IN ($ids_in)
+			  AND lk.stock_status = 'instock'
+			  AND lk.min_price > 0
+			  AND pm.meta_key IN ('attribute_size','attribute_pa_size')
+			  AND REPLACE(REPLACE(LOWER(TRIM(pm.meta_value)), ' ', ''), '-', '') IN ($placeholders)
+			ORDER BY lk.min_price ASC, v.post_parent ASC
+			LIMIT %d";
+
+		$params = array_merge( $spellings, array( self::SIZE_VARIATION_LIMIT ) );
+		$rows   = $wpdb->get_results( $wpdb->prepare( $sql, $params ), ARRAY_A );
+
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		// One row per product: the cheapest in-stock variation of that size.
+		$seen = array();
+		$out  = array();
+
+		foreach ( $rows as $row ) {
+			$parent = (int) $row['parent_id'];
+
+			if ( isset( $seen[ $parent ] ) ) {
+				continue;
+			}
+
+			$seen[ $parent ] = true;
+			$out[]           = $row;
+		}
+
+		return $out;
 	}
 
 	/**

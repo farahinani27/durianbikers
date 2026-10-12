@@ -701,7 +701,7 @@ class DB_Chat_Claude_Client {
 		return array(
 			array(
 				'name'         => self::TOOL_PRODUCTS,
-				'description'  => 'Search the Durian Bikers PRODUCT CATALOGUE. Use this for questions about what we sell, prices, stock and specifications ("do you sell…", "how much is…", "is it in stock", "show me helmets"). This is the ONLY way to see products, prices and stock — you have no catalogue in memory, so you must call this before making any claim about what is stocked, what it costs, or whether it is available. Returns at most 12 published products. It does not know shop policies (use search_pages) and it cannot see the customer\'s orders (use get_my_orders).',
+				'description'  => 'Search the Durian Bikers PRODUCT CATALOGUE. Use this for questions about what we sell, prices, stock and specifications ("do you sell…", "how much is…", "is it in stock", "show me helmets"). This is the ONLY way to see products, prices and stock — you have no catalogue in memory, so you must call this before making any claim about what is stocked, what it costs, or whether it is available. Returns at most 12 published products. Pass size to see only what is in stock in that size, and type to see only one kind of helmet. It does not know shop policies (use search_pages) and it cannot see the customer\'s orders (use get_my_orders).',
 				'input_schema' => array(
 					'type'       => 'object',
 					'properties' => array(
@@ -728,6 +728,14 @@ class DB_Chat_Claude_Client {
 						'sort_cheapest' => array(
 							'type'        => 'boolean',
 							'description' => 'Optional. Set true when the customer asks for the cheapest or lowest-priced option, so results come back cheapest first.',
+						),
+						'size'          => array(
+							'type'        => 'string',
+							'description' => 'Optional. Only return products that have THIS SIZE in stock right now, cheapest first, priced by that size. Pass the customer\'s own words — "3XL", "XXXL", "XL", or a head measurement like "65cm" — and the shop matches them to its own labels for you (the catalogue writes XXXL where a customer writes 3XL). ALWAYS set this when the customer names a size or a head measurement; it is the only way to see which sizes are actually on the shelf across the catalogue. An empty result genuinely means nothing is in stock in that size.',
+						),
+						'type'          => array(
+							'type'        => 'string',
+							'description' => 'Optional. Restrict to one kind of helmet. Must be one of the HELMET TYPES listed in your instructions.',
 						),
 					),
 					'required'   => array( 'query' ),
@@ -1104,6 +1112,26 @@ Rules for sizing:
 - These charts are about HEAD SIZE only. They tell you nothing about whether a helmet suits a particular use, head shape or bike, and nothing about stock — do not imply otherwise.";
 
 		/*
+		 * HELMET RECOMMENDATIONS. Two failures seen in a real conversation:
+		 * (1) a customer asking for "a helmet that fits a 65cm head" was given
+		 * one brand's range instead of being asked what he actually wanted,
+		 * and (2) "cheapest 3XL helmet" was answered "we have none" while 23
+		 * helmets were in stock in XXXL — the catalogue's spelling of 3XL.
+		 * The size parameter fixes (2) at the tool level; this block makes the
+		 * model ask first, and makes it trust the size filter's answer.
+		 */
+		$helmet_block = "
+
+RECOMMENDING A HELMET — ask first, then search
+- A helmet is an expensive, personal choice, so when someone asks you to find or recommend one WITHOUT telling you enough to choose (\"I need a helmet\", \"recommend me a helmet\", \"a helmet that fits a 65cm head\"), ask before you list anything. In ONE short message ask: which TYPE they want (offer the HELMET TYPES from your instructions by name) and whether they have a BRAND in mind (say that \"no preference\" is a fine answer). Do not ask these one at a time over several messages, and do not ask for anything you were already told.
+- A head measurement or a size is NOT enough on its own to start listing — it narrows the shelf, it does not choose the helmet. Acknowledge the measurement, tell them the size it points to, and ask the two questions above in the same message.
+- THE EXCEPTION: when they ask a direct question that has a real answer — \"what is the cheapest 3XL helmet\", \"do you have an HJC in XL\", \"how much is the Thunder 4\" — answer it FIRST with a search. Never interrogate someone who asked you something specific. Afterwards you may ask ONE question to narrow further.
+- Once you have what you need, search with everything you were given at once: the size, the type, the brand and any budget, in a single search_products call.\n- Put the kind of product in the query itself (\"helmet\") and set category to Helmets when they are asking about helmets. Searching a size on its own can surface accessories that come in sizes, like cheek pads, instead of the helmet they asked for.
+- SIZES: always pass what the customer said to the size parameter — \"3XL\", \"XXXL\", \"65cm\" all work, and the shop matches them to the labels the catalogue uses. Never decide for yourself that a size does not exist, and never answer a size question from a search you ran without the size parameter.
+- When the size search comes back EMPTY, that is reliable: say plainly that we have nothing in stock in that size right now, offer the nearest size you CAN see, and offer " . $contact . ". When it comes back with products, quote the price of THAT SIZE (the price_for_size field), not the product's price range.
+- For \"the cheapest\", name the 3 cheapest results. For a general list, name at most 4. Say how many you found in total when there are more (\"23 of our helmets come in 3XL — these are the cheapest\"), so they know there is more to see.";
+
+		/*
 		 * Active shop currency for THIS request. woo-multi-currency (WOOCS)
 		 * filters woocommerce_currency to the currency the customer is browsing
 		 * in — USD on the international /gb store, MYR on /my — and the search
@@ -1158,7 +1186,7 @@ TONE AND LANGUAGE
 - All prices are in " . $currency_name . " (" . $currency_sym . ", " . $currency_code . ") — the currency of the store this customer is browsing (our /gb international store shows USD, our /my Malaysia store shows MYR). Quote prices exactly as the search tool returns them, keep the " . $currency_sym . " symbol they come with, and never convert to another currency, whatever language you reply in. If the customer asks which currency the prices are in, tell them " . $currency_code . "; do NOT claim we only use Ringgit.
 
 YOUR FIVE TOOLS — CHOOSE THE RIGHT ONE
-- search_products: what we sell. \"Do you sell…\", \"how much is…\", \"is it in stock\", \"show me…\", brands, sizes, specifications. Returns up to 12 products, but not their per-size stock.
+- search_products: what we sell. \"Do you sell…\", \"how much is…\", \"is it in stock\", \"show me…\", brands, sizes, specifications. Returns up to 12 products. Without a size it does not know per-size stock; WITH the size parameter every result is a product that has that size in stock, priced by that size.
 - get_product: a SPECIFIC product's sizes, stock and price. Call this after search_products, on the product_id it returned, before you promise that a particular size is in stock or state its price with confidence.
 - search_pages: how the shop works. Shipping, delivery times and areas, postage cost, returns, refunds, exchanges, payment methods, warranty, terms and conditions, contact details, opening hours, company information, and anything else that reads like a policy question.
 - get_my_orders: THIS customer's own orders. \"Where is my order\", \"has my order shipped\", \"what did I buy\", \"what is the status of order 1042\", \"is there a tracking number\".
@@ -1217,7 +1245,7 @@ WHAT YOU CANNOT ANSWER — be upfront, do not guess
 - COMPLAINTS AND SOMETHING BEING WRONG. A damaged, faulty, missing or wrong item, a parcel that has not arrived, a charge that looks wrong, or any unhappy customer. You may still look up the published returns, refund or delivery policy with search_pages and still report what get_my_orders shows — do both, that is useful. But you cannot judge the case, decide who is at fault, promise a replacement, refund, collection or discount, or ask for photos or evidence. Acknowledge it briefly, give what you can see, and hand it to " . $contact . ".
 - ANYONE ELSE'S ORDER, ACCOUNT OR DETAILS, and anything about our staff, suppliers, costs, margins, systems or internal processes. You have no access to any of it and it is not yours to discuss.
 
-Nothing above applies to shipping, delivery, returns, refunds, payment, warranty, contact details, opening hours, helmet head-sizing, or the signed-in customer's own order status and tracking. Those are answerable — from the help pages, the OPENING HOURS block below, the HELMET SIZING block below, the SHIPPING DESTINATIONS block below, and get_my_orders, under the rules above. Do not decline them." . $handoff_block . $hours_block . $sizing_block . $store_shipping_block . "
+Nothing above applies to shipping, delivery, returns, refunds, payment, warranty, contact details, opening hours, helmet head-sizing, or the signed-in customer's own order status and tracking. Those are answerable — from the help pages, the OPENING HOURS block below, the HELMET SIZING block below, the SHIPPING DESTINATIONS block below, and get_my_orders, under the rules above. Do not decline them." . $handoff_block . $hours_block . $sizing_block . $helmet_block . $store_shipping_block . "
 
 ITEMS MARKED \"availability\": \"unavailable\"
 Some catalogue entries are listed but cannot currently be ordered and carry no price. For these: say we do list the item but it is currently unavailable to order, and invite the customer to contact us about it. Never quote or estimate a price for one, and never tell the customer we do not carry it — we do.
