@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Durian Bikers SEO
  * Description: Fixes the WordPress core sitemap to emit CURCY /my/ store-prefixed URLs instead of bare redirecting ones, removes the author ("users") sitemap, excludes the transactional (cart/checkout/my-account) and work-in-progress pages from the sitemap, and holds the GA4 tag.
- * Version:     1.1.2
+ * Version:     1.2.0
  * Author:      Durian Bikers
  *
  * Loaded as an mu-plugin: no activation step, and it cannot overwrite theme files.
@@ -819,10 +819,38 @@ if ( ! function_exists( 'durianbikers_seo_noindex_excluded_pages' ) ) {
 // TEMPORARY DEPLOY PROBE - remove once the deploy is confirmed.
 // Prints one HTML comment in <head> for every visitor, logged in or not, with no
 // dependency on the GA4 constant. One page fetch then proves this file is live.
+// 6. Google Search Console ownership verification
+// URL-prefix property https://durianbikers.com/ on admindurianbikers@gmail.com,
+// created 2026-10-12. Note there is ALSO a google-site-verification TXT record
+// on the domain belonging to some OTHER Google account (Shopify era or an old
+// agency) - that one is not ours and does not verify this property.
+// Google requires this tag to STAY after verification succeeds: removing it
+// un-verifies the property and data collection stops.
+if ( ! defined( 'DURIANBIKERS_GSC_VERIFICATION' ) ) {
+	define( 'DURIANBIKERS_GSC_VERIFICATION', 'LUXU8qcvdSxo3vXWh63ov0tcu7VkKFrjQMgZQIbv-iw' );
+}
+
+// Priority 1, and deliberately NOT behind durianbikers_seo_head_allowed():
+// Google fetches the home page and wants this present unconditionally.
+add_action( 'wp_head', 'durianbikers_gsc_verification', 1 );
+
+if ( ! function_exists( 'durianbikers_gsc_verification' ) ) {
+	function durianbikers_gsc_verification() {
+
+		$token = trim( (string) DURIANBIKERS_GSC_VERIFICATION );
+
+		if ( '' === $token ) {
+			return;
+		}
+
+		echo '<meta name="google-site-verification" content="' . esc_attr( $token ) . '" />' . "\n";
+	}
+}
+
 add_action( 'wp_head', 'durianbikers_seo_build_marker' );
 
 if ( ! function_exists( 'durianbikers_seo_build_marker' ) ) {
 	function durianbikers_seo_build_marker() {
-		echo "<!-- dbk-seo build 1.1.2 -->\n";
+		echo "<!-- dbk-seo build 1.2.0 -->\n";
 	}
 }
