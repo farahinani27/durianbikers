@@ -1558,7 +1558,10 @@ class DB_Chat_Lookup_Engine {
 			'on', 'in', 'and', 'or', 'should', 'when', 'why', 'what', 'often', 'long',
 			'frequently', 'best', 'way', 'tips', 'need', 'keep', 'take', 'get', 'use',
 			'clean', 'cleaning', 'wash', 'washing', 'maintain', 'maintenance', 'care',
-			'look', 'after', 'change', 'replace', 'check', 'service', 'fix', 'jaga',
+			'look', 'after', 'change', 'replace', 'check', 'service', 'services',
+			'servicing', 'fix', 'repair', 'repairs', 'repairing', 'baiki', 'provide',
+			'offer', 'offers', 'scratch', 'scratches', 'scratched', 'calar', 'scuff',
+			'scuffs', 'scuffed', 'swirl', 'swirls', 'restore', 'refurbish', 'jaga',
 			'cara', 'macam', 'mana', 'macamana', 'camne', 'camner', 'cmne', 'bagaimana',
 			'nak', 'nk', 'saya', 'kita', 'aku', 'korang', 'boleh', 'guna', 'gunakan',
 			'patut', 'patutkah', 'perlu', 'perlukah', 'kena', 'tukar', 'berapa',
@@ -1615,9 +1618,18 @@ class DB_Chat_Lookup_Engine {
 		if ( $has( array( 'protect', 'protection', 'protectant', 'rust', 'karat' ) ) ) {
 			$actions[] = 'protectant';
 		}
-		if ( empty( $actions ) && $has( array( 'jaga', 'care', 'maintain', 'maintenance', 'service', 'senggara', 'penjagaan', 'condition', 'look' ) ) ) {
+		// Scratches, scuffs, a dull or faded finish: polish is the honest shelf —
+		// it reduces the look of a mark, it does not repair damage.
+		if ( $has( array( 'scratch', 'scratches', 'scratched', 'calar', 'scuff', 'scuffs',
+			'scuffed', 'swirl', 'swirls', 'dull', 'faded', 'restore', 'restoration',
+			'refurbish', 'refurbished' ) ) ) {
+			$actions[] = 'polish';
+		}
+		if ( empty( $actions ) && $has( array( 'jaga', 'care', 'maintain', 'maintenance', 'service', 'services', 'servicing', 'repair', 'repairs', 'repairing', 'baiki', 'senggara', 'penjagaan', 'condition', 'look' ) ) ) {
 			$actions = array( 'cleaner', 'lube' );   // generic upkeep → the two staples
 		}
+
+		$actions = array_values( array_unique( $actions ) );
 
 		$vehicle_word = '';
 		foreach ( $query_nouns as $token ) {
@@ -1668,8 +1680,13 @@ class DB_Chat_Lookup_Engine {
 			'grease', 'gris', 'minyak',
 			'polish', 'shine', 'wax', 'kilat', 'gilap',
 			'protect', 'protection', 'protectant', 'rust', 'karat',
-			'jaga', 'care', 'maintain', 'maintenance', 'service', 'senggara',
-			'penjagaan', 'condition',
+			'jaga', 'care', 'maintain', 'maintenance', 'service', 'services', 'servicing',
+			'senggara', 'penjagaan', 'condition',
+			// Damage-to-looks wording. A customer asking about scratches, scuffs or
+			// a dull finish wants the same shelf as a care question: polish, cleaner.
+			'scratch', 'scratches', 'scratched', 'calar', 'scuff', 'scuffs', 'scuffed',
+			'swirl', 'swirls', 'dull', 'faded', 'restore', 'restoration', 'refurbish',
+			'refurbished', 'repair', 'repairs', 'repairing', 'baiki',
 		);
 
 		foreach ( $care as $w ) {
