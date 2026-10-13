@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Durian Bikers SEO
  * Description: Fixes the WordPress core sitemap to emit CURCY /my/ store-prefixed URLs instead of bare redirecting ones, removes the author ("users") sitemap, excludes the transactional (cart/checkout/my-account) and work-in-progress pages from the sitemap, and holds the GA4 tag.
- * Version:     1.2.0
+ * Version:     1.3.0
  * Author:      Durian Bikers
  *
  * Loaded as an mu-plugin: no activation step, and it cannot overwrite theme files.
@@ -120,7 +120,7 @@ if ( ! function_exists( 'durianbikers_sitemap_remove_users_provider' ) ) {
 // FILL IN the G- measurement ID below before this does anything - while the
 // constant is an empty string this block prints nothing at all.
 if ( ! defined( 'DURIANBIKERS_GA4_MEASUREMENT_ID' ) ) {
-	define( 'DURIANBIKERS_GA4_MEASUREMENT_ID', '' );
+	define( 'DURIANBIKERS_GA4_MEASUREMENT_ID', 'G-L1WSVKJRTQ' );
 }
 
 add_action( 'wp_head', 'durianbikers_ga4_tag' );
@@ -851,6 +851,6 @@ add_action( 'wp_head', 'durianbikers_seo_build_marker' );
 
 if ( ! function_exists( 'durianbikers_seo_build_marker' ) ) {
 	function durianbikers_seo_build_marker() {
-		echo "<!-- dbk-seo build 1.2.0 -->\n";
+		echo "<!-- dbk-seo build 1.3.0 -->\n";
 	}
 }
