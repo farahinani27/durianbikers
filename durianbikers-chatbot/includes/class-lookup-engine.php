@@ -441,6 +441,18 @@ class DB_Chat_Lookup_Engine {
 				'boleh datang', 'ada kedai',
 			),
 
+			/* -------- which shop has it (stock is JB only) -------- */
+			'store_stock'  => array(
+				'which store', 'which shop', 'which branch', 'which outlet', 'what store',
+				'which store have', 'which store has', 'store have stock', 'shop have stock',
+				'branch have', 'outlet have', 'other branch', 'other outlet', 'other store',
+				'nearest store', 'nearest shop', 'nearest branch', 'store near', 'shop near',
+				'ready stock at', 'available at which', 'can i collect', 'self collect',
+				'self pickup', 'pick up in store', 'pickup in store', 'walk in to buy',
+				'kedai mana ada', 'kedai mana ready', 'outlet mana', 'cawangan mana',
+				'stok kedai mana', 'ada stok kedai', 'boleh ambil kedai', 'ambil sendiri',
+			),
+
 			/* -------- product lookup -------- */
 			'product'      => array(
 				'do you have', 'do you sell', 'do you stock', 'do you carry', 'looking for',
@@ -980,6 +992,7 @@ class DB_Chat_Lookup_Engine {
 
 			'handoff_hint'       => __( 'For anything I cannot answer, use the WhatsApp button below and a person will reply.', 'durianbikers-chatbot' ),
 			'handoff_none'       => __( 'For anything I cannot answer, please contact the shop directly.', 'durianbikers-chatbot' ),
+			'store_stock_jb'     => __( 'We only cover stock at our Johor Bahru shop — this is Durian Bikers JB — so I can tell you what we have here, but not what any other shop has ready.', 'durianbikers-chatbot' ),
 			'human_handoff'      => __( 'A person can help with that. Tap the WhatsApp button below and our team will reply.', 'durianbikers-chatbot' ),
 			'human_inwidget'     => __( "Sure — I can connect you with a team member. Please leave your name and email below and we'll get back to you.", 'durianbikers-chatbot' ),
 			'human_closed'       => __( "We're closed right now, so we'll reply when we open.", 'durianbikers-chatbot' ),
@@ -1086,6 +1099,7 @@ class DB_Chat_Lookup_Engine {
 
 			'handoff_hint'       => 'Untuk apa-apa yang saya tidak boleh jawab, guna butang WhatsApp di bawah dan seseorang akan membalas.',
 			'handoff_none'       => 'Untuk apa-apa yang saya tidak boleh jawab, sila hubungi kedai secara terus.',
+			'store_stock_jb'     => 'Kami hanya uruskan stok di kedai Johor Bahru — ini Durian Bikers JB — jadi saya boleh beritahu apa yang ada di sini sahaja, bukan stok kedai lain.',
 			'human_handoff'      => 'Staf kami boleh bantu. Tekan butang WhatsApp di bawah dan pasukan kami akan membalas.',
 			'human_inwidget'     => 'Boleh — saya boleh sambungkan anda dengan pasukan kami. Sila tinggalkan nama dan emel anda di bawah dan kami akan hubungi anda semula.',
 			'human_closed'       => 'Kami tutup sekarang, jadi kami akan membalas bila kami buka.',
@@ -1332,6 +1346,10 @@ class DB_Chat_Lookup_Engine {
 
 			case 'contact':
 				return $this->answer_contact( $normalized, $language );
+
+			case 'store_stock':
+				$this->wants_human = true;      // the WhatsApp button belongs on this reply
+				return $this->answer_store_stock( $language );
 
 			case 'human':
 				$this->wants_human = true;
@@ -1888,6 +1906,19 @@ class DB_Chat_Lookup_Engine {
 		 */
 		if ( $score( 'human' ) > 0 || $this->wants_human_zh( $normalized ) ) {
 			return 'human';
+		}
+
+		/*
+		 * WHICH SHOP HAS IT. Decided here, before scoring, because "which store
+		 * has the MX-9 in ready stock" scores as a plain stock lookup and comes
+		 * back with product cards — which answers a question the customer did
+		 * not ask and implies some shop near them has it. Every figure we hold
+		 * is the Johor Bahru shop's, so the honest answer names JB and hands
+		 * the rest to a person. Placed AFTER the request-for-a-person check so
+		 * "can I talk to someone about which branch" still reaches a human.
+		 */
+		if ( $score( 'store_stock' ) > 0 ) {
+			return 'store_stock';
 		}
 
 		/*
@@ -3669,6 +3700,42 @@ class DB_Chat_Lookup_Engine {
 	 * @param bool|null $open     Injected for tests; null reads the live schedule.
 	 * @return array
 	 */
+	/**
+	 * Which shop has it ready — we only speak for Johor Bahru.
+	 *
+	 * Operator decision 2026-10-13, from a real conversation: a customer asked
+	 * which store had the Bell MX-9 in ready stock and the bot said it would
+	 * "double-check and come back", then listed four cards. It cannot come
+	 * back — nothing reads the conversation afterwards — and the cards implied
+	 * a shop near him had them. Every stock figure the bot can see is the JB
+	 * shop's, so that is what it says, and a person takes the rest.
+	 *
+	 * @param string $language 'en' or 'ms'.
+	 * @return array
+	 */
+	private function answer_store_stock( $language ) {
+		$lines = array( $this->text( $language, 'store_stock_jb' ) );
+
+		if ( class_exists( 'DB_Chat_Handoff' ) ) {
+			try {
+				if ( DB_Chat_Handoff::is_configured() ) {
+					$lines[] = $this->text( $language, 'human_handoff' );
+
+					$hours = $this->hours_text();
+
+					if ( '' !== $hours ) {
+						$lines[] = $this->text( $language, 'contact_hours', $hours );
+					}
+				}
+			} catch ( Throwable $e ) {
+				// No handoff configured: the JB line still answers the question.
+				$lines = array( $this->text( $language, 'store_stock_jb' ) );
+			}
+		}
+
+		return $this->compose( implode( ' ', $lines ), $language );
+	}
+
 	private function answer_human( $language, $open = null ) {
 		/*
 		 * In-widget human handoff enabled → invite the widget's contact form
