@@ -46,6 +46,15 @@ class DB_Chat_Chat_Endpoint {
 	const MAX_MESSAGE_LENGTH = 1000;
 
 	/**
+	 * Longest message, in words, that wants_checkout() will read as "take me
+	 * to checkout". Above this it is a question ABOUT checkout, not a request
+	 * to start one. See that method's doc for why the bound errs this way.
+	 *
+	 * @var int
+	 */
+	const CHECKOUT_INTENT_MAX_WORDS = 8;
+
+	/**
 	 * Maximum guided-finder chips forwarded to the widget.
 	 *
 	 * The contract the finder and the frontend agreed. Re-asserted here so the
@@ -177,6 +186,45 @@ class DB_Chat_Chat_Endpoint {
 	 * @var bool
 	 */
 	private $checkout_tool_used = false;
+
+	/**
+	 * Did the CUSTOMER ask for the checkout step this turn, in words or by
+	 * tapping something, regardless of whether the model called a checkout
+	 * tool?
+	 *
+	 * Request-scoped like $checkout_tool_used above, and deliberately a
+	 * SEPARATE flag rather than being folded into it: that one answers "did
+	 * the model call one of the four checkout tools", which drives its own
+	 * documented behaviour, and overloading it would make its doc a lie.
+	 *
+	 * WHY IT EXISTS. The `checkout` response key used to be attached only
+	 * when $checkout_tool_used was true — i.e. only when the model chose to
+	 * call a checkout tool. A customer who typed "I want to checkout" and got
+	 * a prose reply ("fill in the form that'll pop up") was sent no `checkout`
+	 * key at all, so the widget rendered no form, and the operator had to ask
+	 * "where is the form?" twice in one conversation. Haiku not calling a tool
+	 * must not be able to hide the form: the step now fires on what the
+	 * customer did, through the same attach block and the same empty-cart
+	 * guard and PII boundary as the tool path. Set by wants_checkout() and by
+	 * capture_checkout_input().
+	 *
+	 * @var bool
+	 */
+	private $checkout_step_requested = false;
+
+	/**
+	 * Did the customer just hand over delivery details this turn (the guest
+	 * form, or a signed-in "use my saved address" tap) — i.e. should the
+	 * widget be sent the review card so they can proof-read it?
+	 *
+	 * Request-scoped; set only inside capture_checkout_input(), the single
+	 * call site allowed to read those request params at all. Drives the
+	 * `checkout.review` response key, which is WIDGET-ONLY real PII — see
+	 * $checkout_widget_summary below and DB_Chat_Checkout_Writer::review().
+	 *
+	 * @var bool
+	 */
+	private $checkout_review_requested = false;
 
 	/**
 	 * The WIDGET-facing checkout summary payload for THIS request, or null
@@ -787,11 +835,13 @@ class DB_Chat_Chat_Endpoint {
 		$this->prevent_caching( 'durianbikers chatbot: per-visitor reply, must never be cached' );
 
 		// Request-scoped flags; never carry a previous request's state.
-		$this->order_tool_used         = false;
-		$this->tool_requested_human    = false;
-		$this->checkout_tool_used      = false;
-		$this->checkout_widget_summary = null;
-		$this->checkout_link_url       = null;
+		$this->order_tool_used           = false;
+		$this->tool_requested_human      = false;
+		$this->checkout_tool_used        = false;
+		$this->checkout_step_requested   = false;
+		$this->checkout_review_requested = false;
+		$this->checkout_widget_summary   = null;
+		$this->checkout_link_url         = null;
 
 		// Declared here so finalize_response() has a stable value on every
 		// code path; the lookup branch below overwrites it once the engine
@@ -999,6 +1049,19 @@ class DB_Chat_Chat_Endpoint {
 		}
 
 		/*
+		 * DETERMINISTIC CHECKOUT STEP. "I want to checkout" has to SHOW the
+		 * address form, not describe one. Decided here on the customer's own
+		 * words, before either brain runs, so it cannot depend on the model
+		 * choosing to call a checkout tool — see $checkout_step_requested for
+		 * the bug this closes. All it does is raise the flag; the attach block
+		 * at the end of the AI turn builds the payload through the same
+		 * empty-cart guard and the same PII boundary as the tool path.
+		 */
+		if ( self::wants_checkout( $message ) ) {
+			$this->checkout_step_requested = true;
+		}
+
+		/*
 		 * THE BRANCH. Everything above this line — nonce, rate limit, caching
 		 * headers, sanitisation — is shared, and everything below the branch
 		 * returns the same JSON shape. Nothing else in the plugin needs to know
@@ -1095,6 +1158,13 @@ class DB_Chat_Chat_Endpoint {
 		 * keeps a fitment part off a care question. Gated on is_care_question()
 		 * so it never fires on order, policy, price or greeting turns. Mirrors
 		 * the keyword path's advice-card fallback.
+		 *
+		 * THREE cards, not two: a care answer is the one place an upsell is
+		 * genuinely wanted, and one lonely card under a cleaning answer reads
+		 * like an afterthought (the operator saw exactly that on "helmet
+		 * cleaning"). Three is still inside DB_Chat_Product_Index::MAX_CARDS,
+		 * and cards_for_query() will return fewer — or none — rather than pad
+		 * the list with a product that is not on the care shelf.
 		 */
 		if ( empty( $response_data['products'] )
 			&& null !== $this->product_index
@@ -1104,7 +1174,7 @@ class DB_Chat_Chat_Endpoint {
 			$topic = $this->lookup_engine->advice_search_query( $message );
 
 			if ( ! empty( $topic['queries'] ) && ! empty( $topic['nouns'] ) ) {
-				$cards = $this->product_index->cards_for_query( $topic['queries'], $topic['nouns'], 2 );
+				$cards = $this->product_index->cards_for_query( $topic['queries'], $topic['nouns'], 3 );
 
 				if ( ! empty( $cards ) ) {
 					$response_data['products'] = array_values( $cards );
@@ -1150,8 +1220,13 @@ class DB_Chat_Chat_Endpoint {
 		 * booleans) attached whenever ANY checkout tool ran this turn, even one
 		 * that produced no summary (e.g. check_shipping_country) — see the
 		 * $checkout_tool_used property doc for why that is deliberate.
+		 *
+		 * ALSO fires when the CUSTOMER asked for checkout and the model did not
+		 * call a tool ($checkout_step_requested) — one attach block, one
+		 * empty-cart guard, one PII boundary, whichever of the two triggered
+		 * it. Deliberately the same code, not a second copy.
 		 */
-		if ( $this->checkout_tool_used ) {
+		if ( $this->checkout_tool_used || $this->checkout_step_requested ) {
 			$cart_count = ( function_exists( 'WC' ) && WC()->cart ) ? (int) WC()->cart->get_cart_contents_count() : 0;
 
 			if ( $cart_count < 1 ) {
@@ -1165,12 +1240,51 @@ class DB_Chat_Chat_Endpoint {
 				);
 			} else {
 				$checkout_status = ( new DB_Chat_Checkout_Writer() )->has_required_for_checkout();
+				$needs           = empty( $checkout_status['ok'] ) ? 'address' : '';
+
+				/*
+				 * The step was requested in code and the address is already
+				 * complete, but the model never called get_checkout_summary —
+				 * so there is nothing for the widget to render and the customer
+				 * sees silence again, which is the bug one layer down. Build the
+				 * summary through the SAME private method the tool uses: it
+				 * stashes the widget payload on $this->checkout_widget_summary
+				 * and its Claude-safe return value is discarded here, unused.
+				 * Nothing is appended to last_tool_results() by calling it
+				 * directly, so Claude's context is untouched.
+				 */
+				if ( '' === $needs && null === $this->checkout_widget_summary && $this->checkout_step_requested ) {
+					$this->tool_checkout_summary();
+				}
 
 				$response_data['checkout'] = array(
 					'mode'    => is_user_logged_in() ? 'logged_in' : 'guest',
-					'needs'   => empty( $checkout_status['ok'] ) ? 'address' : '',
+					'needs'   => $needs,
 					'summary' => $this->checkout_widget_summary,
 				);
+
+				/*
+				 * REVIEW CARD — WIDGET-ONLY REAL PII. The customer just typed a
+				 * name, street address, phone and email into the form; show it
+				 * back so they can catch a typo before they pay, with a one-tap
+				 * way to fix it. Only when the address is actually complete: a
+				 * review of half an address with a "Looks right" button would
+				 * promise a checkout that cannot proceed.
+				 *
+				 * This value NEVER goes anywhere else. It is not a tool result,
+				 * it is not in last_tool_results(), it is not written to the
+				 * conversation store or the log (the customer's turn was already
+				 * replaced by capture_checkout_input()'s neutral marker), and it
+				 * is never persisted by the widget. Claude knows only that an
+				 * address exists. See DB_Chat_Checkout_Writer::review().
+				 */
+				if ( $this->checkout_review_requested && '' === $needs ) {
+					$review = $this->checkout_review_payload();
+
+					if ( null !== $review ) {
+						$response_data['checkout']['review'] = $review;
+					}
+				}
 			}
 		}
 
@@ -1520,7 +1634,9 @@ class DB_Chat_Chat_Endpoint {
 		 * ourselves: derive the topic from the customer's message and look it up
 		 * in the catalogue. Every card is a real published product with a real
 		 * price — nothing is invented — and the relevance guard in
-		 * cards_for_query() keeps a fitment part off a care question.
+		 * cards_for_query() keeps a fitment part off a care question. Three
+		 * cards for the same reason as the AI path above; cards_for_query()
+		 * returns fewer rather than padding the list.
 		 */
 		if ( empty( $products )
 			&& is_callable( array( $this->lookup_engine, 'last_was_advice' ) )
@@ -1528,7 +1644,7 @@ class DB_Chat_Chat_Endpoint {
 			$topic = $this->lookup_engine->advice_search_query( $message );
 
 			if ( ! empty( $topic['queries'] ) && ! empty( $topic['nouns'] ) ) {
-				$products = $this->product_index->cards_for_query( $topic['queries'], $topic['nouns'], 2 );
+				$products = $this->product_index->cards_for_query( $topic['queries'], $topic['nouns'], 3 );
 			}
 		}
 
@@ -2105,6 +2221,146 @@ class DB_Chat_Chat_Endpoint {
 	}
 
 	/**
+	 * Does the customer's OWN message ask to check out, right now?
+	 *
+	 * Pure and deterministic: no WooCommerce, no session, no request object,
+	 * no model. Public and static so it can be exercised directly by the test
+	 * harness, the same way DB_Chat_Confirm's gates are.
+	 *
+	 * WHY THIS EXISTS AT ALL. The checkout step used to be attached only when
+	 * the model called a checkout tool. Asked "I want to checkout", Haiku
+	 * frequently answers in prose instead — "fill in the form that'll pop
+	 * up" — and no form ever popped up, because nothing told the widget to
+	 * render one. The customer then has to ask where the form is. Reading the
+	 * customer's words in code removes the model from that decision, exactly
+	 * as the cart confirm and the checkout confirm already do.
+	 *
+	 * HOW IT IS BOUNDED, and which way it errs. A miss costs a prose reply —
+	 * which is today's behaviour, so a miss is never a regression. A FALSE
+	 * positive pops an address form into the middle of a product question, so
+	 * the bounds are deliberately tight:
+	 *
+	 * - Our own neutral markers (`[checkout details provided]`) are skipped:
+	 *   they contain the word but are not something a customer typed, and the
+	 *   turn they stand for has its own handling.
+	 * - Short messages only (self::CHECKOUT_INTENT_MAX_WORDS). "I want to
+	 *   checkout" is four words; "can i still use the voucher i got at
+	 *   checkout last week" is a question.
+	 * - Refusals are checked FIRST, via DB_Chat_Confirm, so "tak nak bayar"
+	 *   and "I don't want to checkout yet" cannot read as a request. Same
+	 *   refusal-first ordering, same Malay particle-negation reason, as the
+	 *   cart commit gate.
+	 * - "Later" and "why / failed / error / cannot" bail out: the first is an
+	 *   intent for another day, the second is a support question (often a
+	 *   human handoff), and a form answers neither.
+	 * - Phrases are multi-word wherever a single word would be ambiguous:
+	 *   bare "bayar" appears in "boleh bayar guna FPX?", which is a
+	 *   payment-methods question answered from the help pages, so only "nak
+	 *   bayar" / "bayar sekarang" fire. The weakest phrases ("beli sekarang",
+	 *   "buy now") only count when they are the WHOLE message — the same
+	 *   bare-reply discipline DB_Chat_Confirm applies to single-character
+	 *   Chinese confirmations.
+	 *
+	 * @param string $message The customer's literal message this turn.
+	 * @return bool
+	 */
+	public static function wants_checkout( $message ) {
+		$raw = trim( (string) $message );
+
+		if ( '' === $raw ) {
+			return false;
+		}
+
+		if ( 0 === mb_strpos( $raw, '[' ) ) {
+			return false;
+		}
+
+		$text = mb_strtolower( wp_strip_all_tags( $raw ) );
+		// Punctuation and symbols become separators; letters, digits and Han
+		// characters survive.
+		$text = (string) preg_replace( '/[^\p{L}\p{N}]+/u', ' ', $text );
+		$text = trim( (string) preg_replace( '/\s+/u', ' ', $text ) );
+
+		if ( '' === $text ) {
+			return false;
+		}
+
+		$words = preg_split( '/\s+/u', $text, -1, PREG_SPLIT_NO_EMPTY );
+		$words = is_array( $words ) ? $words : array();
+
+		if ( count( $words ) > self::CHECKOUT_INTENT_MAX_WORDS ) {
+			return false;
+		}
+
+		/*
+		 * Refusal first, always — see the doc above. Deliberately given the RAW
+		 * message, not the normalised one: DB_Chat_Confirm does its own
+		 * tokenising, and it keeps the apostrophe so "don't" stays one token.
+		 * Passing the normalised text here made "I don't want to checkout yet"
+		 * read as a request, because stripping the apostrophe split the decline
+		 * word into "don" + "t" and neither is in the list.
+		 */
+		if ( class_exists( 'DB_Chat_Confirm' ) && DB_Chat_Confirm::is_refusal( $raw ) ) {
+			return false;
+		}
+
+		$pad = ' ' . $text . ' ';
+
+		// Intent, but not now.
+		foreach ( array( 'later', 'nanti', 'kemudian', 'esok', 'tomorrow' ) as $word ) {
+			if ( false !== strpos( $pad, ' ' . $word . ' ' ) ) {
+				return false;
+			}
+		}
+
+		// A problem at checkout, or a question about how it works.
+		foreach ( array(
+			'why', 'kenapa', 'mengapa', 'failed', 'fail', 'fails', 'error', 'errors',
+			'stuck', 'problem', 'masalah', 'cannot', 'rosak', 'tak boleh', 'tidak boleh',
+			'tak jadi', 'declined',
+		) as $word ) {
+			if ( false !== strpos( $pad, ' ' . $word . ' ' ) ) {
+				return false;
+			}
+		}
+
+		// Chinese: substring-matched, because written Chinese has no spaces, so
+		// only the unambiguous "checkout" terms are listed. "付款" (payment) is
+		// deliberately NOT here — it is in "你们接受什么付款方式?", a
+		// payment-methods question. A Chinese refusal ("我不要结账") was already
+		// caught by the refusal gate above.
+		foreach ( array( '结账', '結賬', '結帳', '去结账' ) as $term ) {
+			if ( false !== mb_strpos( $text, $term ) ) {
+				return true;
+			}
+		}
+
+		$phrases = (array) apply_filters(
+			'db_chat_checkout_intent_phrases',
+			array(
+				'checkout', 'check out', 'checking out',
+				'proceed to payment', 'proceed to pay', 'proceed to checkout',
+				'go to checkout', 'go to payment', 'take me to checkout',
+				'place order', 'place my order', 'complete my order',
+				'complete order', 'finish my order', 'pay now', 'make payment',
+				'ready to pay', 'nak bayar', 'mahu bayar', 'bayar sekarang',
+				'nak checkout', 'teruskan ke pembayaran', 'buat pembayaran',
+			)
+		);
+
+		foreach ( $phrases as $phrase ) {
+			$phrase = trim( mb_strtolower( (string) $phrase ) );
+
+			if ( '' !== $phrase && false !== strpos( $pad, ' ' . $phrase . ' ' ) ) {
+				return true;
+			}
+		}
+
+		// Whole-message-only phrases — see the doc above.
+		return in_array( $text, array( 'beli sekarang', 'nak beli sekarang', 'buy now', 'order now', 'bayar', 'pay' ), true );
+	}
+
+	/**
 	 * Deterministic checkout confirmation: hand back the WooCommerce payment
 	 * link, built in code, never by the model. Returns null — deferring to the
 	 * AI — when there is nothing to check out or the required address is not yet
@@ -2288,8 +2544,21 @@ class DB_Chat_Chat_Endpoint {
 	private function capture_checkout_input( $request ) {
 		$details = $this->read_checkout_details( $request );
 
+		/*
+		 * Both branches below raise the two deterministic step flags, for the
+		 * failure the operator hit: after "Here are my delivery details" the
+		 * model often says nothing useful and calls no checkout tool, so the
+		 * conversation simply stalled with the customer's address sitting in
+		 * the session and nothing on screen. The step and the review card are
+		 * now attached from the fact that details ARRIVED, not from the model
+		 * noticing. The values themselves still never leave this method — see
+		 * the PII boundary in the doc above.
+		 */
 		if ( null !== $details ) {
 			( new DB_Chat_Checkout_Writer() )->set_details( $details );
+
+			$this->checkout_step_requested   = true;
+			$this->checkout_review_requested = true;
 
 			return '[checkout details provided]';
 		}
@@ -2297,10 +2566,48 @@ class DB_Chat_Chat_Endpoint {
 		$confirm_address = $request->get_param( 'checkout_confirm_address' );
 
 		if ( ! empty( $confirm_address ) ) {
+			$this->checkout_step_requested   = true;
+			$this->checkout_review_requested = true;
+
 			return '[confirmed saved address]';
 		}
 
 		return null;
+	}
+
+	/**
+	 * The review card payload for the widget: the delivery details the
+	 * customer just gave, labelled and ordered, plus where to go to fix them.
+	 *
+	 * WIDGET-ONLY REAL PII. Called from exactly one place — the `checkout`
+	 * attach block in handle_request() — and its return value goes into the
+	 * response array and nowhere else. It must never be returned from a tool
+	 * executor, never appear in last_tool_results(), and never be written to
+	 * the conversation store or the log. See DB_Chat_Checkout_Writer::review()
+	 * and the $checkout_widget_summary property doc.
+	 *
+	 * @return array{fields:array<int,array{label:string,value:string}>,edit_url:string}|null
+	 *         Null when nothing is captured yet (nothing to review).
+	 */
+	private function checkout_review_payload() {
+		$fields = ( new DB_Chat_Checkout_Writer() )->review();
+
+		if ( empty( $fields ) ) {
+			return null;
+		}
+
+		return array(
+			'fields'   => array_values( $fields ),
+			/*
+			 * "Fix details" goes to the CHECKOUT page, not the cart page: the
+			 * customer is correcting an address and then paying, and the cart
+			 * page would make them click through again. It is WooCommerce's own
+			 * public checkout URL — the same one "Proceed to payment" uses —
+			 * so nothing here creates an order, chooses a payment method, or
+			 * touches the gateway.
+			 */
+			'edit_url' => function_exists( 'wc_get_checkout_url' ) ? (string) wc_get_checkout_url() : '',
+		);
 	}
 
 	/**

@@ -52,4 +52,60 @@ t_ok(isset($srv['zone']) && $srv['zone'] === '', 'unknown country has no zone na
 $blank = $w->shipping_country_served('');
 t_ok($blank['served'] === false, 'blank country not served');
 
+/*
+ * captured_details() / review() — the ONLY readers that return the captured
+ * VALUES. They exist so the customer can proof-read what they typed before
+ * they pay. Everything below is about two things: that the values come back
+ * complete and readable, and that they are shaped for the WIDGET alone.
+ * (That they never reach Claude is asserted against the real tool results in
+ * tests/unit/test-checkout-tools.php and tests/server/test-checkout-review.php.)
+ */
+$w->set_details([
+    'first_name' => 'Farah', 'last_name' => 'Aziz', 'email' => 'farah@example.test',
+    'phone' => '0123456789', 'address_1' => '12 Jalan Test', 'address_2' => 'Unit 4',
+    'city' => 'Johor Bahru', 'state' => 'Johor', 'postcode' => '80000', 'country' => 'Malaysia',
+]);
+
+$captured = $w->captured_details();
+t_ok(array_keys($captured) === DB_Chat_Checkout_Writer::FIELDS, 'captured_details() returns exactly FIELDS, in order');
+t_ok($captured['country'] === 'MY', 'the typed country NAME was folded to the ISO code WooCommerce needs');
+t_ok($captured['state'] === 'JHR', 'the typed state NAME was folded to the WooCommerce state code');
+t_ok($captured['first_name'] === 'Farah' && $captured['email'] === 'farah@example.test', 'captured_details() reads the values back');
+
+$rows = $w->review();
+$labels = array_column($rows, 'label');
+$values = array_column($rows, 'value');
+
+t_ok($labels === ['Name', 'Address', 'City', 'Postcode', 'State', 'Country', 'Phone', 'Email'],
+     'review() rows are in the order a customer reads an address');
+t_ok($values[0] === 'Farah Aziz', 'review() joins first + last into one Name row');
+t_ok($values[1] === '12 Jalan Test, Unit 4', 'review() joins both address lines into one Address row');
+t_ok(in_array('Johor', $values, true), 'review() shows the state NAME, not the stored code — nobody proof-reads "JHR"');
+t_ok(in_array('Malaysia', $values, true), 'review() shows the country NAME, not "MY"');
+
+// Nothing blank is shown: an empty field is dropped, not rendered as a label
+// with nothing after it.
+$w2 = new DB_Chat_Checkout_Writer();
+foreach (DB_Chat_Checkout_Writer::FIELDS as $f) {
+    foreach (['set_billing_' . $f, 'set_shipping_' . $f] as $setter) {
+        WC()->customer->{$setter}('');
+    }
+}
+$w2->set_details(['first_name' => 'Solo', 'email' => 'solo@example.test']);
+$sparse = $w2->review();
+$sparse_labels = array_column($sparse, 'label');
+t_ok($sparse_labels === ['Name', 'Email'], 'review() drops every field the customer did not fill in');
+foreach ($sparse as $row) {
+    t_ok(trim($row['value']) !== '', 'review() never emits an empty value');
+}
+
+// Nothing captured at all -> no rows, so the endpoint attaches no review key
+// and the widget renders nothing (rather than an empty card).
+foreach (DB_Chat_Checkout_Writer::FIELDS as $f) {
+    foreach (['set_billing_' . $f, 'set_shipping_' . $f] as $setter) {
+        WC()->customer->{$setter}('');
+    }
+}
+t_ok($w2->review() === [], 'review() is empty when nothing has been captured');
+
 t_done();

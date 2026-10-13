@@ -38,6 +38,8 @@ class FakeIndex { public function match_in_text( $reply ) { return array(); } }
 if ( ! function_exists( 'wp_strip_all_tags' ) ) { function wp_strip_all_tags( $t ) { return is_string( $t ) ? trim( preg_replace( '/[\r\n\t]+/', ' ', strip_tags( (string) $t ) ) ) : ''; } }
 if ( ! function_exists( 'is_email' ) )          { function is_email( $t ) { return is_string( $t ) && (bool) filter_var( $t, FILTER_VALIDATE_EMAIL ); } }
 if ( ! function_exists( 'sanitize_email' ) )    { function sanitize_email( $t ) { return is_string( $t ) ? trim( $t ) : ''; } }
+// Customer-facing strings are translatable; offline, translation is identity.
+if ( ! function_exists( '__' ) )                { function __( $t, $d = null ) { return $t; } }
 
 if ( ! class_exists( 'FakeWCCustomer' ) ) {
 	class FakeWCCustomer {
@@ -71,7 +73,38 @@ if ( ! class_exists( 'FakeWCCart' ) ) {
 		public function get_cart() { return array(); }
 		public function get_cart_contents_count() { return 0; }
 		public function get_cart_total() { return 'RM0.00'; }
+		// summary() reads get_total() (items + shipping) and NOT get_cart_total(),
+		// which excludes shipping — the "Total: RM0.00 / Shipping: Free!" bug.
+		// Without this method the whole offline suite died on a fatal, so the
+		// two stubs differ on purpose: a test that confuses them fails loudly.
+		public function get_total() { return 'RM663.00'; }
 		public function get_product_subtotal( $product, $qty ) { return ''; }
+	}
+}
+
+// --- Minimal stub for WC()->countries -------------------------------------
+// DB_Chat_Checkout_Writer folds the country/state NAMES a customer types into
+// the ISO codes WooCommerce needs (Malaysia -> MY, Johor -> JHR), and
+// review() folds them back to names for display. Both directions need these
+// tables, so the offline tests carry a two-country slice of them.
+if ( ! class_exists( 'FakeWCCountries' ) ) {
+	class FakeWCCountries {
+		public function get_countries() {
+			return array(
+				'MY' => 'Malaysia',
+				'GB' => 'United Kingdom',
+			);
+		}
+		public function get_states( $country = '' ) {
+			if ( 'MY' === $country ) {
+				return array(
+					'JHR' => 'Johor',
+					'KUL' => 'Kuala Lumpur',
+					'PNG' => 'Penang',
+				);
+			}
+			return array();
+		}
 	}
 }
 
@@ -112,9 +145,11 @@ if ( ! function_exists( 'WC' ) ) {
 	class FakeWC {
 		public $customer;
 		public $cart;
+		public $countries;
 		public function __construct() {
-			$this->customer = new FakeWCCustomer();
-			$this->cart     = new FakeWCCart();
+			$this->customer  = new FakeWCCustomer();
+			$this->cart      = new FakeWCCart();
+			$this->countries = new FakeWCCountries();
 		}
 	}
 	function WC() {

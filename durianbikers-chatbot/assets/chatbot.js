@@ -199,6 +199,7 @@ products.
 	var MAX_PRODUCTS = 4;
 	var MAX_PAGES = 2;           // REST contract: `pages` is 0–2 entries
 	var MAX_CART_ITEMS = 20;     // defensive cap; a real cart is never this long
+	var MAX_REVIEW_ROWS = 10;    // defensive cap; the server sends 8 labelled rows at most
 	var MAX_SUGGESTIONS = 4;     // starter chips shown at open
 	/*
 		Follow-up chips (the guided product finder's next step) get a slightly
@@ -1800,8 +1801,16 @@ products.
 	 * see `handleResponse`/`saveState`). A stale checkout step must never
 	 * reappear after a reload.
 	 *
-	 * `checkout = { mode: 'guest'|'logged_in', needs: 'address'|'', summary }`
+	 * `checkout = { mode: 'guest'|'logged_in', needs: 'address'|'', summary, review? }`
 	 * `checkout_link = { url }`
+	 *
+	 * `review = { fields: [ { label, value } ], edit_url }` — the delivery
+	 * details the customer just typed, sent back so they can proof-read them
+	 * before paying. It is the most personal payload the widget ever handles:
+	 * a real name, street address, phone and email. It is rendered and then
+	 * forgotten — never pushed to `transcript`, never saved, and never echoed
+	 * back to the server in `message` or `history`. The server never sends it
+	 * to the AI either; see the PII boundary note in class-chat-endpoint.php.
 	 */
 
 	/**
@@ -1974,8 +1983,15 @@ products.
 	 * line_price — same row builder as the cart summary), shipping, total,
 	 * and the delivery address, with an "all correct?" line. Rendered via
 	 * `el()`/textContent only; never written to `transcript`/`saveState`.
+	 *
+	 * `hasReview` means a field-by-field review card is about to be rendered
+	 * underneath this one. When it is, this card drops its one-line address,
+	 * its "all correct?" question and its change-address button: the review
+	 * card asks the same question better, and two "is this right?" prompts
+	 * with two different buttons is how a customer ends up tapping neither.
+	 * This card keeps the money (items, shipping, total).
 	 */
-	function addCheckoutSummary(summary) {
+	function addCheckoutSummary(summary, hasReview) {
 		if (!summary || typeof summary !== 'object') {
 			return;
 		}
@@ -2023,7 +2039,7 @@ products.
 			body.appendChild(el('p', 'db-chat-product-price', 'Total: ' + summary.total.trim()));
 			rendered = true;
 		}
-		if (typeof summary.address_line === 'string' && summary.address_line.trim()) {
+		if (!hasReview && typeof summary.address_line === 'string' && summary.address_line.trim()) {
 			body.appendChild(el('p', 'db-chat-escalate-text', 'Deliver to: ' + summary.address_line.trim()));
 			rendered = true;
 		}
@@ -2032,24 +2048,132 @@ products.
 			return;
 		}
 
-		body.appendChild(el('p', 'db-chat-escalate-text', 'Is everything above correct?'));
+		if (!hasReview) {
+			body.appendChild(el('p', 'db-chat-escalate-text', 'Is everything above correct?'));
 
-		// Let the customer fix or change their delivery address — a wrong
-		// address, or a different country — instead of being stuck with whatever
-		// was captured. Re-opens the same address form. Only shown once an
-		// address is on the summary (the confirm step).
-		if (typeof summary.address_line === 'string' && summary.address_line.trim()) {
-			var changeBtn = el('button', 'db-chat-checkout-change', 'Change delivery address');
-			changeBtn.type = 'button';
-			changeBtn.addEventListener('click', function () {
-				openCheckoutForm();
-			});
-			body.appendChild(changeBtn);
+			// Let the customer fix or change their delivery address — a wrong
+			// address, or a different country — instead of being stuck with whatever
+			// was captured. Re-opens the same address form. Only shown once an
+			// address is on the summary (the confirm step).
+			if (typeof summary.address_line === 'string' && summary.address_line.trim()) {
+				var changeBtn = el('button', 'db-chat-checkout-change', 'Change delivery address');
+				changeBtn.type = 'button';
+				changeBtn.addEventListener('click', function () {
+					openCheckoutForm();
+				});
+				body.appendChild(changeBtn);
+			}
 		}
 
 		wrap.appendChild(body);
 		els.log.appendChild(wrap);
 		scrollToEnd();
+	}
+
+	/**
+	 * DELIVERY DETAILS REVIEW card: the name, address, phone and email the
+	 * customer just typed, read back field by field, with two actions —
+	 * "Looks right" (straight to payment) and "Fix details" (the WooCommerce
+	 * checkout page, where they can correct anything and pay in the same
+	 * place).
+	 *
+	 * Why read it back at all: the form is typed into a 380px chat panel on a
+	 * phone, so a wrong digit in a postcode or a typo'd email is easy and
+	 * expensive. Showing it back is the cheapest possible catch.
+	 *
+	 * THE PII RULE FOR THIS FUNCTION. Every value here is real personal data.
+	 * It is rendered with `el()`/textContent only, it is never pushed to
+	 * `transcript` or `saveState` (so a reload shows nothing — correct: a
+	 * stale address must not reappear), and it is never put back into
+	 * `message` or `history`, which are what the server forwards to the AI.
+	 * "Looks right" sends the same neutral text and the same
+	 * `checkout_confirm` signal the summary's confirm button already sends —
+	 * no new confirm mechanism, and no address in the request.
+	 *
+	 * @param {Object} review  `{ fields: [ { label, value } ], edit_url }`.
+	 * @return {boolean} True when a card was actually rendered.
+	 */
+	function addCheckoutReview(review) {
+		if (!review || typeof review !== 'object') {
+			return false;
+		}
+		var fields = Array.isArray(review.fields) ? review.fields : null;
+		if (!fields || !fields.length) {
+			return false;
+		}
+
+		var wrap = el('div', 'db-chat-msg db-chat-msg-bot');
+		wrap.appendChild(el('span', 'db-chat-msg-spacer'));
+		var body = el('div', 'db-chat-msg-body');
+
+		var box = el('div', 'db-chat-review');
+		box.appendChild(el('p', 'db-chat-review-title', 'Please check your delivery details'));
+
+		var list = el('dl', 'db-chat-review-list');
+		var rows = 0;
+		fields.forEach(function (field) {
+			// Defensive cap: the server sends eight labelled rows at most.
+			if (rows >= MAX_REVIEW_ROWS) {
+				return;
+			}
+			if (!field || typeof field !== 'object') {
+				return;
+			}
+			var label = trimmed(field.label);
+			var value = trimmed(field.value);
+			if (!label || !value) {
+				return;
+			}
+			list.appendChild(el('dt', 'db-chat-review-label', label));
+			list.appendChild(el('dd', 'db-chat-review-value', value));
+			rows += 1;
+		});
+
+		if (!rows) {
+			return false;
+		}
+
+		box.appendChild(list);
+
+		var actions = el('div', 'db-chat-review-actions');
+
+		var ok = el('button', 'db-chat-escalate-btn', 'Looks right');
+		ok.type = 'button';
+		ok.addEventListener('click', function () {
+			awaitingCheckoutConfirm = false;
+			actions.remove();
+			send('Yes, everything is correct', { checkout_confirm: true });
+		});
+		actions.appendChild(ok);
+
+		/*
+		 * "Fix details" is a plain link to the WooCommerce checkout page, not
+		 * another chat round-trip: the customer corrects the field and pays in
+		 * the same place, which is what the operator asked for. Falls back to
+		 * re-opening the chat form if the server sent no URL, so the button is
+		 * never a dead end.
+		 */
+		var href = safeUrl(review.edit_url);
+		if (href) {
+			var fix = el('a', 'db-chat-checkout-change', 'Fix details');
+			fix.setAttribute('href', href);
+			actions.appendChild(fix);
+		} else {
+			var fixBtn = el('button', 'db-chat-checkout-change', 'Fix details');
+			fixBtn.type = 'button';
+			fixBtn.addEventListener('click', function () {
+				openCheckoutForm();
+			});
+			actions.appendChild(fixBtn);
+		}
+
+		box.appendChild(actions);
+		body.appendChild(box);
+		wrap.appendChild(body);
+		els.log.appendChild(wrap);
+		scrollToEnd();
+
+		return true;
 	}
 
 	/**
@@ -2082,8 +2206,8 @@ products.
 	/**
 	 * Dispatches the `checkout` response key to the right render path
 	 * (RULING A shape — see task-7-brief): the guest form, the logged-in
-	 * tap-confirm, and/or the summary card. `checkout_link` is handled
-	 * separately by `addCheckoutLink()`.
+	 * tap-confirm, the summary card, and the delivery-details review card.
+	 * `checkout_link` is handled separately by `addCheckoutLink()`.
 	 */
 	function addCheckoutStep(checkout, hasLink) {
 		if (!checkout || typeof checkout !== 'object') {
@@ -2106,7 +2230,23 @@ products.
 				addCheckoutConfirm(addressLine);
 			}
 		}
-		addCheckoutSummary(checkout.summary);
+
+		/*
+		 * The review card replaces the generic confirm button when the server
+		 * sends one — it asks the same question with the detail the customer
+		 * needs to answer it, and carries its own "Looks right". Never shown
+		 * once we are already at the payment link: there is nothing left to
+		 * confirm at that point.
+		 */
+		var review = (!hasLink && checkout.review && typeof checkout.review === 'object') ? checkout.review : null;
+
+		addCheckoutSummary(checkout.summary, !!review);
+
+		if (review && addCheckoutReview(review)) {
+			// A typed "yes" confirms too, exactly as it does for the button.
+			awaitingCheckoutConfirm = true;
+			return;
+		}
 
 		// Address is complete and we are not already at the payment link: this
 		// is the confirm step. Offer an explicit button, and flag that a typed

@@ -5,11 +5,23 @@
  * This is the PII boundary: the chatbot's AI layer collects a customer's
  * name/address/phone/email in conversation, but nothing about that captured
  * text is ever allowed to travel back through a tool result, a log line, or
- * a return value. `set_details()` writes straight into `WC()->customer`
+ * the model's context. `set_details()` writes straight into `WC()->customer`
  * (billing and shipping) and reports back only which field NAMES are now
  * populated — never the values. `sanitize_details()` is pure and has no
  * side effects, so it can be unit-tested without a WordPress/WooCommerce
  * environment.
+ *
+ * THREE methods here deliberately DO return captured values, and they are
+ * the only three: `summary()` (its `address_line`), `address_line()`, and
+ * `captured_details()` / `review()` (added Oct 2026 so a customer can
+ * proof-read what they typed before paying). Every one of them is
+ * WIDGET-ONLY — the endpoint carries their output to the browser in the
+ * `checkout` response key and nowhere else. A tool executor must never
+ * return them, `last_tool_results()` must never contain them, and they must
+ * never be written to the conversation store or the debug log. Claude may
+ * know an address EXISTS; it must never learn what it says. The caller-side
+ * half of this rule is documented on
+ * `DB_Chat_Chat_Endpoint::$checkout_widget_summary`.
  *
  * @package DurianBikers_Chatbot
  */
@@ -337,6 +349,142 @@ class DB_Chat_Checkout_Writer {
 		);
 
 		return wp_strip_all_tags( implode( ', ', $parts ) );
+	}
+
+	/**
+	 * The delivery details currently held in the customer's checkout session,
+	 * field by field.
+	 *
+	 * WIDGET-ONLY, exactly like summary() and address_line() above — this is
+	 * the ONE reader that returns the captured VALUES rather than field names
+	 * or booleans, which makes it the most dangerous method in this file. It
+	 * exists so the customer can be shown back what they typed and correct a
+	 * typo before they pay; that is the whole of its purpose. Its return value
+	 * must never be handed to a tool result, a log line, an exception message
+	 * or the model's context: Claude may know an address EXISTS (that is what
+	 * has_required_for_checkout() is for) and must never learn what it says.
+	 * See the PII boundary note at the top of this file, and the
+	 * $checkout_widget_summary property doc in class-chat-endpoint.php.
+	 *
+	 * Reads billing first (that is what has_required_for_checkout() judges
+	 * completeness on, and set_details() writes both), falling back to
+	 * shipping per field so a saved account whose billing is thinner than its
+	 * shipping still renders. Returns ONLY self::FIELDS keys — never anything
+	 * else WC_Customer happens to hold.
+	 *
+	 * @return array<string,string> Map of all self::FIELDS keys to strings (possibly '').
+	 */
+	public function captured_details() {
+		$c   = $this->ensure_customer();
+		$out = array_fill_keys( self::FIELDS, '' );
+
+		if ( ! $c ) {
+			return $out;
+		}
+
+		foreach ( self::FIELDS as $f ) {
+			$value = '';
+
+			foreach ( array( 'get_billing_' . $f, 'get_shipping_' . $f ) as $getter ) {
+				if ( '' !== $value ) {
+					break;
+				}
+
+				if ( is_callable( array( $c, $getter ) ) ) {
+					$value = trim( (string) $c->{$getter}() );
+				}
+			}
+
+			$out[ $f ] = wp_strip_all_tags( $value );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * The same captured details, grouped and labelled for the review card the
+	 * widget shows after the customer fills in the form ("is this right?").
+	 *
+	 * Grouped the way a customer reads an address, not the way the fields are
+	 * stored: name is one line, the two address lines are one line. Empty
+	 * rows are dropped rather than shown blank. Country and state are stored
+	 * as the ISO codes WooCommerce needs ("MY", "JHR") — nobody wants to
+	 * proof-read "JHR", so they are rendered back through WooCommerce's own
+	 * name tables, which is the same data, not a new claim.
+	 *
+	 * WIDGET-ONLY, for the same reason as captured_details() above.
+	 *
+	 * @return array<int,array{label:string,value:string}> Ordered, non-empty rows.
+	 */
+	public function review() {
+		$d = $this->captured_details();
+
+		$country_name = $d['country'];
+		$state_name   = $d['state'];
+
+		if ( function_exists( 'WC' ) && WC()->countries ) {
+			$countries = WC()->countries->get_countries();
+
+			if ( '' !== $d['country'] && isset( $countries[ $d['country'] ] ) ) {
+				$country_name = (string) $countries[ $d['country'] ];
+			}
+
+			$states = '' !== $d['country'] ? WC()->countries->get_states( $d['country'] ) : array();
+
+			if ( ! empty( $states ) && '' !== $d['state'] && isset( $states[ $d['state'] ] ) ) {
+				$state_name = (string) $states[ $d['state'] ];
+			}
+		}
+
+		$address = trim( $d['address_1'] . ( '' !== $d['address_2'] ? ', ' . $d['address_2'] : '' ), ', ' );
+
+		$rows = array(
+			array(
+				'label' => __( 'Name', 'durianbikers-chatbot' ),
+				'value' => trim( $d['first_name'] . ' ' . $d['last_name'] ),
+			),
+			array(
+				'label' => __( 'Address', 'durianbikers-chatbot' ),
+				'value' => $address,
+			),
+			array(
+				'label' => __( 'City', 'durianbikers-chatbot' ),
+				'value' => $d['city'],
+			),
+			array(
+				'label' => __( 'Postcode', 'durianbikers-chatbot' ),
+				'value' => $d['postcode'],
+			),
+			array(
+				'label' => __( 'State', 'durianbikers-chatbot' ),
+				'value' => $state_name,
+			),
+			array(
+				'label' => __( 'Country', 'durianbikers-chatbot' ),
+				'value' => $country_name,
+			),
+			array(
+				'label' => __( 'Phone', 'durianbikers-chatbot' ),
+				'value' => $d['phone'],
+			),
+			array(
+				'label' => __( 'Email', 'durianbikers-chatbot' ),
+				'value' => $d['email'],
+			),
+		);
+
+		$out = array();
+
+		foreach ( $rows as $row ) {
+			if ( '' !== trim( (string) $row['value'] ) ) {
+				$out[] = array(
+					'label' => (string) $row['label'],
+					'value' => trim( (string) $row['value'] ),
+				);
+			}
+		}
+
+		return $out;
 	}
 
 	/**

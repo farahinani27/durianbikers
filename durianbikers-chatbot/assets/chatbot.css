@@ -1528,6 +1528,63 @@ inherit through the shadow boundary. Nothing else here hardcodes a colour.
     color: var(--db-chat-brand-hover);
 }
 
+/* Delivery-details REVIEW card ("Please check your delivery details"). Same
+   bordered card shape as the escalate/contact steps — it is the same kind of
+   "answer this before we go on" block — with a label/value definition list so
+   the customer can scan their own address rather than re-read a sentence. A
+   value can be a long street address or email, so it wraps and breaks rather
+   than widening the panel. */
+.db-chat-review {
+    max-width: calc(100% - 2rem);
+    padding: 10px 12px;
+    border: 1px solid var(--db-chat-border);
+    border-radius: var(--db-chat-radius-card);
+    background: var(--db-chat-surface);
+}
+
+.db-chat-review-title {
+    margin: 0 0 8px;
+    font-size: var(--db-chat-size-message);
+    font-weight: 700;
+    line-height: 1.4;
+    color: var(--db-chat-ink);
+}
+
+.db-chat-review-list {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin: 0;
+}
+
+.db-chat-review-label {
+    margin: 0;
+    font-size: var(--db-chat-size-caption);
+    color: var(--db-chat-ink-muted);
+}
+
+.db-chat-review-value {
+    margin: 0;
+    font-size: var(--db-chat-size-caption);
+    font-weight: 600;
+    line-height: 1.4;
+    color: var(--db-chat-ink);
+    overflow-wrap: anywhere;
+}
+
+/* "Looks right" (primary) and "Fix details" (quiet link) side by side, the
+   same row shape as the contact step's Send/Cancel. */
+.db-chat-review-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+}
+
+.db-chat-review-actions .db-chat-checkout-change {
+    margin-top: 0;
+}
+
 /* Agent ("Team") reply — same bubble shape as a bot message, tinted with the
    brand colour at low opacity so it reads as a different voice without
    introducing a whole new colour. */

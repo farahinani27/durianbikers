@@ -1835,10 +1835,27 @@ class DB_Chat_Product_Index {
 	 * Real product cards for a topic query, for programmatic attachment to an AI
 	 * advice answer ("how do I care for my chain?" -> a chain lube/cleaner card).
 	 *
-	 * Applies a relevance guard so this fitment-heavy catalogue never surfaces a
-	 * fitment part for a care question: a result qualifies only if its name
-	 * contains one of the topic nouns AND carries no fitment marker. Errs toward
-	 * returning nothing rather than something wrong.
+	 * TWO RELEVANCE GUARDS, and the second one is the one that was missing.
+	 *
+	 * 1. FITMENT. This catalogue is fitment-heavy, so a result qualifies only if
+	 *    its name contains one of the topic nouns AND carries no fitment marker
+	 *    (a sprocket is not an answer to "how do I clean my chain").
+	 * 2. THE OBJECT OF THE CARE IS NOT A CARE PRODUCT. The noun test alone let a
+	 *    "Simpson Helmet M52" card sit beside a helmet care kit on a
+	 *    scratched-helmet question, because on a helmet question the topic noun
+	 *    IS the product category — every helmet in the shop passes a noun test.
+	 *    So a card now has to EARN its place: names carrying a consumable marker
+	 *    (cleaner, polish, lube, wax, kit, cloth…) are what an advice answer
+	 *    recommends, and once we have even one of those, a bare noun match is
+	 *    dropped rather than padded in. Two polishes beat three with a helmet
+	 *    among them: a mixed list reads as "we recommend all of these", which
+	 *    would be recommending a new helmet to someone asking how to clean the
+	 *    one they own.
+	 *
+	 * A bare noun match is only used when NO consumable matched at all — then it
+	 * is a single "we also stock these" card, never a list, so it cannot read as
+	 * a recommendation set. Errs toward returning nothing rather than something
+	 * wrong.
 	 *
 	 * @param string[] $queries Ordered search strings; tried in turn until enough
 	 *                          cards are found (care-typed queries first).
@@ -1858,11 +1875,34 @@ class DB_Chat_Product_Index {
 			'sparepart', 'spare part',
 		);
 
-		$cards = array();
-		$used  = array();
+		/*
+		 * Name fragments that mark a product you USE on your bike or gear — the
+		 * shelf an advice answer actually recommends from. Matched as plain
+		 * substrings of the lower-cased name, so 'clean' also catches
+		 * "Cleaner"/"Cleaning" and 'degreas' catches "Degreaser"/"Degreasing".
+		 * Filterable because the shop's stock of care products grows: a new
+		 * brand with its own vocabulary should not need a code change.
+		 */
+		$consumable = (array) apply_filters(
+			'db_chat_care_product_markers',
+			array(
+				'clean', 'wash', 'shampoo', 'degreas', 'lube', 'lubricant', 'oil',
+				'grease', 'polish', 'wax', 'shine', 'protectant', 'sealant',
+				'spray', 'kit', 'care', 'detailer', 'remover', 'anti fog',
+				'anti-fog', 'antifog', 'microfib', 'cloth', 'towel', 'brush',
+				'sponge', 'coating', 'treatment', 'fluid', 'additive', 'filter',
+			)
+		);
+
+		// $on_shelf: name matched a topic noun AND a consumable marker — the
+		// cards we want. $related: matched the noun only — the "Simpson Helmet"
+		// case, kept aside and used only if nothing landed on the shelf.
+		$on_shelf = array();
+		$related  = array();
+		$used     = array();
 
 		foreach ( $queries as $query ) {
-			if ( count( $cards ) >= $limit ) {
+			if ( count( $on_shelf ) >= $limit ) {
 				break;
 			}
 
@@ -1876,7 +1916,7 @@ class DB_Chat_Product_Index {
 			$rows    = isset( $results['results'] ) && is_array( $results['results'] ) ? $results['results'] : array();
 
 			foreach ( $rows as $row ) {
-				if ( count( $cards ) >= $limit ) {
+				if ( count( $on_shelf ) >= $limit ) {
 					break;
 				}
 
@@ -1913,16 +1953,45 @@ class DB_Chat_Product_Index {
 					continue;
 				}
 
+				$is_care = false;
+
+				foreach ( $consumable as $marker ) {
+					if ( false !== mb_strpos( $name, mb_strtolower( (string) $marker ) ) ) {
+						$is_care = true;
+						break;
+					}
+				}
+
+				// A bare noun match is only ever a fallback, so there is no point
+				// building more than one card for it.
+				if ( ! $is_care && ! empty( $related ) ) {
+					continue;
+				}
+
 				$card = $this->format_card( $id );
 
-				if ( null !== $card ) {
-					$cards[]     = $card;
-					$used[ $id ] = true;
+				if ( null === $card ) {
+					continue;
+				}
+
+				$used[ $id ] = true;
+
+				if ( $is_care ) {
+					$on_shelf[] = $card;
+				} else {
+					$related[] = $card;
 				}
 			}
 		}
 
-		return $cards;
+		if ( ! empty( $on_shelf ) ) {
+			return array_slice( $on_shelf, 0, $limit );
+		}
+
+		// Nothing on the care shelf matched this topic. One related product is
+		// honest ("we also stock these"); a list of them would read as a
+		// recommendation to replace the thing they asked how to look after.
+		return array_slice( $related, 0, 1 );
 	}
 
 	/**
