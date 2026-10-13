@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Durian Bikers SEO
  * Description: Fixes the WordPress core sitemap to emit CURCY /my/ store-prefixed URLs instead of bare redirecting ones, removes the author ("users") sitemap, excludes the transactional (cart/checkout/my-account) and work-in-progress pages from the sitemap, and holds the GA4 tag.
- * Version:     1.4.0
+ * Version:     1.5.0
  * Author:      Durian Bikers
  *
  * Loaded as an mu-plugin: no activation step, and it cannot overwrite theme files.
@@ -851,7 +851,7 @@ add_action( 'wp_head', 'durianbikers_seo_build_marker' );
 
 if ( ! function_exists( 'durianbikers_seo_build_marker' ) ) {
 	function durianbikers_seo_build_marker() {
-		echo "<!-- dbk-seo build 1.4.0 -->\n";
+		echo "<!-- dbk-seo build 1.5.0 -->\n";
 	}
 }
 
@@ -1251,7 +1251,18 @@ if ( ! function_exists( 'durianbikers_seo_breadcrumb_product_term' ) ) {
 }
 
 // Priority 5: after hreflang (4), before the taxonomy canonical (6).
-add_action( 'wp_head', 'durianbikers_seo_breadcrumb_schema', 5 );
+// DISABLED 2026-10-13, deliberately. The MotorMania theme already emits a
+// BreadcrumbList as microdata in its <section class="breadcrumbs"> block
+// (itemtype=schema.org/BreadcrumbList, trail "Home > Products > <item>"), on
+// both products and term archives. Registering this JSON-LD as well put TWO
+// BreadcrumbList declarations on the same page, and they disagreed: the theme
+// says "Home > Products > X", this says "Home > <real category> > X".
+// Conflicting structured data for one entity is worse than a plainer single
+// source, so the theme's stays and this is left unregistered.
+// To switch over properly, the theme's microdata block has to be suppressed
+// FIRST - the theme is edited directly on the server and diverges from this
+// repo, so that is not a change to make blind.
+// add_action( 'wp_head', 'durianbikers_seo_breadcrumb_schema', 5 );
 
 if ( ! function_exists( 'durianbikers_seo_breadcrumb_schema' ) ) {
 	function durianbikers_seo_breadcrumb_schema() {
@@ -1435,5 +1446,85 @@ if ( ! function_exists( 'durianbikers_seo_taxonomy_canonical' ) ) {
 		$url = $base . '/' . ltrim( $path, '/' );
 
 		echo '<link rel="canonical" href="' . esc_url( $url ) . '" />' . "\n";
+	}
+}
+
+// ===========================================================================
+// 10. Native lazy-loading for the below-the-fold attachment images
+// MEASURED on a product page: 29 <img>, 16 already lazy (4 native, the rest
+// through LiteSpeed's data-src/data-lazyloaded JS loader) and 13 with no lazy
+// mechanism at all - 8 related/upsell 400x400 thumbnails, 4 footer payment
+// icons and the site logo. Only the logo should stay eager.
+//
+// Done on wp_get_attachment_image_attributes, which is the one place every
+// attachment image rendered through wp_get_attachment_image() passes. A
+// hardcoded <img> in a template is NOT reachable from here by design: this
+// filter must not become an output-buffer rewriter on a store taking
+// payments.
+//
+// The FIRST attachment image on the page is skipped with a static counter
+// rather than deferring to core's wp_omit_loading_attr_threshold: that
+// threshold is only consulted for images core itself considers to be in the
+// main content loop, and several of the images here (logo, footer icons) are
+// rendered outside it, so it would not reliably protect the LCP element.
+// A plain counter is deterministic and has no dependency on core internals.
+//
+// Fail safe in every branch: anything unexpected is returned untouched.
+// ===========================================================================
+
+add_filter( 'wp_get_attachment_image_attributes', 'durianbikers_lazy_attachment_images', 20 );
+
+if ( ! function_exists( 'durianbikers_lazy_attachment_images' ) ) {
+	function durianbikers_lazy_attachment_images( $attr ) {
+
+		if ( ! is_array( $attr ) ) {
+			return $attr;
+		}
+
+		// Front end only. The admin has its own media handling, and a feed is
+		// parsed by readers that do not run our lazy loader.
+		if ( is_admin() ) {
+			return $attr;
+		}
+
+		if ( function_exists( 'is_feed' ) && is_feed() ) {
+			return $attr;
+		}
+
+		// Never override an explicit decision, including loading="eager".
+		if ( isset( $attr['loading'] ) && '' !== trim( (string) $attr['loading'] ) ) {
+			return $attr;
+		}
+
+		// LiteSpeed already lazy-loads this one in JS. Stacking native lazy on
+		// top of a JS loader is redundant and the two can fight.
+		foreach ( array( 'data-src', 'data-lazyloaded', 'data-srcset' ) as $litespeed_attr ) {
+			if ( isset( $attr[ $litespeed_attr ] ) && '' !== trim( (string) $attr[ $litespeed_attr ] ) ) {
+				return $attr;
+			}
+		}
+
+		// fetchpriority="high" is a declaration that this image is wanted now.
+		if ( isset( $attr['fetchpriority'] ) && 'high' === strtolower( trim( (string) $attr['fetchpriority'] ) ) ) {
+			return $attr;
+		}
+
+		// The site logo is in the header on every page.
+		if ( isset( $attr['class'] ) && is_string( $attr['class'] ) && false !== strpos( $attr['class'], 'custom-logo' ) ) {
+			return $attr;
+		}
+
+		// First attachment image of this request: the likely LCP element.
+		static $seen = 0;
+
+		$seen++;
+
+		if ( 1 === $seen ) {
+			return $attr;
+		}
+
+		$attr['loading'] = 'lazy';
+
+		return $attr;
 	}
 }
