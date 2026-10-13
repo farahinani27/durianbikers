@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Durian Bikers SEO
  * Description: Fixes the WordPress core sitemap to emit CURCY /my/ store-prefixed URLs instead of bare redirecting ones, removes the author ("users") sitemap, excludes the transactional (cart/checkout/my-account) and work-in-progress pages from the sitemap, and holds the GA4 tag.
- * Version:     1.3.0
+ * Version:     1.4.0
  * Author:      Durian Bikers
  *
  * Loaded as an mu-plugin: no activation step, and it cannot overwrite theme files.
@@ -851,6 +851,589 @@ add_action( 'wp_head', 'durianbikers_seo_build_marker' );
 
 if ( ! function_exists( 'durianbikers_seo_build_marker' ) ) {
 	function durianbikers_seo_build_marker() {
-		echo "<!-- dbk-seo build 1.3.0 -->\n";
+		echo "<!-- dbk-seo build 1.4.0 -->\n";
+	}
+}
+
+// ===========================================================================
+// 7. The /gb/ store's own XML sitemap
+// The sitemap filters at the top of this file rewrite every <loc> to the ONE
+// prefix in DURIANBIKERS_SITEMAP_STORE_PREFIX ('my'), so the ~5,215 /gb/
+// product URLs and every /gb/ term archive were in no sitemap at all - even
+// though the hreflang block above already tells Google they exist.
+//
+// Done as ADDITIONAL core sitemap providers rather than by widening the
+// existing filters: the /my/ output keeps running through exactly the code
+// that is live today, untouched, and the /gb/ output is a separate tree that
+// can be removed by deleting this block alone.
+//
+// Two providers, because the registry is keyed by provider name and one name
+// resolves to one provider:
+//   gb    -> /wp-sitemap-gb-product-1.xml      (posts: product, page, post)
+//   gbtax -> /wp-sitemap-gbtax-product_cat-1.xml (taxonomies)
+// Both names are plain lowercase letters on purpose: core's sitemap rewrite
+// rule matches ^wp-sitemap-([a-z]+?)-..., so no rewrite flush is needed. A
+// name with a digit or a hyphen would 404 until permalinks were re-saved.
+//
+// Exclusions are INHERITED, not re-implemented: the parent classes build
+// their queries through get_posts_query_args(), which fires
+// wp_sitemaps_posts_query_args - so durianbikers_sitemap_exclude_pages()
+// already removes the same six pages here, and get_max_num_pages() counts
+// the same set. The users/author sitemap stays removed for the same reason.
+// ===========================================================================
+
+// Rewrite one <loc> onto a given store prefix, whatever prefix it arrives with
+// The parent classes fire wp_sitemaps_posts_entry / wp_sitemaps_taxonomies_entry
+// while building their list, so a loc reaching us has ALREADY been through
+// durianbikers_sitemap_store_prefix_url() and carries /my/. This therefore
+// SWAPS the leading store segment instead of prepending to it - prepending is
+// what produced /my/my/ and /my/gb/ before, and those 404.
+// Returns '' to mean "drop this entry entirely".
+if ( ! function_exists( 'durianbikers_sitemap_swap_store_prefix_url' ) ) {
+	function durianbikers_sitemap_swap_store_prefix_url( $url, $prefix ) {
+
+		// Fail safe: anything we do not fully understand is dropped rather than
+		// emitted wrong. A short sitemap is recoverable; a sitemap full of
+		// redirecting or 404ing locs is the bug we fixed today.
+		if ( ! is_string( $url ) || '' === trim( $url ) ) {
+			return '';
+		}
+
+		$prefix = trim( (string) $prefix, '/' );
+
+		if ( '' === $prefix ) {
+			return '';
+		}
+
+		$parts = wp_parse_url( $url );
+		$home  = wp_parse_url( home_url( '/' ) );
+
+		if ( empty( $parts ) || ! is_array( $parts ) || empty( $parts['host'] ) ) {
+			return '';
+		}
+
+		if ( empty( $home ) || ! is_array( $home ) || empty( $home['host'] ) ) {
+			return '';
+		}
+
+		// Our own host only - never rewrite, and never publish, a foreign URL.
+		if ( strtolower( $parts['host'] ) !== strtolower( $home['host'] ) ) {
+			return '';
+		}
+
+		$rest = ltrim( isset( $parts['path'] ) ? (string) $parts['path'] : '', '/' );
+
+		// Strip an existing store segment, so this is idempotent.
+		if ( function_exists( 'durianbikers_seo_store_prefixes' ) ) {
+
+			$first    = strtolower( (string) strtok( $rest, '/' ) );
+			$prefixes = durianbikers_seo_store_prefixes();
+
+			if ( isset( $prefixes[ $first ] ) ) {
+				$rest = ltrim( (string) substr( $rest, strlen( $first ) ), '/' );
+			}
+		}
+
+		// The site root is the "Choose Your Store" selector, not a storefront
+		// page. It belongs once, in the existing /my/ output, and never here.
+		if ( '' === $rest ) {
+			return '';
+		}
+
+		$rebuilt  = isset( $parts['scheme'] ) ? $parts['scheme'] . '://' : '//';
+		$rebuilt .= $parts['host'];
+		$rebuilt .= isset( $parts['port'] ) ? ':' . $parts['port'] : '';
+		$rebuilt .= '/' . $prefix . '/' . $rest;
+		$rebuilt .= isset( $parts['query'] ) ? '?' . $parts['query'] : '';
+		$rebuilt .= isset( $parts['fragment'] ) ? '#' . $parts['fragment'] : '';
+
+		return $rebuilt;
+	}
+}
+
+// Map a whole url_list onto the /gb/ store, dropping anything unusable
+if ( ! function_exists( 'durianbikers_sitemap_gb_url_list' ) ) {
+	function durianbikers_sitemap_gb_url_list( $url_list ) {
+
+		if ( ! is_array( $url_list ) || empty( $url_list ) ) {
+			return array();
+		}
+
+		$out = array();
+
+		foreach ( $url_list as $entry ) {
+
+			if ( ! is_array( $entry ) || empty( $entry['loc'] ) ) {
+				continue;
+			}
+
+			$loc = durianbikers_sitemap_swap_store_prefix_url( $entry['loc'], 'gb' );
+
+			// '' means the helper refused it (root, foreign host, unparseable).
+			if ( '' === $loc ) {
+				continue;
+			}
+
+			$entry['loc'] = $loc;
+			$out[]        = $entry;
+		}
+
+		return $out;
+	}
+}
+
+// CRITICAL TIMING: WP_Sitemaps_Posts / WP_Sitemaps_Taxonomies do not exist
+// when mu-plugins load - core includes them on init, then fires
+// wp_sitemaps_init once the registry is built. So the subclasses are declared
+// INSIDE this callback, and if the classes are absent (core changed, sitemaps
+// disabled) it returns quietly and the /my/ sitemap is unaffected.
+add_action( 'wp_sitemaps_init', 'durianbikers_sitemap_register_gb_providers' );
+
+if ( ! function_exists( 'durianbikers_sitemap_register_gb_providers' ) ) {
+	function durianbikers_sitemap_register_gb_providers() {
+
+		if ( ! function_exists( 'wp_register_sitemap_provider' ) ) {
+			return;
+		}
+
+		if ( ! class_exists( 'WP_Sitemaps_Posts' ) || ! class_exists( 'WP_Sitemaps_Taxonomies' ) ) {
+			return;
+		}
+
+		// Guarded because an older copy of this code may already have declared
+		// them, and a second declaration is a fatal error.
+		if ( ! class_exists( 'Durianbikers_Sitemaps_Posts_Gb' ) ) {
+
+			/**
+			 * The posts sitemap, with every <loc> moved onto the /gb/ store.
+			 */
+			class Durianbikers_Sitemaps_Posts_Gb extends WP_Sitemaps_Posts {
+
+				public function __construct() {
+
+					parent::__construct();
+
+					// The registry does NOT set this from the name it is
+					// registered under, and get_sitemap_entries() builds the
+					// index URLs from it - so it must be set here.
+					$this->name = 'gb';
+				}
+
+				public function get_url_list( $page_num, $object_subtype = '' ) {
+
+					return durianbikers_sitemap_gb_url_list( parent::get_url_list( $page_num, $object_subtype ) );
+				}
+			}
+		}
+
+		if ( ! class_exists( 'Durianbikers_Sitemaps_Taxonomies_Gb' ) ) {
+
+			/**
+			 * The taxonomies sitemap, with every <loc> moved onto the /gb/ store.
+			 */
+			class Durianbikers_Sitemaps_Taxonomies_Gb extends WP_Sitemaps_Taxonomies {
+
+				public function __construct() {
+
+					parent::__construct();
+
+					$this->name = 'gbtax';
+				}
+
+				public function get_url_list( $page_num, $object_subtype = '' ) {
+
+					return durianbikers_sitemap_gb_url_list( parent::get_url_list( $page_num, $object_subtype ) );
+				}
+			}
+		}
+
+		// add_provider() returns false rather than throwing if the name is
+		// taken, so calling this twice is harmless.
+		wp_register_sitemap_provider( 'gb', new Durianbikers_Sitemaps_Posts_Gb() );
+		wp_register_sitemap_provider( 'gbtax', new Durianbikers_Sitemaps_Taxonomies_Gb() );
+	}
+}
+
+// ===========================================================================
+// 8. BreadcrumbList JSON-LD
+// There was none anywhere on the store, so Google renders the raw URL as the
+// breadcrumb in search results. Read-only <head> output: no cart, checkout,
+// pricing or gateway code is touched.
+//
+// Every item URL is built from durianbikers_seo_site_base() plus the CURRENT
+// store prefix, so a /gb/ page emits an all-/gb/ trail. Nothing here appends
+// to home_url() - CURCY filters that and already returns the prefix.
+// ===========================================================================
+
+// Where "Home" points inside a store, as a path under /{prefix}/
+// 'home', not empty: the store root (/my/, /gb/) canonicals on to
+// /{prefix}/home/, and a breadcrumb item should name the canonical URL rather
+// than one that points the signal somewhere else.
+if ( ! defined( 'DURIANBIKERS_SEO_BREADCRUMB_HOME_PATH' ) ) {
+	define( 'DURIANBIKERS_SEO_BREADCRUMB_HOME_PATH', 'home' );
+}
+
+// Force any URL onto the current store prefix, absolute, with no query string
+// get_term_link() and get_permalink() normally come back already prefixed
+// because CURCY filters home_url(), but "normally" is not a guarantee and a
+// breadcrumb item pointing at a redirecting URL is a wasted signal.
+// Returns '' when the URL is not ours or cannot be parsed - callers drop it.
+if ( ! function_exists( 'durianbikers_seo_store_url' ) ) {
+	function durianbikers_seo_store_url( $url ) {
+
+		if ( ! is_string( $url ) || '' === trim( $url ) ) {
+			return '';
+		}
+
+		$base = durianbikers_seo_site_base();
+
+		if ( '' === $base ) {
+			return '';
+		}
+
+		$parts = wp_parse_url( $url );
+
+		if ( empty( $parts ) || ! is_array( $parts ) ) {
+			return '';
+		}
+
+		// Our own host only.
+		if ( ! empty( $parts['host'] ) ) {
+
+			$home = wp_parse_url( $base );
+
+			if ( empty( $home['host'] ) || strtolower( $parts['host'] ) !== strtolower( $home['host'] ) ) {
+				return '';
+			}
+		}
+
+		$rest     = ltrim( isset( $parts['path'] ) ? (string) $parts['path'] : '', '/' );
+		$prefixes = durianbikers_seo_store_prefixes();
+		$first    = strtolower( (string) strtok( $rest, '/' ) );
+
+		// Strip whatever store segment it arrived with, then re-add ours.
+		if ( isset( $prefixes[ $first ] ) ) {
+			$rest = ltrim( (string) substr( $rest, strlen( $first ) ), '/' );
+		}
+
+		$current = durianbikers_seo_current_store_prefix();
+
+		if ( '' !== $current ) {
+			$rest = $current . '/' . $rest;
+		}
+
+		// Query strings and fragments are deliberately dropped: a breadcrumb
+		// item is the clean page, not this particular sorted view of it.
+		return $base . '/' . ltrim( $rest, '/' );
+	}
+}
+
+// The current store's home URL, built from the host - never from home_url()
+if ( ! function_exists( 'durianbikers_seo_store_home_url' ) ) {
+	function durianbikers_seo_store_home_url() {
+
+		$base = durianbikers_seo_site_base();
+
+		if ( '' === $base ) {
+			return '';
+		}
+
+		$current = durianbikers_seo_current_store_prefix();
+		$path    = trim( (string) DURIANBIKERS_SEO_BREADCRUMB_HOME_PATH, '/' );
+
+		$url = $base . '/';
+
+		if ( '' !== $current ) {
+			$url .= $current . '/';
+		}
+
+		if ( '' !== $path ) {
+			$url .= $path . '/';
+		}
+
+		return $url;
+	}
+}
+
+// A term and its ancestors, top-down, as breadcrumb rows
+// Ancestors first so the trail reads Home -> Parent -> Child. Every term call
+// is guarded: a broken ancestor list must cost us the crumb, not the page.
+if ( ! function_exists( 'durianbikers_seo_breadcrumb_term_trail' ) ) {
+	function durianbikers_seo_breadcrumb_term_trail( $term ) {
+
+		$rows = array();
+
+		if ( ! $term instanceof WP_Term || empty( $term->taxonomy ) ) {
+			return $rows;
+		}
+
+		$chain = array();
+
+		if ( function_exists( 'get_ancestors' ) ) {
+
+			$ancestors = get_ancestors( (int) $term->term_id, $term->taxonomy, 'taxonomy' );
+
+			if ( is_array( $ancestors ) && ! empty( $ancestors ) ) {
+
+				// get_ancestors() returns nearest-parent first.
+				foreach ( array_reverse( $ancestors ) as $ancestor_id ) {
+
+					$ancestor = get_term( (int) $ancestor_id, $term->taxonomy );
+
+					if ( $ancestor instanceof WP_Term && ! is_wp_error( $ancestor ) ) {
+						$chain[] = $ancestor;
+					}
+				}
+			}
+		}
+
+		$chain[] = $term;
+
+		foreach ( $chain as $node ) {
+
+			$name = wp_strip_all_tags( html_entity_decode( (string) $node->name, ENT_QUOTES, 'UTF-8' ) );
+			$name = trim( (string) preg_replace( '/\s+/u', ' ', $name ) );
+
+			if ( '' === $name ) {
+				continue;
+			}
+
+			$link = get_term_link( $node );
+
+			if ( is_wp_error( $link ) || ! is_string( $link ) || '' === $link ) {
+				continue;
+			}
+
+			$url = durianbikers_seo_store_url( $link );
+
+			if ( '' === $url ) {
+				continue;
+			}
+
+			$rows[] = array(
+				'name' => $name,
+				'item' => $url,
+			);
+		}
+
+		return $rows;
+	}
+}
+
+// The product's own category crumb: its first product_cat term, plus parents
+// WooCommerce has no "primary category" concept without an SEO plugin, so the
+// first assigned term is the honest choice. No category at all is fine - the
+// trail is then just Home -> product.
+if ( ! function_exists( 'durianbikers_seo_breadcrumb_product_term' ) ) {
+	function durianbikers_seo_breadcrumb_product_term( $post_id ) {
+
+		$post_id = (int) $post_id;
+
+		if ( $post_id <= 0 || ! function_exists( 'get_the_terms' ) ) {
+			return null;
+		}
+
+		$terms = get_the_terms( $post_id, 'product_cat' );
+
+		if ( is_wp_error( $terms ) || empty( $terms ) || ! is_array( $terms ) ) {
+			return null;
+		}
+
+		foreach ( $terms as $term ) {
+
+			if ( $term instanceof WP_Term ) {
+				return $term;
+			}
+		}
+
+		return null;
+	}
+}
+
+// Priority 5: after hreflang (4), before the taxonomy canonical (6).
+add_action( 'wp_head', 'durianbikers_seo_breadcrumb_schema', 5 );
+
+if ( ! function_exists( 'durianbikers_seo_breadcrumb_schema' ) ) {
+	function durianbikers_seo_breadcrumb_schema() {
+
+		if ( ! durianbikers_seo_head_allowed() ) {
+			return;
+		}
+
+		// The site root is the store selector: it has no trail, and it IS Home.
+		if ( function_exists( 'is_front_page' ) && is_front_page() ) {
+			return;
+		}
+
+		$home = durianbikers_seo_store_home_url();
+
+		if ( '' === $home ) {
+			return;
+		}
+
+		$rows = array(
+			array(
+				'name' => 'Home',
+				'item' => $home,
+			),
+		);
+
+		if ( is_singular( 'product' ) ) {
+
+			$post = get_queried_object();
+
+			if ( ! $post instanceof WP_Post ) {
+				return;
+			}
+
+			$term = durianbikers_seo_breadcrumb_product_term( (int) $post->ID );
+
+			if ( $term instanceof WP_Term ) {
+				$rows = array_merge( $rows, durianbikers_seo_breadcrumb_term_trail( $term ) );
+			}
+
+			$title = durianbikers_seo_title();
+			$url   = durianbikers_seo_store_url( durianbikers_seo_canonical_url() );
+
+			if ( '' === trim( (string) $title ) || '' === $url ) {
+				return;
+			}
+
+			$rows[] = array(
+				'name' => $title,
+				'item' => $url,
+			);
+
+		} elseif ( ( function_exists( 'is_tax' ) && is_tax() ) || is_category() || is_tag() ) {
+
+			$term = get_queried_object();
+
+			if ( ! $term instanceof WP_Term ) {
+				return;
+			}
+
+			$rows = array_merge( $rows, durianbikers_seo_breadcrumb_term_trail( $term ) );
+
+		} else {
+
+			// Everything else (plain pages, the shop archive, posts) is left
+			// alone: inventing a trail for them is guesswork.
+			return;
+		}
+
+		// Home on its own is not a breadcrumb.
+		if ( count( $rows ) < 2 ) {
+			return;
+		}
+
+		$elements = array();
+		$position = 1;
+
+		foreach ( $rows as $row ) {
+
+			$elements[] = array(
+				'@type'    => 'ListItem',
+				'position' => $position,
+				'name'     => $row['name'],
+				'item'     => $row['item'],
+			);
+
+			$position++;
+		}
+
+		$data = array(
+			'@context'        => 'https://schema.org',
+			'@type'           => 'BreadcrumbList',
+			'itemListElement' => $elements,
+		);
+
+		$json = wp_json_encode( $data );
+
+		if ( ! is_string( $json ) || '' === $json ) {
+			return;
+		}
+
+		// wp_json_encode() escapes forward slashes, so no value can close the
+		// script tag early.
+		echo '<script type="application/ld+json">' . $json . '</script>' . "\n";
+	}
+}
+
+// ===========================================================================
+// 9. rel=canonical on product taxonomy archives ONLY
+// CURCY self-canonicals every SINGULAR store-prefixed page, which is why the
+// section above adds none - but it does NOT canonical a taxonomy archive, so
+// /product-category/helmets/?orderby=price, ?min_price=100 and every other
+// sort/filter combination is an indexable duplicate of the clean URL.
+//
+// Self-referencing PER PAGE on purpose: page 2 canonicals to page 2, not back
+// to page 1 - page 2 lists different products and pointing it at page 1 asks
+// Google to drop those products. Only the QUERY STRING is stripped, which is
+// the whole point: it collapses the sort and filter variants onto the one
+// clean paginated URL.
+// ===========================================================================
+
+// Which archives get one. Singular is excluded deliberately: two canonical
+// tags is worse than one, and CURCY owns that tag on singular pages.
+if ( ! function_exists( 'durianbikers_seo_canonical_taxonomies' ) ) {
+	function durianbikers_seo_canonical_taxonomies() {
+
+		return array( 'product_cat', 'product_tag', 'product_brand' );
+	}
+}
+
+// Priority 6: after the breadcrumb, and well clear of core's rel_canonical()
+// at 10 - which only ever fires on singular, where we emit nothing.
+add_action( 'wp_head', 'durianbikers_seo_taxonomy_canonical', 6 );
+
+if ( ! function_exists( 'durianbikers_seo_taxonomy_canonical' ) ) {
+	function durianbikers_seo_taxonomy_canonical() {
+
+		if ( ! durianbikers_seo_head_allowed() ) {
+			return;
+		}
+
+		// Three independent guards against emitting a second canonical.
+		if ( ! function_exists( 'is_tax' ) || ! function_exists( 'is_singular' ) ) {
+			return;
+		}
+
+		if ( is_singular() ) {
+			return;
+		}
+
+		if ( function_exists( 'is_front_page' ) && is_front_page() ) {
+			return;
+		}
+
+		if ( ! is_tax( durianbikers_seo_canonical_taxonomies() ) ) {
+			return;
+		}
+
+		// A term archive must actually have resolved to a term.
+		$term = get_queried_object();
+
+		if ( ! $term instanceof WP_Term ) {
+			return;
+		}
+
+		$base = durianbikers_seo_site_base();
+
+		if ( '' === $base ) {
+			return;
+		}
+
+		// REQUEST_URI already carries both the store prefix and the /page/N/
+		// segment, and durianbikers_seo_request_path() returns the PATH only -
+		// so the query string is gone without having to enumerate parameters.
+		$path = durianbikers_seo_request_path();
+
+		if ( '' === ltrim( $path, '/' ) ) {
+			return;
+		}
+
+		$url = $base . '/' . ltrim( $path, '/' );
+
+		echo '<link rel="canonical" href="' . esc_url( $url ) . '" />' . "\n";
 	}
 }
